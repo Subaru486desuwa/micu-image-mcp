@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtualenv / conda
+.venv/
+venv/
+env/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 输出图片（不要把生成结果传到仓库）
+out/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+!docs/**/*.png
+!docs/**/*.jpg
+
+# Logs
+*.log

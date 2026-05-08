@@ -1,0 +1,19 @@
+[project]
+name = "micu-image-mcp"
+version = "0.1.0"
+description = "MCP server for 米醋 (openclaudecode.cn) gpt-image-2 / gpt-image-2-pro"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+micu-image-mcp = "server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["server"]
