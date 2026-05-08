@@ -128,4 +128,4 @@ cp ~/.claude.json.bak.YYYYMMDD_HHMMSS ~/.claude.json
 
 ## 许可
 
-私人项目，无开源许可。如需引用 / 修改请先联系。
+如需引用 / 修改请先联系。
