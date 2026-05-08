@@ -366,7 +366,85 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pypi-index", default=None, help="自定义 pip index URL (覆盖 --mirror)")
     p.add_argument("--baseurl", default=DEFAULT_BASEURL,
                    help=f"米醋代理 baseurl (默认 {DEFAULT_BASEURL})")
+    p.add_argument("--rust", action="store_true",
+                   help="装 Rust port 而非 Python 主线 (需要本地有 cargo). 自动 cargo build --release 后把 binary 路径写入 ~/.claude.json")
     return p.parse_args()
+
+
+def build_rust_binary(repo_root: Path) -> Path:
+    """cargo build --release 在 rust/ 子目录，返回 binary 绝对路径。"""
+    step("编译 Rust port")
+    rust_dir = repo_root / "rust"
+    if not (rust_dir / "Cargo.toml").exists():
+        err(f"找不到 {rust_dir}/Cargo.toml；当前分支可能没有 rust port，请 `git checkout rust-port`")
+    if shutil.which("cargo") is None:
+        err("未找到 cargo. 装 Rust 工具链: https://rustup.rs/")
+    cmd = ["cargo", "build", "--release", "--manifest-path", str(rust_dir / "Cargo.toml")]
+    info(" ".join(cmd))
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        err("cargo build 失败")
+    binary = rust_dir / "target" / "release" / "micu-image-mcp"
+    if sys.platform == "win32":
+        binary = binary.with_suffix(".exe")
+    if not binary.exists():
+        err(f"build 完成但找不到 binary: {binary}")
+    ok(f"Rust binary: {binary}")
+    return binary
+
+
+def write_claude_rust(binary_path: str, env_dict: dict) -> Path:
+    """Rust 模式下不需要 args 列表，binary 直接 command。"""
+    step("配置 Claude Code (Rust)")
+    cfg = Path.home() / ".claude.json"
+    data: dict = {}
+    if cfg.exists():
+        _backup(cfg)
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            err(f"现有 ~/.claude.json 不是合法 JSON: {e}")
+    servers = data.setdefault("mcpServers", {})
+    if "micu-image" in servers:
+        info("已存在 micu-image 配置, 覆盖")
+    servers["micu-image"] = {
+        "command": binary_path,
+        "args": [],
+        "env": env_dict,
+    }
+    cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    ok(f"写入 {cfg}")
+    return cfg
+
+
+def write_codex_rust(binary_path: str, env_dict: dict) -> Path:
+    step("配置 Codex CLI (Rust)")
+    cfg_dir = Path.home() / ".codex"
+    cfg = cfg_dir / "config.toml"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+
+    def tstr(s: str) -> str:
+        return json.dumps(s, ensure_ascii=False)
+
+    env_inline = ", ".join(f"{k} = {tstr(v)}" for k, v in env_dict.items())
+    block = (
+        "\n[mcp_servers.micu-image]\n"
+        f"command = {tstr(binary_path)}\n"
+        f"args = []\n"
+        f"env = {{ {env_inline} }}\n"
+    )
+    if cfg.exists():
+        existing = cfg.read_text(encoding="utf-8")
+        if "[mcp_servers.micu-image]" in existing:
+            warn("已存在 [mcp_servers.micu-image] 节, 跳过")
+            return cfg
+        _backup(cfg)
+        with cfg.open("a", encoding="utf-8") as f:
+            f.write(block)
+    else:
+        cfg.write_text(block.lstrip(), encoding="utf-8")
+    ok(f"写入 {cfg}")
+    return cfg
 
 
 def main() -> None:
@@ -374,10 +452,25 @@ def main() -> None:
 
     print("=== 米醋画图 MCP 一键安装 ===\n")
     check_python()
-    check_pip()
+    if not args.rust:
+        check_pip()
     check_running_clients()
 
     repo_root = Path(__file__).resolve().parent
+
+    if args.rust:
+        binary = build_rust_binary(repo_root)
+        info(f"仓库: {repo_root}")
+        api_key, save_dir, save_root = collect_config(args.yes, args.baseurl)
+        env_dict = _build_env(api_key, save_dir, save_root, args.baseurl)
+        claude_cfg = write_claude_rust(str(binary), env_dict) if not args.no_claude else None
+        codex_cfg = write_codex_rust(str(binary), env_dict) if not args.no_codex else None
+        if not args.no_smoke:
+            smoke_test_rust(str(binary), env_dict)
+        summary(env_dict, claude_cfg, codex_cfg, str(binary))
+        return
+
+    # Python 主线
     server_path = repo_root / "server.py"
     if not server_path.exists():
         err(f"找不到 server.py: {server_path}")
@@ -396,6 +489,40 @@ def main() -> None:
         smoke_test(str(server_path), env_dict)
 
     summary(env_dict, claude_cfg, codex_cfg, str(server_path))
+
+
+def smoke_test_rust(binary_path: str, env_dict: dict) -> None:
+    step("自检 Rust binary stdio 握手")
+    env = os.environ.copy()
+    env.update(env_dict)
+    init_msg = (
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize",'
+        b'"params":{"protocolVersion":"2025-06-18","capabilities":{},'
+        b'"clientInfo":{"name":"installer","version":"1"}}}\n'
+    )
+    try:
+        p = subprocess.Popen(
+            [binary_path],
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as e:
+        warn(f"启动失败: {e}")
+        return
+    try:
+        out, errout = p.communicate(input=init_msg, timeout=10)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out, errout = p.communicate()
+    if b'"result"' in out and b'"protocolVersion"' in out:
+        ok("Rust binary stdio 握手成功")
+    else:
+        warn("握手失败，但 binary 已生成；可重启客户端再试")
+        if errout:
+            tail = errout[-300:].decode(errors="replace")
+            info(f"stderr 末 300 字:\n{tail}")
 
 
 if __name__ == "__main__":

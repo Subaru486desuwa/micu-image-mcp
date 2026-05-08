@@ -4,6 +4,8 @@
 
 LLM 不用关心选模型 / 走哪条端点 / 怎么重试 / 多图并发会不会把 origin 干爆 —— server 全自动。
 
+> **Rust 版本**：`rust-port` 分支提供等价的 Rust 重写（`rmcp 1.6` + `tokio` + `reqwest`），`python install.py --rust` 一键装。详见 [`rust/README.md`](rust/README.md)。Rust port 与 Python 主线**共享同一把跨进程锁**（`~/.cache/micu-image/bigsize.lock`），混跑也能正确串行 ≥2K 请求。
+
 ---
 
 ## 功能
