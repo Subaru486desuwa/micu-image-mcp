@@ -96,20 +96,34 @@ def check_pip() -> None:
 
 
 def check_running_clients() -> None:
-    """提示 Claude Code / Codex 在跑就先关掉."""
+    """提示 Claude Code / Codex 在跑就先关掉.
+
+    用 `pgrep -l` (无 -f), 只匹配进程名 (comm), 不扫描完整命令行/环境变量.
+    避免被 npm MCP 子进程 PATH 里 'codex.system' 之类误命中.
+    """
     if sys.platform == "win32":
-        return  # tasklist 输出不稳, 跳过
-    try:
-        p = subprocess.run(["pgrep", "-fl", "Claude|claude-code|codex"],
-                           capture_output=True, text=True, timeout=3)
-        out = p.stdout.strip()
-        if out:
-            warn("检测到 Claude Code / Codex 正在运行:")
-            for line in out.splitlines()[:5]:
-                info(f"  {line}")
-            warn("装完后请重启客户端使新配置生效.")
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        return
+    matched: list[str] = []
+    for pat in ("Claude", "codex"):
+        try:
+            p = subprocess.run(["pgrep", "-l", "-i", pat],
+                               capture_output=True, text=True, timeout=3)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return
+        for line in p.stdout.strip().splitlines():
+            # pgrep -l 输出: "PID  comm"
+            parts = line.split(maxsplit=1)
+            if len(parts) != 2:
+                continue
+            comm = parts[1].lower()
+            # 过滤包装器 / 子进程 / 自身 python 解释器
+            if any(skip in comm for skip in ("node", "npm", "npx", "python", "install.py")):
+                continue
+            matched.append(line)
+    if matched:
+        pids = [line.split()[0] for line in matched]
+        warn(f"检测到 Claude Code / Codex 相关进程 ({len(pids)} 个, PID: {', '.join(pids[:8])})")
+        warn("装完后请重启客户端使新配置生效.")
 
 
 # ---------- 依赖安装 ----------
