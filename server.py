@@ -674,8 +674,27 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
 
 RETRYABLE_STATUS = (0, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 527)
 
+# ≥2K 在米醋 origin 走 pro 模型串行队列，单张渲染 ~50-80s。
+# 客户端并发 N 张时第 2 张就要排队等前一张，累积容易撞 CF 120s 硬上限 → 524 雪球。
+# 这把进程级锁让 MCP 进程内所有 ≥2K 调用串行，避免自我挤兑。
+# Lazy init：避免 module 导入期与 fastmcp event loop 不一致。
+_BIG_SIZE_LOCK: asyncio.Semaphore | None = None
 
-async def _call_with_retry(ep: Endpoint, key: str, retry_pro: bool, stream: bool = False) -> tuple[int, str]:
+
+def _get_big_size_lock() -> asyncio.Semaphore:
+    global _BIG_SIZE_LOCK
+    if _BIG_SIZE_LOCK is None:
+        _BIG_SIZE_LOCK = asyncio.Semaphore(1)
+    return _BIG_SIZE_LOCK
+
+
+async def _call_with_retry(
+    ep: Endpoint,
+    key: str,
+    retry_pro: bool,
+    stream: bool = False,
+    big_size_lock: bool = False,
+) -> tuple[int, str]:
     """pro 模型代理端瞬时限流多，4s/8s 两次重试。stream=True 时 chat 走 SSE。
 
     所有调用包在 try/except 里：httpx 网络层异常（ReadError/ConnectError 等）转成 status=0 让重试逻辑接住。
@@ -684,7 +703,10 @@ async def _call_with_retry(ep: Endpoint, key: str, retry_pro: bool, stream: bool
       - 网络层异常（status==0）：连接根本没建立，无条件给 1 次免费重试（与 retry_pro 无关），
         2s 退避覆盖瞬时 DNS/TLS 抖动。
       - 上游 5xx / 429 / 408 / CF 5xx：仅在 retry_pro=True（pro 模型 或 size tier ∈ {2k, 4k}）
-        时按 4s / 8s 退避两次。
+        时退避重试。1K 用 4s / 8s + jitter 两次；≥2K 用 60s 单次（origin pro 队列消化时间）。
+
+    big_size_lock=True：整个调用（含网络层 + 上游重试）包在进程级 Semaphore(1) 内，
+    确保 MCP 进程内任意时刻只有一个 ≥2K 请求打到 origin。客户端可放心并发，MCP 自动串行化。
     """
     caller = _call_endpoint_stream if stream else _call_endpoint
 
@@ -694,24 +716,34 @@ async def _call_with_retry(ep: Endpoint, key: str, retry_pro: bool, stream: bool
         except Exception as e:  # noqa: BLE001
             return 0, f"{type(e).__name__}: {e}"
 
-    status, text = await _attempt()
-
-    # 网络层瞬抖：无条件 1 次免费重试（独立于 retry_pro 预算）
-    if status == 0:
-        await asyncio.sleep(2)
+    async def _run() -> tuple[int, str]:
         status, text = await _attempt()
 
-    # 上游可重试错误：仅 retry_pro=True 时才动用 4s/8s 退避预算
-    # 加 0-2s jitter：image_batch_edit / image_generate 5 并发场景同时撞 5xx 时
-    # 避免 5 个 client 完全同步退避后再次同时打 origin。
-    if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
-        await asyncio.sleep(4 + random.uniform(0, 2))
-        status, text = await _attempt()
-    if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
-        await asyncio.sleep(8 + random.uniform(0, 2))
-        status, text = await _attempt()
+        # 网络层瞬抖：无条件 1 次免费重试（独立于 retry_pro 预算）
+        if status == 0:
+            await asyncio.sleep(2)
+            status, text = await _attempt()
 
-    return status, text
+        if big_size_lock:
+            # ≥2K：单次 60s 退避（origin pro 队列消化时间）；4K 总尝试时间已 ~3min，再多无意义
+            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
+                await asyncio.sleep(60)
+                status, text = await _attempt()
+        else:
+            # 1K：4s/8s 退避两次。加 0-2s jitter，5 并发场景避免同步打 origin。
+            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
+                await asyncio.sleep(4 + random.uniform(0, 2))
+                status, text = await _attempt()
+            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
+                await asyncio.sleep(8 + random.uniform(0, 2))
+                status, text = await _attempt()
+
+        return status, text
+
+    if big_size_lock:
+        async with _get_big_size_lock():
+            return await _run()
+    return await _run()
 
 
 def _parse_response(text: str) -> dict | str:
@@ -898,9 +930,12 @@ async def image_generate(
     #   - 1K + pro / ≥2K → 串行（pro 代理瞬时限流多；≥2K 已强制 N=1）
     can_concurrent = n > 1 and tier in ("small", "1k") and not is_pro
     concurrency = 5 if can_concurrent else 1
+    big_size_lock = tier in ("2k", "4k")
 
     async def _do_one(idx: int) -> tuple[int, dict | None, str | None]:
-        status, text = await _call_with_retry(ep, key, retry_pro=aggressive_retry, stream=False)
+        status, text = await _call_with_retry(
+            ep, key, retry_pro=aggressive_retry, stream=False, big_size_lock=big_size_lock
+        )
         if not (200 <= status < 300):
             return idx, None, f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
         resp = _parse_response(text)
@@ -1098,7 +1133,9 @@ async def image_edit(
             },
         )
         notes.append(f"≥2K 路径：/v1/images/generations + reference_image（size 真实生效，无 mask 支持）")
-        status, text = await _call_with_retry(gen_ep, key, retry_pro=True, stream=False)
+        status, text = await _call_with_retry(
+            gen_ep, key, retry_pro=True, stream=False, big_size_lock=True
+        )
     else:
         # 1K 路径：走 edits multipart（含 mask）→ 失败 fallback chat stream
         edits_form: dict[str, Any] = {
@@ -1473,7 +1510,10 @@ async def image_multi_reference(
     )
 
     aggressive_retry = is_pro or _size_tier(size) in ("2k", "4k")
-    status, text = await _call_with_retry(gen_ep, key, retry_pro=aggressive_retry, stream=False)
+    big_size_lock = _size_tier(size) in ("2k", "4k")
+    status, text = await _call_with_retry(
+        gen_ep, key, retry_pro=aggressive_retry, stream=False, big_size_lock=big_size_lock
+    )
 
     used_fallback = False
     # 只对可恢复的错误 fallback；400/401/403/413 等用户错误直接返回，避免掩盖真因
@@ -1614,8 +1654,10 @@ def server_info() -> dict[str, Any]:
         },
         "retry_policy": {
             "retryable_status": list(RETRYABLE_STATUS),
-            "schedule": "失败 → 4s → 重试 → 8s → 重试（共 3 次尝试）",
+            "schedule_1k": "失败 → 4s + jitter → 重试 → 8s + jitter → 重试（共 3 次尝试）；网络层异常额外免费重试 1 次",
+            "schedule_2k_4k": "进程级串行锁内：失败 → 60s → 重试（共 2 次尝试）。锁让 MCP 进程内任意时刻只有一个 ≥2K 请求打到 origin，避免客户端并发 + origin pro 队列堆叠 → CF 524 雪球",
             "trigger": "model 含 'pro' 或 size tier ∈ {2k, 4k}",
+            "concurrency_2k_4k": "MCP 进程级 Semaphore(1)；客户端可放心并发，MCP 自动串行化",
         },
         "response_handling": {
             "saved_to_disk": "所有生成的图片落盘到 save_dir（默认 cwd/out 或 MICU_SAVE_DIR）",
