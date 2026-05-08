@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import os
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -22,7 +23,6 @@ from mcp.server.fastmcp import FastMCP
 DEFAULT_BASEURL = os.environ.get("MICU_BASEURL", "https://www.openclaudecode.cn")
 API_KEY = os.environ.get("MICU_API_KEY", "")
 DEFAULT_MODEL = os.environ.get("MICU_MODEL", "gpt-image-2")
-DEFAULT_SAVE_DIR = Path(os.environ.get("MICU_SAVE_DIR", str(Path.cwd() / "out")))
 # 米醋是国内站，不应走 shell 的 SOCKS/HTTP 代理；默认 trust_env=False。
 # 设 MICU_USE_SHELL_PROXY=1 才让 httpx 拾取 HTTPS_PROXY/HTTP_PROXY/ALL_PROXY。
 _TRUST_ENV = os.environ.get("MICU_USE_SHELL_PROXY", "").strip() in ("1", "true", "yes")
@@ -33,6 +33,10 @@ _SAVE_ROOT = Path(os.environ.get(
     "MICU_SAVE_DIR_ROOT",
     str(Path.home() / "Pictures" / "micu-out"),
 )).expanduser().resolve()
+
+# DEFAULT_SAVE_DIR 必须默认与 _SAVE_ROOT 一致，否则手动起 server（不走 install.py）
+# 时会触发 _resolve_save_dir 把 cwd/out 重定向到 _SAVE_ROOT，对用户是静默的坑。
+DEFAULT_SAVE_DIR = Path(os.environ.get("MICU_SAVE_DIR", str(_SAVE_ROOT)))
 
 PRO_MODEL = "gpt-image-2-pro"
 NONPRO_MODEL = "gpt-image-2"
@@ -347,8 +351,12 @@ class ImageSaveError(Exception):
     """落盘前校验失败（响应过大 / 不是合法图片 / 路径越界）。"""
 
 
-def _save_validated_bytes(raw: bytes, save_dir: Path, basename: str, *, source_label: str) -> tuple[Path, tuple[int, int] | None]:
-    """统一落盘逻辑：校验大小 + magic + 路径安全 + 防覆盖。"""
+async def _save_validated_bytes(raw: bytes, save_dir: Path, basename: str, *, source_label: str) -> tuple[Path, tuple[int, int] | None, int]:
+    """统一落盘逻辑：校验大小 + magic + 路径安全 + 防覆盖。
+
+    返回 (path, actual_size, size_bytes)。size_bytes 直接用 len(raw) 而非额外 stat()。
+    write_bytes 走 asyncio.to_thread 避免 4K 12MB 落盘阻塞事件循环。
+    """
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ImageSaveError(
             f"{source_label} 响应 {len(raw)/1024/1024:.1f}MB 超过单图上限 "
@@ -383,40 +391,41 @@ def _save_validated_bytes(raw: bytes, save_dir: Path, basename: str, *, source_l
         path.resolve().relative_to(save_dir.resolve())
     except ValueError as e:
         raise ImageSaveError(f"落盘路径越界: {path}") from e
-    path.write_bytes(raw)
-    return path, _detect_actual_size(raw)
+    await asyncio.to_thread(path.write_bytes, raw)
+    return path, _detect_actual_size(raw), len(raw)
 
 
-def _save_image_b64(b64: str, save_dir: Path, basename: str) -> tuple[Path, tuple[int, int] | None]:
+async def _save_image_b64(b64: str, save_dir: Path, basename: str) -> tuple[Path, tuple[int, int] | None, int]:
     try:
-        raw = base64.b64decode(b64, validate=False)
+        # 大图 base64 解码（4K 16MB → 12MB）走 to_thread，避免 30-50ms 事件循环阻塞
+        raw = await asyncio.to_thread(base64.b64decode, b64, validate=False)
     except Exception as e:  # noqa: BLE001
         raise ImageSaveError(f"base64 解码失败: {e}") from e
-    return _save_validated_bytes(raw, save_dir, basename, source_label="b64 响应")
+    return await _save_validated_bytes(raw, save_dir, basename, source_label="b64 响应")
 
 
-async def _save_image_url(url: str, save_dir: Path, basename: str) -> tuple[Path, tuple[int, int] | None]:
-    async with httpx.AsyncClient(timeout=120, trust_env=_TRUST_ENV) as cx:
-        # 用 stream 提前读 Content-Length 拒掉超大响应
-        async with cx.stream("GET", url) as r:
-            r.raise_for_status()
-            cl = r.headers.get("content-length")
-            if cl and cl.isdigit() and int(cl) > MAX_RESPONSE_BYTES:
+async def _save_image_url(url: str, save_dir: Path, basename: str) -> tuple[Path, tuple[int, int] | None, int]:
+    cx = _get_http_client()
+    # 用 stream 提前读 Content-Length 拒掉超大响应
+    async with cx.stream("GET", url, timeout=120.0) as r:
+        r.raise_for_status()
+        cl = r.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > MAX_RESPONSE_BYTES:
+            raise ImageSaveError(
+                f"远端图 Content-Length={int(cl)/1024/1024:.1f}MB 超过 "
+                f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in r.aiter_bytes():
+            total += len(chunk)
+            if total > MAX_RESPONSE_BYTES:
                 raise ImageSaveError(
-                    f"远端图 Content-Length={int(cl)/1024/1024:.1f}MB 超过 "
-                    f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限"
+                    f"远端图实际下载 >{MAX_RESPONSE_BYTES/1024/1024:.0f}MB，已中断"
                 )
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in r.aiter_bytes():
-                total += len(chunk)
-                if total > MAX_RESPONSE_BYTES:
-                    raise ImageSaveError(
-                        f"远端图实际下载 >{MAX_RESPONSE_BYTES/1024/1024:.0f}MB，已中断"
-                    )
-                chunks.append(chunk)
-            raw = b"".join(chunks)
-    return _save_validated_bytes(raw, save_dir, basename, source_label=f"远端图 {url[:80]}")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    return await _save_validated_bytes(raw, save_dir, basename, source_label=f"远端图 {url[:80]}")
 
 
 def _round_to_alignment(n: int) -> int:
@@ -556,23 +565,45 @@ class Endpoint:
     multipart: dict | None = None  # {field_name: (filename, bytes, mime)}
 
 
+# 模块级共享 httpx.AsyncClient：复用 keepalive 连接，减少每次请求的 TLS handshake / DNS。
+# 5 并发场景（image_generate 1K N>1 / image_batch_edit）下每张省 100-300ms。
+# 懒初始化（构造本身 sync，但首次 .post() 时才会绑定到当前事件循环）。
+_HTTP_CLIENT: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """返回模块级共享 client；首次调用时创建。
+
+    timeout 为 None（不设默认），由 caller 每次 .post() / .stream() 通过 timeout= 覆盖；
+    这样 generations(600s) 与 image url 下载(120s) 可共用同一池。
+    """
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None:
+        _HTTP_CLIENT = httpx.AsyncClient(
+            timeout=None,
+            trust_env=_TRUST_ENV,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=20),
+        )
+    return _HTTP_CLIENT
+
+
 async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str]:
     """非 stream 调用。timeout 拉到 600s 给慢 origin 留余地（CF 120s 仍可能拦）。"""
     headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
-    async with httpx.AsyncClient(timeout=timeout, trust_env=_TRUST_ENV) as cx:
-        if ep.multipart is not None:
-            files = []
-            data = {}
-            for k, v in ep.multipart.items():
-                if isinstance(v, tuple) and len(v) == 3:
-                    files.append((k, v))
-                else:
-                    data[k] = v
-            r = await cx.post(ep.url, headers=headers, data=data, files=files)
-        else:
-            headers["Content-Type"] = "application/json"
-            r = await cx.post(ep.url, headers=headers, content=json.dumps(ep.json_body))
-        return r.status_code, r.text
+    cx = _get_http_client()
+    if ep.multipart is not None:
+        files = []
+        data = {}
+        for k, v in ep.multipart.items():
+            if isinstance(v, tuple) and len(v) == 3:
+                files.append((k, v))
+            else:
+                data[k] = v
+        r = await cx.post(ep.url, headers=headers, data=data, files=files, timeout=timeout)
+    else:
+        headers["Content-Type"] = "application/json"
+        r = await cx.post(ep.url, headers=headers, content=json.dumps(ep.json_body), timeout=timeout)
+    return r.status_code, r.text
 
 
 async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str]:
@@ -595,41 +626,41 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
     full_text_parts: list[str] = []
     final_status = 0
     last_finish: str | None = None
-    async with httpx.AsyncClient(timeout=timeout, trust_env=_TRUST_ENV) as cx:
-        try:
-            async with cx.stream("POST", ep.url, headers=headers, content=json.dumps(body)) as r:
-                final_status = r.status_code
-                if not (200 <= r.status_code < 300):
-                    err_text = (await r.aread()).decode("utf-8", errors="replace")
-                    return r.status_code, err_text
-                async for raw_line in r.aiter_lines():
-                    if not raw_line:
-                        continue
-                    line = raw_line.strip()
-                    full_text_parts.append(line)
-                    if not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(payload)
-                    except Exception:  # noqa: BLE001
-                        continue
-                    # OpenAI chat stream: choices[0].delta.content / .tool_calls
-                    choices = chunk.get("choices") if isinstance(chunk, dict) else None
-                    if isinstance(choices, list) and choices:
-                        c0 = choices[0] or {}
-                        delta = c0.get("delta") or {}
-                        if isinstance(delta.get("content"), str):
-                            full_content += delta["content"]
-                        if c0.get("finish_reason"):
-                            last_finish = c0["finish_reason"]
-                    # /v1/responses-style stream: { type:"response.output_text.delta", delta:"..." }
-                    if isinstance(chunk, dict) and isinstance(chunk.get("delta"), str) and chunk.get("type", "").endswith(".delta"):
-                        full_content += chunk["delta"]
-        except httpx.HTTPError as e:
-            return 0, f"stream error: {e}"
+    cx = _get_http_client()
+    try:
+        async with cx.stream("POST", ep.url, headers=headers, content=json.dumps(body), timeout=timeout) as r:
+            final_status = r.status_code
+            if not (200 <= r.status_code < 300):
+                err_text = (await r.aread()).decode("utf-8", errors="replace")
+                return r.status_code, err_text
+            async for raw_line in r.aiter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.strip()
+                full_text_parts.append(line)
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                except Exception:  # noqa: BLE001
+                    continue
+                # OpenAI chat stream: choices[0].delta.content / .tool_calls
+                choices = chunk.get("choices") if isinstance(chunk, dict) else None
+                if isinstance(choices, list) and choices:
+                    c0 = choices[0] or {}
+                    delta = c0.get("delta") or {}
+                    if isinstance(delta.get("content"), str):
+                        full_content += delta["content"]
+                    if c0.get("finish_reason"):
+                        last_finish = c0["finish_reason"]
+                # /v1/responses-style stream: { type:"response.output_text.delta", delta:"..." }
+                if isinstance(chunk, dict) and isinstance(chunk.get("delta"), str) and chunk.get("type", "").endswith(".delta"):
+                    full_content += chunk["delta"]
+    except httpx.HTTPError as e:
+        return 0, f"stream error: {e}"
     # 包装成与非 stream chat completion 等价的 JSON
     fake_resp = {
         "choices": [{
@@ -648,24 +679,38 @@ async def _call_with_retry(ep: Endpoint, key: str, retry_pro: bool, stream: bool
     """pro 模型代理端瞬时限流多，4s/8s 两次重试。stream=True 时 chat 走 SSE。
 
     所有调用包在 try/except 里：httpx 网络层异常（ReadError/ConnectError 等）转成 status=0 让重试逻辑接住。
+
+    重试分两层：
+      - 网络层异常（status==0）：连接根本没建立，无条件给 1 次免费重试（与 retry_pro 无关），
+        2s 退避覆盖瞬时 DNS/TLS 抖动。
+      - 上游 5xx / 429 / 408 / CF 5xx：仅在 retry_pro=True（pro 模型 或 size tier ∈ {2k, 4k}）
+        时按 4s / 8s 退避两次。
     """
     caller = _call_endpoint_stream if stream else _call_endpoint
-    try:
-        status, text = await caller(ep, key)
-    except Exception as e:  # noqa: BLE001
-        status, text = 0, f"{type(e).__name__}: {e}"
-    if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
-        await asyncio.sleep(4)
+
+    async def _attempt() -> tuple[int, str]:
         try:
-            status, text = await caller(ep, key)
+            return await caller(ep, key)
         except Exception as e:  # noqa: BLE001
-            status, text = 0, f"{type(e).__name__}: {e}"
+            return 0, f"{type(e).__name__}: {e}"
+
+    status, text = await _attempt()
+
+    # 网络层瞬抖：无条件 1 次免费重试（独立于 retry_pro 预算）
+    if status == 0:
+        await asyncio.sleep(2)
+        status, text = await _attempt()
+
+    # 上游可重试错误：仅 retry_pro=True 时才动用 4s/8s 退避预算
+    # 加 0-2s jitter：image_batch_edit / image_generate 5 并发场景同时撞 5xx 时
+    # 避免 5 个 client 完全同步退避后再次同时打 origin。
     if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
-        await asyncio.sleep(8)
-        try:
-            status, text = await caller(ep, key)
-        except Exception as e:  # noqa: BLE001
-            status, text = 0, f"{type(e).__name__}: {e}"
+        await asyncio.sleep(4 + random.uniform(0, 2))
+        status, text = await _attempt()
+    if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
+        await asyncio.sleep(8 + random.uniform(0, 2))
+        status, text = await _attempt()
+
     return status, text
 
 
@@ -862,9 +907,9 @@ async def image_generate(
         b64, url = _extract_image_payload(resp)
         try:
             if b64:
-                p, actual = _save_image_b64(b64, out_dir, f"{stem}_{idx + 1}")
+                p, actual, size_bytes = await _save_image_b64(b64, out_dir, f"{stem}_{idx + 1}")
             elif url:
-                p, actual = await _save_image_url(url, out_dir, f"{stem}_{idx + 1}")
+                p, actual, size_bytes = await _save_image_url(url, out_dir, f"{stem}_{idx + 1}")
             else:
                 return idx, None, f"#{idx + 1} 响应里未找到图片"
         except Exception as e:  # noqa: BLE001
@@ -872,7 +917,7 @@ async def image_generate(
         entry: dict[str, Any] = {
             "index": idx + 1,
             "path": str(p.resolve()),
-            "size_bytes": p.stat().st_size,
+            "size_bytes": size_bytes,
         }
         if actual:
             entry["actual_size"] = f"{actual[0]}x{actual[1]}"
@@ -1034,7 +1079,9 @@ async def image_edit(
     stem = safe_stem or _default_basename("edit")
     is_pro = "pro" in eff_model.lower()
 
-    img_data_url = f"data:{img_mime};base64,{base64.b64encode(img_bytes).decode()}"
+    # 大图 base64 编码（4K 12MB → 16MB）走 to_thread，避免 30-50ms 事件循环阻塞
+    img_b64 = await asyncio.to_thread(lambda: base64.b64encode(img_bytes).decode())
+    img_data_url = f"data:{img_mime};base64,{img_b64}"
     used_fallback = False
 
     if is_high_res:
@@ -1077,7 +1124,8 @@ async def image_edit(
             {"type": "image_url", "image_url": {"url": img_data_url}},
         ]
         if mask_bytes:
-            mask_data_url = f"data:image/png;base64,{base64.b64encode(mask_bytes).decode()}"
+            mask_b64 = await asyncio.to_thread(lambda: base64.b64encode(mask_bytes).decode())
+            mask_data_url = f"data:image/png;base64,{mask_b64}"
             chat_content.insert(0, {
                 "type": "text",
                 "text": (
@@ -1112,9 +1160,9 @@ async def image_edit(
     b64, url = _extract_image_payload(resp)
     try:
         if b64:
-            p, actual = _save_image_b64(b64, out_dir, stem)
+            p, actual, size_bytes = await _save_image_b64(b64, out_dir, stem)
         elif url:
-            p, actual = await _save_image_url(url, out_dir, stem)
+            p, actual, size_bytes = await _save_image_url(url, out_dir, stem)
         else:
             return {
                 "ok": False,
@@ -1125,7 +1173,7 @@ async def image_edit(
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"保存失败: {e}", "notes": notes}
 
-    saved_info: dict[str, Any] = {"path": str(p.resolve()), "size_bytes": p.stat().st_size}
+    saved_info: dict[str, Any] = {"path": str(p.resolve()), "size_bytes": size_bytes}
     if actual:
         saved_info["actual_size"] = f"{actual[0]}x{actual[1]}"
         saved_info["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
@@ -1138,7 +1186,6 @@ async def image_edit(
         "model": eff_model,
         "size": size,
         "used_fallback": used_fallback,
-        "used_stream": used_fallback,
         "saved": saved_info,
         "notes": notes,
     }
@@ -1395,7 +1442,9 @@ async def image_multi_reference(
                 f"{MAX_TOTAL_INPUT_BYTES/1024/1024:.0f}MB（base64 后会膨胀 33%）。请压缩或减少。"
             )
             return {"ok": False, "error": msg, "errors": [msg]}
-        image_urls.append(f"data:{mime};base64,{base64.b64encode(raw).decode()}")
+        # 大图 base64 编码走 to_thread，避免多图累加时长时间阻塞事件循环
+        ref_b64 = await asyncio.to_thread(lambda r=raw: base64.b64encode(r).decode())
+        image_urls.append(f"data:{mime};base64,{ref_b64}")
 
     # base64 inflates ~33%
     inflated_mb = total_bytes * 1.33 / 1024 / 1024
@@ -1457,9 +1506,9 @@ async def image_multi_reference(
     b64, url = _extract_image_payload(resp)
     try:
         if b64:
-            p, actual = _save_image_b64(b64, out_dir, stem)
+            p, actual, size_bytes = await _save_image_b64(b64, out_dir, stem)
         elif url:
-            p, actual = await _save_image_url(url, out_dir, stem)
+            p, actual, size_bytes = await _save_image_url(url, out_dir, stem)
         else:
             return {
                 "ok": False,
@@ -1470,7 +1519,7 @@ async def image_multi_reference(
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"保存失败: {e}", "notes": notes}
 
-    saved_info: dict[str, Any] = {"path": str(p.resolve()), "size_bytes": p.stat().st_size}
+    saved_info: dict[str, Any] = {"path": str(p.resolve()), "size_bytes": size_bytes}
     if actual:
         saved_info["actual_size"] = f"{actual[0]}x{actual[1]}"
         saved_info["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
