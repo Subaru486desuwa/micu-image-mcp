@@ -89,6 +89,22 @@ def _size_tier(size: str) -> str:
     return "4k"
 
 
+def _reject_4k_with_reference(size: str, tool: str) -> str | None:
+    """≥4K image_edit / image_multi_reference 在米醋后端稳定 > 120s，撞 CF Proxy Read Timeout (524)；入口直接拒。
+
+    image_generate 4K 是无参考的纯文生图，~50-80s 能过，不在此拦截范围。
+    """
+    if _size_tier(size) != "4k":
+        return None
+    return (
+        f"size={size} (4K) 在 {tool} 已禁用：origin 处理 4K + 参考图稳定 > 120s，"
+        f"撞 Cloudflare Proxy Read Timeout 物理上限。请改用 2K："
+        f'横屏 "2048x1152" / 竖屏 "1152x2048" / 方形 "2048x2048"。'
+        f'若必须 4K，可两步法：先 1K/2K 出综合图 → 再用 image_generate(size="3840x2160") '
+        f"描述同场景升 4K（人物 ID 不保证一致）。"
+    )
+
+
 def _resolve_model(requested_model: str | None, size: str) -> tuple[str, list[str]]:
     """根据 size 自动选 model；返回 (effective_model, notes)."""
     notes: list[str] = []
@@ -1005,22 +1021,26 @@ async def image_edit(
     basename: str | None = None,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """图像编辑（image-to-image，单张输入，**支持真 2K/4K**）。
+    """图像编辑（image-to-image，单张输入，**支持 1K + 真 2K**；4K 已禁用见下）。
 
-    [WHAT] 接受 1 张本地图片 + 修改指令，输出修改后的图。size 可达真 4K。
+    [WHAT] 接受 1 张本地图片 + 修改指令，输出修改后的图。
 
     [WHEN TO USE]
       - 用户提供 1 张图（路径或刚刚生成的图）且要"改 / 替换 / 加 / 去掉某部分" → 用此 tool。
       - 如果用户没提供图想从零生成 → 改用 image_generate。
       - 如果用户提供了多张图想"批量改"（每张做同样操作）→ 改用 image_batch_edit。
-      - 如果用户用多张图作风格参考想画一张新的 → 用 image_multi_reference（≤1.57MP），
-        想要 4K 多图融合可两步法：先 image_multi_reference 出综合图 → 再用此 tool 升 4K。
+      - 如果用户用多张图作风格参考想画一张新的 → 用 image_multi_reference（≤1.57MP）。
+
+    [4K 已禁用]
+      origin 处理 4K + 参考图稳定 > 120s，撞 CF Proxy Read Timeout (524)。
+      入口直接拒 4K size，不发请求。请改 2K（"2048x1152" / "1152x2048" / "2048x2048"），
+      或两步法：先 1K/2K image_edit → image_generate(size="3840x2160", 描述同场景) 升 4K。
 
     [路由实现]（实测确定，双路径）
       - 1K（边长 ≤1536）：走 /v1/images/edits multipart，**支持 alpha mask**。
         失败 fallback 到 /v1/chat/completions stream。
-      - ≥2K（边长 ≥1600）：走 /v1/images/generations + 米醋扩展字段 reference_image=data_url。
-        size 真实生效（实测 2048² 真 2048²，4K 真 3840×2160）。
+      - 2K（边长 1600–2999）：走 /v1/images/generations + 米醋扩展字段 reference_image=data_url。
+        size 真实生效（实测 2048² 真 2048²）。
         **此路径不支持 mask**（米醋扩展字段不接受 mask）；如需 mask 请降到 1K。
       - 自动锁 pro：max edge ≥1600 → gpt-image-2-pro。
 
@@ -1037,7 +1057,7 @@ async def image_edit(
         size: 输出 size。
               "1024x1024" "1280x720" "1024x1536" "1536x1024" "720x1280"  ← 1K（被压到 1.57MP，含 mask 支持）
               "1920x1080" "2048x2048" "2048x1152" "1152x2048"            ← 2K（真 1:1，pro 自动）
-              "3840x2160" "2160x3840"                                    ← 4K（真 1:1，pro 自动）
+              "3840x2160" / "2160x3840"  ← 4K 已禁用（撞 CF 524 物理上限），传入直接拒
               默认 "1024x1024"。
         model: "gpt-image-2"（默认）/ "gpt-image-2-pro"（≥2K 自动切）。
         save_dir: 输出目录（必须在安全根目录之下）。默认 ~/Pictures/micu-out 或 MICU_SAVE_DIR。
@@ -1059,12 +1079,13 @@ async def image_edit(
         # 1K 局部修改（mask 生效）
         image_edit(prompt="change hair color to silver", image_path="/p/x.png", mask_path="/p/x_mask.png")
 
-        # 真 4K 升级（无 mask）
-        image_edit(prompt="enhance to cinematic 4K detail, preserve composition", image_path="/p/draft.png", size="3840x2160")
+        # 真 2K 升级（无 mask）
+        image_edit(prompt="enhance to cinematic detail, preserve composition", image_path="/p/draft.png", size="2048x2048")
 
     Common errors:
         "image_path 不存在" → 检查路径，建议用绝对路径。
-        "HTTP 524" → 4K 单图实测 ~50-60s 不该撞，撞了说明 origin 那阵特别忙；自动重试 2 次仍失败请稍后再试。
+        "size=3840x2160 (4K) 在 image_edit 已禁用" → 4K image_edit 物理撞 CF 524 上限，请改 2K 或两步法。
+        "HTTP 524" → 2K 单图正常 ~50s，撞了说明 origin 那阵特别忙；自动重试仍失败请稍后再试。
     """
     key = _get_key(api_key)
     baseurl = _get_baseurl()
@@ -1076,6 +1097,8 @@ async def image_edit(
     if size_err:
         return {"ok": False, "error": size_err, "errors": [size_err]}
     size = cleaned_size  # type: ignore[assignment]
+    if (rej := _reject_4k_with_reference(size, "image_edit")):
+        return {"ok": False, "error": rej, "errors": [rej]}
     safe_stem = _safe_basename(basename) if basename is not None else None
     if basename is not None and safe_stem is None:
         msg = f"basename {basename!r} 含非法字符或路径分量"
@@ -1370,7 +1393,7 @@ async def image_multi_reference(
     basename: str | None = None,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """多图融合参考 → 输出 1 张新图（支持真 2K/4K）。
+    """多图融合参考 → 输出 1 张新图（支持 1K + 不稳的真 2K；4K 已禁用）。
 
     [WHAT] 输入 2-10 张参考图 + prompt，模型综合所有图的视觉信息后画 1 张全新的图。
     与 image_batch_edit 的本质区别：batch 是 N 进 N 出（每张独立改），此 tool 是 N 进 1 出（综合参考）。
@@ -1383,6 +1406,10 @@ async def image_multi_reference(
       - 如果用户只有 1 张图 → 改用 image_edit。
       - 如果用户没提供任何参考图 → 改用 image_generate。
 
+    [4K 已禁用]
+      origin 处理 4K 多图融合稳定 > 120s 撞 CF 524；入口直接拒。
+      想要真 4K 多图融合：两步法 — 此 tool 出 1K/2K 综合图 → image_generate(size="3840x2160") 描述同场景升 4K。
+
     [路由实现]（双路径 + 自动 fallback）
       - 主路径：/v1/images/generations + image_urls=[...]（米醋扩展字段，size 真实生效）
       - 兜底：/v1/chat/completions + 顶层 image_urls + stream:true SSE（永不撞 CF 524，但 size 不生效输出 ~1.57MP）
@@ -1393,18 +1420,16 @@ async def image_multi_reference(
     [LIMITS]（当前真实状态，会变化）
       - image_paths 长度 2-10 张。
       - **1K 稳定**：主路径 ~30-100s，size=1024² 实际输出 ~1.57MP。
-      - **2K/4K 不稳定**：主路径 generations + image_urls 在米醋后端间歇 HTTP 500"系统繁忙"
-        （origin 状态变化）；触发 fallback 后改走 chat stream，size 字段被忽略，**实际仍输出 ~1.57MP**。
-      - 想稳定拿到真 2K/4K 多图融合：当前米醋没这条路。变通方案：
-          (a) 先此 tool 出 1.57MP 综合图 → 再用 image_generate 出 4K（描述目标场景，不带参考图）
-          (b) 或多次重试等米醋 origin 恢复
+      - **2K 不稳定**：主路径 generations + image_urls 在米醋后端间歇 HTTP 500"系统繁忙"；
+        触发 fallback 后改走 chat stream，size 字段被忽略，**实际仍输出 ~1.57MP**。
       - 单张参考图建议 ≤2MB；总 base64 体积 ≤8MB（米醋代理上限实测约 10MB）。
 
     Args:
         prompt: 综合指令。例："combine the colors from img1 and the composition from img2 into a sunset cityscape".
         image_paths: 2-10 张参考图路径（绝对或相对）。
         size: 输出 size。**真实生效**（不再像旧版 chat 路径那样被忽略）。
-              推荐："1024x1024"（1.57MP 福利）/ "2048x2048"（真 2K）/ "1920x1080" / "3840x2160"（真 4K）。
+              推荐："1024x1024"（1.57MP 福利）/ "2048x2048"（真 2K，可能 fallback 到 1.57MP）。
+              "3840x2160" / "2160x3840" 已禁用（撞 CF 524 物理上限），传入直接拒。
               默认 "1024x1024"。
         model: "gpt-image-2"（默认）/ "gpt-image-2-pro"（≥2K 必需，自动切换）。
         save_dir: 输出目录（必须在安全根目录之下）。
@@ -1425,17 +1450,18 @@ async def image_multi_reference(
             image_paths=["/p/sketch.png", "/p/character.png", "/p/background.png"],
         )
 
-        # 真 4K 多图融合
+        # 2K 综合参考（不稳，可能 fallback 到 1.57MP）
         image_multi_reference(
             prompt="merge the architecture style from img1 with the lighting from img2",
             image_paths=["/p/img1.jpg", "/p/img2.jpg"],
-            size="3840x2160",
+            size="2048x2048",
         )
 
     Common errors:
         "至少需要 2 张参考图" → 1 张请用 image_edit。
         "请求体超 X MB" → 减少图片数量或先压缩。
-        "HTTP 524: timeout" → 4K 多图渲染太慢撞 CF 上游超时；建议降到 2K（2048×2048）。
+        "size=3840x2160 (4K) 在 image_multi_reference 已禁用" → 4K 多图融合物理撞 CF 524；
+            两步法：先 1K/2K 出综合图 → image_generate(size="3840x2160") 升 4K。
     """
     key = _get_key(api_key)
     baseurl = _get_baseurl()
@@ -1453,6 +1479,8 @@ async def image_multi_reference(
     if size_err:
         return {"ok": False, "error": size_err, "errors": [size_err]}
     size = cleaned_size  # type: ignore[assignment]
+    if (rej := _reject_4k_with_reference(size, "image_multi_reference")):
+        return {"ok": False, "error": rej, "errors": [rej]}
     safe_stem = _safe_basename(basename) if basename is not None else None
     if basename is not None and safe_stem is None:
         msg = f"basename {basename!r} 含非法字符或路径分量"
@@ -1640,7 +1668,7 @@ def server_info() -> dict[str, Any]:
             "image_edit": {
                 "1k": "可用，~10s，edits multipart + 可选 alpha mask",
                 "2k_pro": "可用，generations + reference_image 字段，~50s 真 1:1（不支持 mask）",
-                "4k_pro": "可用，generations + reference_image 字段，~60-90s 真 1:1（不支持 mask）",
+                "4k_pro": "已禁用：origin 处理 4K + 参考图稳定 > 120s 撞 CF Proxy Read Timeout (524)；入口直接拒。请改 2K 或两步法（1K/2K 出图 → image_generate 升 4K）",
             },
             "image_batch_edit": {
                 "1k_non_pro": "5 并发",
@@ -1649,7 +1677,8 @@ def server_info() -> dict[str, Any]:
             },
             "image_multi_reference": {
                 "1k": "稳定可用，2-10 张参考图融合输出 1 张，~30-100s",
-                "2k_4k": "当前 origin 间歇 500（米醋 image_urls + ≥2K 状态不稳定）；建议先 1K 出综合图再用 image_generate 升 4K",
+                "2k_pro": "可用但 origin 间歇 500（米醋 image_urls + ≥2K 状态不稳定），失败自动 fallback 到 chat stream 但 size 会被忽略输出 1.57MP",
+                "4k_pro": "已禁用：origin 处理 4K 多图融合稳定 > 120s 撞 CF 524；入口直接拒。建议两步法：先 1K/2K 出综合图 → image_generate 升 4K",
             },
         },
         "retry_policy": {
