@@ -40,7 +40,7 @@ PIP_MIRRORS = {
     "default": None,
 }
 
-DEFAULT_BASEURL = "https://www.openclaudecode.cn"
+DEFAULT_BASEURL = "https://www.micuapi.ai"
 
 
 # ---------- 日志输出 ----------
@@ -184,7 +184,7 @@ def collect_config(non_interactive: bool, baseurl: str) -> tuple[str, str, str]:
     else:
         print("\n=== 配置米醋 MCP ===")
         info(f"baseurl: {baseurl}")
-        info("API key 在米醋后台拿: https://www.openclaudecode.cn")
+        info("API key 在米醋后台拿: https://www.micuapi.ai")
         while True:
             api_key = ask("米醋 API key (sk-...)", secret=True)
             if not api_key:

@@ -20,7 +20,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 # ---------- 配置（env 可覆盖）----------
-DEFAULT_BASEURL = os.environ.get("MICU_BASEURL", "https://www.openclaudecode.cn")
+DEFAULT_BASEURL = os.environ.get("MICU_BASEURL", "https://www.micuapi.ai")
 API_KEY = os.environ.get("MICU_API_KEY", "")
 DEFAULT_MODEL = os.environ.get("MICU_MODEL", "gpt-image-2")
 # 米醋是国内站，不应走 shell 的 SOCKS/HTTP 代理；默认 trust_env=False。

@@ -1,6 +1,6 @@
 # 米醋画图 MCP
 
-把 [米醋](https://www.openclaudecode.cn) 的 `gpt-image-2` / `gpt-image-2-pro` 代理包装成 MCP server，让 Claude Code / Codex / Cursor 等任意 MCP 客户端都能直接调起来生图、改图、批处理、多图融合。
+把 [米醋](https://www.micuapi.ai) 的 `gpt-image-2` / `gpt-image-2-pro` 代理包装成 MCP server，让 Claude Code / Codex / Cursor 等任意 MCP 客户端都能直接调起来生图、改图、批处理、多图融合。
 
 LLM 不用关心选模型 / 走哪条端点 / 怎么重试 / 多图并发会不会把 origin 干爆 —— server 全自动。
 
@@ -130,7 +130,7 @@ W 和 H 都必须是 **8 的整数倍**（米醋实测约束）。详见 `server
 | 变量 | 必填 | 默认 | 说明 |
 |---|---|---|---|
 | `MICU_API_KEY` | ✅ | — | 米醋后台拿 |
-| `MICU_BASEURL` | ❌ | `https://www.openclaudecode.cn` | 改这个意味着改代理，慎用 |
+| `MICU_BASEURL` | ❌ | `https://www.micuapi.ai` | 改这个意味着改代理，慎用 |
 | `MICU_MODEL` | ❌ | `gpt-image-2` | 默认模型，≥2K 自动切 pro |
 | `MICU_SAVE_DIR` | ❌ | `~/Pictures/micu-out` | 实际落盘目录 |
 | `MICU_SAVE_DIR_ROOT` | ❌ | 同 `MICU_SAVE_DIR` | 沙箱根，所有 `save_dir` 必须在此之下 |

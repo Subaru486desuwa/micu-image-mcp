@@ -1,7 +1,7 @@
 [project]
 name = "micu-image-mcp"
 version = "0.1.0"
-description = "MCP server for 米醋 (openclaudecode.cn) gpt-image-2 / gpt-image-2-pro"
+description = "MCP server for 米醋 (micuapi.ai) gpt-image-2 / gpt-image-2-pro"
 requires-python = ">=3.10"
 dependencies = [
     "mcp[cli]>=1.0.0",
