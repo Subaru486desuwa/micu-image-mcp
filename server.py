@@ -776,12 +776,21 @@ def _release_big_size_file_lock(fd: int) -> None:
 
 
 @asynccontextmanager
-async def _big_size_file_lock_async():
-    """跨进程串行 ≥2K 请求。Windows 无 fcntl 时退化为 no-op（仅进程内 Semaphore 生效）。"""
+async def _big_size_file_lock_async(notes_out: list[str] | None = None):
+    """跨进程串行 ≥2K 请求。Windows 无 fcntl 时退化为 no-op（仅进程内 Semaphore 生效）。
+
+    notes_out: 可选 list[str]，等锁 >2s 时附加排队 note 让多窗口排队对用户可见。
+    """
     if not _FILE_LOCK_AVAILABLE:
         yield
         return
+    t0 = time.monotonic()
     fd = await asyncio.to_thread(_acquire_big_size_file_lock_blocking)
+    wait_s = time.monotonic() - t0
+    if notes_out is not None and wait_s > 2.0:
+        notes_out.append(
+            f"等待跨进程 ≥2K 锁 {wait_s:.1f}s（其他 Claude Code / Codex 窗口同时在跑 ≥2K，已串行）"
+        )
     try:
         yield
     finally:
@@ -794,6 +803,7 @@ async def _call_with_retry(
     retry_pro: bool,
     stream: bool = False,
     big_size_lock: bool = False,
+    notes_out: list[str] | None = None,
 ) -> tuple[int, str]:
     """pro 模型代理端瞬时限流多，4s/8s 两次重试。stream=True 时 chat 走 SSE。
 
@@ -827,8 +837,11 @@ async def _call_with_retry(
             status, text = await _attempt()
 
         if big_size_lock:
-            # ≥2K：单次 60s 退避（origin pro 队列消化时间）；4K 总尝试时间已 ~3min，再多无意义
-            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
+            # ≥2K：单次 60s 退避（origin pro 队列消化时间）；4K 总尝试时间已 ~3min，再多无意义。
+            # 例外：CF 524 字面意思就是 origin 处理 >120s 已超时，等 60s 大概率仍 524
+            # （origin 持续慢、不是临时抖动），直接 fail fast 让 caller 走 fallback。
+            # 其他 RETRYABLE 5xx（500/502/503/520 等）属临时挂，60s 内可能恢复，仍重试。
+            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS and status != 524:
                 await asyncio.sleep(60)
                 status, text = await _attempt()
         else:
@@ -843,8 +856,8 @@ async def _call_with_retry(
         return status, text
 
     if big_size_lock:
-        async with _get_big_size_lock():            # 进程内
-            async with _big_size_file_lock_async():  # 跨进程
+        async with _get_big_size_lock():                            # 进程内
+            async with _big_size_file_lock_async(notes_out):        # 跨进程
                 return await _run()
     return await _run()
 
@@ -1010,8 +1023,9 @@ async def image_generate(
     # 实测：generations 端点对所有 size 都尊重宽高比；
     #   - ≤1.57MP 请求被代理等比放大到 1.57MP（福利档）
     #   - ≥~4MP 请求严格 1:1 输出（pro 2048² → 真 2048²，4K 也是真 4K）
-    # chat path 不认 size 字段，输出反而比 generations 更小（被坑过），不再走 chat stream 兜底。
-    # 524 当作"origin 那阵忙"重试即可（实测 2K 43s / 4K 56s 都没撞 120s）。
+    # ≥2K 失败兜底：chat stream（size 不生效，输出 ~1.57MP），见下方 _do_one。
+    # 1K 不需要兜底（generations 1K 路径稳定）。
+    # CF 524 = origin 处理 >120s，60s 退避大概率仍 524（origin 持续慢），fail fast 直走 fallback。
     ep = Endpoint(
         url=f"{baseurl}/v1/images/generations",
         json_body={
@@ -1037,8 +1051,28 @@ async def image_generate(
 
     async def _do_one(idx: int) -> tuple[int, dict | None, str | None]:
         status, text = await _call_with_retry(
-            ep, key, retry_pro=aggressive_retry, stream=False, big_size_lock=big_size_lock
+            ep, key, retry_pro=aggressive_retry, stream=False,
+            big_size_lock=big_size_lock, notes_out=notes,
         )
+        # ≥2K 撞 524（origin t2i+pro+2K 路径间歇死）→ chat stream fallback。
+        # 代价：chat 路径 size 不生效，输出固定 ~1.57MP；但比空手回好（已透明告知）。
+        if not (200 <= status < 300) and big_size_lock and status in RETRYABLE_STATUS:
+            chat_ep = Endpoint(
+                url=f"{baseurl}/v1/chat/completions",
+                json_body={
+                    "model": eff_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "size": size,  # 米醋接受但 chat 路径下不生效
+                },
+            )
+            chat_status, chat_text = await _call_with_retry(
+                chat_ep, key, retry_pro=is_pro, stream=True,
+            )
+            if 200 <= chat_status < 300:
+                fb_note = f"generations 主路径 HTTP {status}（origin {size} 路径今晚拥塞）→ fallback chat stream（size 不生效，实际输出 ~1.57MP）"
+                if fb_note not in notes:
+                    notes.append(fb_note)
+                status, text = chat_status, chat_text
         if not (200 <= status < 300):
             return idx, None, f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
         resp = _parse_response(text)
@@ -1244,7 +1278,7 @@ async def image_edit(
         )
         notes.append(f"≥2K 路径：/v1/images/generations + reference_image（size 真实生效，无 mask 支持）")
         status, text = await _call_with_retry(
-            gen_ep, key, retry_pro=True, stream=False, big_size_lock=True
+            gen_ep, key, retry_pro=True, stream=False, big_size_lock=True, notes_out=notes,
         )
     else:
         # 1K 路径：走 edits multipart（含 mask）→ 失败 fallback chat stream
@@ -1627,7 +1661,8 @@ async def image_multi_reference(
     aggressive_retry = is_pro or _size_tier(size) in ("2k", "4k")
     big_size_lock = _size_tier(size) in ("2k", "4k")
     status, text = await _call_with_retry(
-        gen_ep, key, retry_pro=aggressive_retry, stream=False, big_size_lock=big_size_lock
+        gen_ep, key, retry_pro=aggressive_retry, stream=False,
+        big_size_lock=big_size_lock, notes_out=notes,
     )
 
     used_fallback = False
@@ -1749,7 +1784,7 @@ def server_info() -> dict[str, Any]:
         "capability_matrix": {
             "image_generate": {
                 "1k": "可用，single 30s，N>1 自动 5 并发",
-                "2k_pro": "可用，single 40-60s，N=1 强制",
+                "2k_pro": "可用，single 40-60s，N=1 强制；origin 拥塞撞 524 时自动 fallback 到 chat stream（输出 ~1.57MP，notes 里有标记）",
                 "4k_pro": "可用，single 50-80s，N=1 强制；偶尔 524 自动重试",
             },
             "image_edit": {
@@ -1771,7 +1806,7 @@ def server_info() -> dict[str, Any]:
         "retry_policy": {
             "retryable_status": list(RETRYABLE_STATUS),
             "schedule_1k": "失败 → 4s + jitter → 重试 → 8s + jitter → 重试（共 3 次尝试）；网络层异常额外免费重试 1 次",
-            "schedule_2k_4k": "双层锁内：失败 → 60s → 重试（共 2 次尝试）。锁让整机任意时刻只有一个 ≥2K 请求打到 origin，避免多客户端并发 + origin pro 队列堆叠 → CF 524 雪球",
+            "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。锁让整机任意时刻只有一个 ≥2K 请求打到 origin，避免多客户端并发 + origin pro 队列堆叠 → CF 524 雪球。锁等待 >2s 时 notes 会提示在排队",
             "trigger": "model 含 'pro' 或 size tier ∈ {2k, 4k}",
             "concurrency_2k_4k": (
                 "双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; "
