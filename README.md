@@ -113,17 +113,26 @@ W 和 H 都必须是 **8 的整数倍**（米醋实测约束）。详见 `server
 
 ## ≥2K 并发自动串行（重要）
 
-米醋 origin 的 `gpt-image-2-pro` 在底层是**串行队列**，单张 4K 渲染 ~50-80s。客户端如果并发 N 张 4K 请求，origin 队列会堆成 N×60s，超过 Cloudflare 120s read timeout → CF 524 雪球。
+米醋 origin 的 `gpt-image-2-pro` 在底层是**串行队列**，单张 4K 渲染 ~50-80s。客户端如果并发 N 张 ≥2K 请求，origin 队列会堆成 N×60s，超过 Cloudflare 120s read timeout → CF 524 雪球。
 
-**Server 内置进程级 `asyncio.Semaphore(1)`**：任意时刻只放一张 ≥2K 请求进 origin，其余 client 端透明排队。客户端可以放心并发，不用关心限流。
+多窗口开发是常态：每开一个 Claude Code / Codex 会话就 spawn 一个独立 MCP 子进程，仅靠 in-process 锁不够（用户实测 5 进程并发就稳撞 524）。所以本 server 用**双层锁**：
+
+| 层 | 类型 | 作用范围 | 实现 |
+|---|---|---|---|
+| 1 | `asyncio.Semaphore(1)` | 同 MCP 进程内 | 零系统调用本地排队 |
+| 2 | 跨进程文件锁 | 整机（同 user）所有 MCP 进程 | `~/.cache/micu-image/bigsize.lock`<br/>POSIX：`fcntl.flock(LOCK_EX)`<br/>Windows：`msvcrt.locking(LK_LOCK)` 循环 |
 
 ```
-客户端  ──┬─→ 4K_h ─┐
-         ├─→ 4K_v ─┤  Semaphore(1)  ──→ origin pro 队列（串行）
-         └─→ 2K_sq┘
+窗口 A ─→ MCP 进程 A ─┐
+窗口 B ─→ MCP 进程 B ─┼─→ flock(~/.cache/...) ─→ origin pro 队列（串行）
+窗口 C ─→ MCP 进程 C ─┘
 ```
 
-实测：1×4K横 + 1×4K竖 + 1×2K方 一次性并发，三张全成功，actual_size 严格 1:1，零 524。
+进程崩溃 → 内核自动关 fd → 锁立即释放，不会留死锁。
+
+Windows 自动用 `msvcrt.locking` 实现等价跨进程互斥，无新依赖。`msvcrt.locking` 单次调用阻塞 10s 后抛 `OSError`，server 内部循环重试直到拿到锁，行为对调用者与 POSIX 一致。
+
+实测（单进程内）：1×4K 横 + 1×4K 竖 + 1×2K 方一次性并发，三张全成功，actual_size 严格 1:1，零 524。
 
 1K 请求不走锁，可任意并发（`image_generate` N>1 自动 5 并发，`image_batch_edit` 同理）。
 

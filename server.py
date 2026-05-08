@@ -12,12 +12,27 @@ import os
 import random
 import re
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+# 跨进程文件锁：POSIX 用 fcntl.flock；Windows 用 msvcrt.locking。
+# 都是 stdlib 0 依赖；进程崩溃 → 内核关 fd → 锁自动释放，不留死锁。
+_LOCK_BACKEND: str  # "posix" | "windows" | "none"
+try:
+    import fcntl  # type: ignore[import-untyped]
+    _LOCK_BACKEND = "posix"
+except ImportError:
+    try:
+        import msvcrt  # type: ignore[import-untyped]
+        _LOCK_BACKEND = "windows"
+    except ImportError:
+        _LOCK_BACKEND = "none"
+_FILE_LOCK_AVAILABLE = _LOCK_BACKEND != "none"
 
 # ---------- 配置（env 可覆盖）----------
 DEFAULT_BASEURL = os.environ.get("MICU_BASEURL", "https://www.micuapi.ai")
@@ -692,9 +707,17 @@ RETRYABLE_STATUS = (0, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 52
 
 # ≥2K 在米醋 origin 走 pro 模型串行队列，单张渲染 ~50-80s。
 # 客户端并发 N 张时第 2 张就要排队等前一张，累积容易撞 CF 120s 硬上限 → 524 雪球。
-# 这把进程级锁让 MCP 进程内所有 ≥2K 调用串行，避免自我挤兑。
+#
+# 双层锁：
+#   - 进程内 Semaphore(1)：同 MCP 进程内的并发请求快速本地排队，零系统调用。
+#   - 跨进程文件锁（POSIX flock）：多个 Claude Code / Codex 窗口各自 spawn 独立 MCP
+#     子进程时，让所有进程串行打 origin。多窗口开发是常态（用户实测 5 进程并发就撞 524）。
 # Lazy init：避免 module 导入期与 fastmcp event loop 不一致。
 _BIG_SIZE_LOCK: asyncio.Semaphore | None = None
+# 跨进程锁文件位置：固定 ~/.cache 下的 user-scoped 路径。
+# 不用 tempfile.gettempdir() 是因为 Mac launchd 给 GUI 进程的 TMPDIR 与 terminal 进程不同
+# (/var/folders/<hash>/T/ vs /tmp/...)，会让 GUI 启动的 Claude Code 与 terminal MCP 锁不同文件。
+_BIG_SIZE_FILE_LOCK_PATH = Path.home() / ".cache" / "micu-image" / "bigsize.lock"
 
 
 def _get_big_size_lock() -> asyncio.Semaphore:
@@ -702,6 +725,67 @@ def _get_big_size_lock() -> asyncio.Semaphore:
     if _BIG_SIZE_LOCK is None:
         _BIG_SIZE_LOCK = asyncio.Semaphore(1)
     return _BIG_SIZE_LOCK
+
+
+def _acquire_big_size_file_lock_blocking() -> int:
+    """阻塞获取系统级跨进程锁；返回 fd，关 fd 即释放。
+
+    POSIX: fcntl.flock(LOCK_EX)，原生阻塞。
+    Windows: msvcrt.locking(LK_LOCK, 1)，单次阻塞超时 10s，循环直到拿到。
+    """
+    _BIG_SIZE_FILE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if _LOCK_BACKEND == "posix":
+        fd = os.open(str(_BIG_SIZE_FILE_LOCK_PATH), os.O_WRONLY | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+    if _LOCK_BACKEND == "windows":
+        # msvcrt.locking 必须锁文件中实际存在的字节，先确保有 1 字节
+        fd = os.open(str(_BIG_SIZE_FILE_LOCK_PATH), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            # LK_LOCK 单次阻塞 10s 后 raise；循环直到拿到
+            while True:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                    return fd
+                except OSError:
+                    continue
+        except Exception:
+            os.close(fd)
+            raise
+    raise RuntimeError("file lock backend unavailable")
+
+
+def _release_big_size_file_lock(fd: int) -> None:
+    try:
+        if _LOCK_BACKEND == "posix":
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        elif _LOCK_BACKEND == "windows":
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+@asynccontextmanager
+async def _big_size_file_lock_async():
+    """跨进程串行 ≥2K 请求。Windows 无 fcntl 时退化为 no-op（仅进程内 Semaphore 生效）。"""
+    if not _FILE_LOCK_AVAILABLE:
+        yield
+        return
+    fd = await asyncio.to_thread(_acquire_big_size_file_lock_blocking)
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(_release_big_size_file_lock, fd)
 
 
 async def _call_with_retry(
@@ -721,8 +805,10 @@ async def _call_with_retry(
       - 上游 5xx / 429 / 408 / CF 5xx：仅在 retry_pro=True（pro 模型 或 size tier ∈ {2k, 4k}）
         时退避重试。1K 用 4s / 8s + jitter 两次；≥2K 用 60s 单次（origin pro 队列消化时间）。
 
-    big_size_lock=True：整个调用（含网络层 + 上游重试）包在进程级 Semaphore(1) 内，
-    确保 MCP 进程内任意时刻只有一个 ≥2K 请求打到 origin。客户端可放心并发，MCP 自动串行化。
+    big_size_lock=True：整个调用（含网络层 + 上游重试）包在双层锁内：
+      1) 进程内 Semaphore(1)：同 MCP 进程并发请求本地排队（零系统调用）。
+      2) 跨进程 flock：多窗口 / 多 Claude Code 会话时所有 MCP 子进程共享一把
+         系统级 advisory lock，整机任意时刻只有一个 ≥2K 请求打到 origin。
     """
     caller = _call_endpoint_stream if stream else _call_endpoint
 
@@ -757,8 +843,9 @@ async def _call_with_retry(
         return status, text
 
     if big_size_lock:
-        async with _get_big_size_lock():
-            return await _run()
+        async with _get_big_size_lock():            # 进程内
+            async with _big_size_file_lock_async():  # 跨进程
+                return await _run()
     return await _run()
 
 
@@ -1684,9 +1771,14 @@ def server_info() -> dict[str, Any]:
         "retry_policy": {
             "retryable_status": list(RETRYABLE_STATUS),
             "schedule_1k": "失败 → 4s + jitter → 重试 → 8s + jitter → 重试（共 3 次尝试）；网络层异常额外免费重试 1 次",
-            "schedule_2k_4k": "进程级串行锁内：失败 → 60s → 重试（共 2 次尝试）。锁让 MCP 进程内任意时刻只有一个 ≥2K 请求打到 origin，避免客户端并发 + origin pro 队列堆叠 → CF 524 雪球",
+            "schedule_2k_4k": "双层锁内：失败 → 60s → 重试（共 2 次尝试）。锁让整机任意时刻只有一个 ≥2K 请求打到 origin，避免多客户端并发 + origin pro 队列堆叠 → CF 524 雪球",
             "trigger": "model 含 'pro' 或 size tier ∈ {2k, 4k}",
-            "concurrency_2k_4k": "MCP 进程级 Semaphore(1)；客户端可放心并发，MCP 自动串行化",
+            "concurrency_2k_4k": (
+                "双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; "
+                "(2) 跨进程文件锁 @ ~/.cache/micu-image/bigsize.lock，POSIX 用 fcntl.flock，"
+                "Windows 用 msvcrt.locking —— 多 Claude Code/Codex 窗口各自独立 MCP 子进程时"
+                "跨进程串行打 origin，整机任意时刻只有一张 ≥2K 在 origin 排队。"
+            ),
         },
         "response_handling": {
             "saved_to_disk": "所有生成的图片落盘到 save_dir（默认 cwd/out 或 MICU_SAVE_DIR）",
