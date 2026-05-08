@@ -3,7 +3,6 @@
 把 [米醋](https://www.openclaudecode.cn) 的 `gpt-image-2` / `gpt-image-2-pro` 代理包装成 MCP server，让 Claude Code / Codex / Cursor 等任意 MCP 客户端都能直接调起来生图、改图、批处理、多图融合。
 
 LLM 不用关心选模型 / 走哪个端点 / 重试限流——server 全自动。
-
 ---
 
 ## 功能
