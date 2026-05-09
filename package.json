@@ -1,0 +1,30 @@
+{
+  "name": "micu-image-mcp",
+  "version": "0.1.0-ts.0",
+  "description": "MCP server for 米醋 (micuapi.ai) gpt-image-2 / gpt-image-2-pro (TypeScript port — runs on Node + tsx)",
+  "type": "module",
+  "module": "src/index.ts",
+  "bin": {
+    "micu-image-mcp": "src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "start:bun": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "proper-lockfile": "^4.1.2",
+    "undici": "^8.2.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/proper-lockfile": "^4.1.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.5.0"
+  }
+}

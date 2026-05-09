@@ -38,3 +38,9 @@ out/
 
 # Logs
 *.log
+
+# Node / Bun (TS port)
+node_modules/
+bun.lockb
+bun.lock
+*.tsbuildinfo
