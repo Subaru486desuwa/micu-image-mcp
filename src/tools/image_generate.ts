@@ -39,6 +39,11 @@ export const imageGenerateInputSchema = {
   basename: z.string().nullable().optional().describe(
     "文件名前缀（不带扩展名），仅允许 [A-Za-z0-9_-.]。",
   ),
+  quality: z.enum(["low", "medium", "high", "auto"]).nullable().optional().describe(
+    "渲染 quality（仅 gpt-image-2-pro 生效；non-pro 模型代理会忽略）。" +
+    "low → 4K 也能稳过 60s 上游墙（实测 86s 完成）；high/auto → 大概率撞 524 触发 fallback。" +
+    "留空走 origin default。",
+  ),
   api_key: z.string().nullable().optional().describe(
     "覆盖 MICU_API_KEY 环境变量。一般留空。",
   ),
@@ -51,6 +56,7 @@ export type ImageGenerateArgs = {
   model?: string | null;
   save_dir?: string | null;
   basename?: string | null;
+  quality?: "low" | "medium" | "high" | "auto" | null;
   api_key?: string | null;
 };
 
@@ -121,15 +127,24 @@ export const imageGenerate = async (
   const isPro = effModel.toLowerCase().includes("pro");
   const stem = safeStem ?? defaultBasename("gen");
 
+  const epBody: Record<string, unknown> = {
+    model: effModel,
+    prompt: raw.prompt,
+    n: 1,
+    size,
+    response_format: "b64_json",
+  };
+  if (raw.quality) {
+    epBody.quality = raw.quality;
+    if (!isPro) {
+      notes.push(`quality=${raw.quality} 仅 gpt-image-2-pro 生效；当前模型 ${effModel} 代理会忽略`);
+    } else {
+      notes.push(`quality=${raw.quality}`);
+    }
+  }
   const ep: Endpoint = {
     url: `${baseurl}/v1/images/generations`,
-    jsonBody: {
-      model: effModel,
-      prompt: raw.prompt,
-      n: 1,
-      size,
-      response_format: "b64_json",
-    },
+    jsonBody: epBody,
   };
 
   const aggressiveRetry = isPro || tier === "2k" || tier === "4k";
