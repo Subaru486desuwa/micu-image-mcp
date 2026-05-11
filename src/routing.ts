@@ -90,9 +90,10 @@ export const inferSizeFromPrompt = (prompt: string): [string, string] | null => 
       : ["3840x2160", "prompt 含 4K 关键字（默认横屏）"];
   }
   if (/\b2k\b|1080p|full[\s-]?hd|\bfhd\b/.test(p)) {
+    // 不选 1920×1080 / 1080×1920：≤2.25MP 会被 origin 压到 ~1.57MP；2048×1152 跨 2.25MP 阈值拿到真分辨率
     return isVert
-      ? ["1080x1920", "prompt 含 2K/1080p 关键字 + 竖屏"]
-      : ["1920x1080", "prompt 含 2K/1080p 关键字（默认横屏）"];
+      ? ["1152x2048", "prompt 含 2K/1080p 关键字 + 竖屏（用 1152×2048 跨 2.25MP 阈值，避开福利档降级）"]
+      : ["2048x1152", "prompt 含 2K/1080p 关键字（默认横屏；用 2048×1152 跨 2.25MP 阈值，避开福利档降级）"];
   }
   if (/720p|\bhd\b/.test(p)) {
     return isVert
@@ -120,8 +121,12 @@ export const sizeNote = (
   if (aw === rw && ah === rh) return null;
   const rmp = (rw * rh) / 1_000_000;
   const amp = (aw * ah) / 1_000_000;
-  if (rmp <= 1.6 && amp >= 1.4 && amp <= 1.6) {
-    return `ℹ 实际 ${aw}×${ah} (${amp.toFixed(2)}MP) > 请求 ${rw}×${rh} (${rmp.toFixed(2)}MP)：米醋对 ≤1.57MP 的请求等比放大到 1.57MP（福利）。`;
+  // origin 把所有 ≤2.25MP 的请求统一处理到 ~1.57MP（看请求大小是放大还是压缩）
+  if (rmp <= 2.25 && amp >= 1.3 && amp <= 1.8) {
+    if (rmp <= 1.57) {
+      return `ℹ 实际 ${aw}×${ah} (${amp.toFixed(2)}MP) > 请求 ${rw}×${rh} (${rmp.toFixed(2)}MP)：米醋对 ≤2.25MP 的请求等比放大到 ~1.57MP（福利档）。`;
+    }
+    return `⚠ 实际 ${aw}×${ah} (${amp.toFixed(2)}MP) < 请求 ${rw}×${rh} (${rmp.toFixed(2)}MP)：米醋对 ≤2.25MP 的请求统一压到 ~1.57MP（福利档降级）。想拿到真分辨率请改用 ≥4MP 的 size（如 2048×1152、1152×2048、2048×2048、3840×2160）。`;
   }
   return `⚠ 实际 ${aw}×${ah} (${amp.toFixed(2)}MP) ≠ 请求 ${rw}×${rh} (${rmp.toFixed(2)}MP)；如非 chat 路径请检查模型与 size 是否匹配。`;
 };

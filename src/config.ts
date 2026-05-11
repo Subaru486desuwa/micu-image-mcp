@@ -23,8 +23,10 @@ export const EDITS_MAX_EDGE = 1536;
 export const VALID_SIZES_1K: readonly string[] = [
   "1024x1024", "1280x720", "720x1280", "1024x1536", "1536x1024",
 ];
+// 注意：1920×1080 / 1080×1920 (2.07MP) 名义上 2K，但 ≤2.25MP 会被 origin 压到 ~1.57MP，
+// 不列入"严格 1:1"推荐。想要真 2K 横屏请用 2048×1152。
 export const VALID_SIZES_2K: readonly string[] = [
-  "1920x1080", "1080x1920", "2048x2048", "2048x1152", "1152x2048",
+  "2048x2048", "2048x1152", "1152x2048",
 ];
 export const VALID_SIZES_4K: readonly string[] = ["3840x2160", "2160x3840"];
 
