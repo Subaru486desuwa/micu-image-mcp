@@ -14,6 +14,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -626,7 +627,7 @@ def _get_http_client() -> httpx.AsyncClient:
     return _HTTP_CLIENT
 
 
-async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str]:
+async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str, dict[str, str]]:
     """非 stream 调用。timeout 拉到 600s 给慢 origin 留余地（CF 120s 仍可能拦）。"""
     headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
     cx = _get_http_client()
@@ -642,10 +643,10 @@ async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tupl
     else:
         headers["Content-Type"] = "application/json"
         r = await cx.post(ep.url, headers=headers, content=json.dumps(ep.json_body), timeout=timeout)
-    return r.status_code, r.text
+    return r.status_code, r.text, {k.lower(): v for k, v in r.headers.items()}
 
 
-async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str]:
+async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str, dict[str, str]]:
     """SSE stream 调用（chat/completions 专用）。把 delta.content 累加成完整 content，
     再包装成与非 stream 等价的 chat completion JSON 结构返回，让上层 _extract_image_payload 复用。
 
@@ -669,9 +670,10 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
     try:
         async with cx.stream("POST", ep.url, headers=headers, content=json.dumps(body), timeout=timeout) as r:
             final_status = r.status_code
+            response_headers = {k.lower(): v for k, v in r.headers.items()}
             if not (200 <= r.status_code < 300):
                 err_text = (await r.aread()).decode("utf-8", errors="replace")
-                return r.status_code, err_text
+                return r.status_code, err_text, response_headers
             async for raw_line in r.aiter_lines():
                 if not raw_line:
                     continue
@@ -699,7 +701,7 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
                 if isinstance(chunk, dict) and isinstance(chunk.get("delta"), str) and chunk.get("type", "").endswith(".delta"):
                     full_content += chunk["delta"]
     except httpx.HTTPError as e:
-        return 0, f"stream error: {e}"
+        return 0, f"stream error: {e}", {}
     # 包装成与非 stream chat completion 等价的 JSON
     fake_resp = {
         "choices": [{
@@ -708,10 +710,79 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
         }],
         "_stream_lines": len(full_text_parts),
     }
-    return final_status or 200, json.dumps(fake_resp, ensure_ascii=False)
+    return final_status or 200, json.dumps(fake_resp, ensure_ascii=False), response_headers
 
 
-RETRYABLE_STATUS = (0, 408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 527)
+RETRYABLE_STATUS = (0, 408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 527)
+RETRY_AFTER_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+BIG_SIZE_FAIL_FAST_STATUS = {524}
+MAX_RETRY_AFTER_SECONDS = 120.0
+NETWORK_RETRY_DELAY_SECONDS = 2.0
+SMALL_RETRY_DELAYS_SECONDS = (4.0, 8.0)
+BIG_RETRY_DELAY_SECONDS = 60.0
+RETRY_JITTER_SECONDS = 2.0
+
+
+def _parse_retry_after(headers: dict[str, str]) -> float | None:
+    """Parse Retry-After as seconds, clamped to a practical upper bound."""
+    value = (headers or {}).get("retry-after")
+    if not value:
+        return None
+    value = value.strip()
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            dt = parsedate_to_datetime(value)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+        seconds = dt.timestamp() - time.time()
+    if seconds <= 0:
+        return 0.0
+    return min(seconds, MAX_RETRY_AFTER_SECONDS)
+
+
+def _retry_delay(
+    status: int,
+    headers: dict[str, str],
+    *,
+    attempt_index: int,
+    big_size_lock: bool,
+) -> float | None:
+    """Return delay before the next retry, or None if this status should not retry."""
+    if status not in RETRYABLE_STATUS:
+        return None
+    if big_size_lock and status in BIG_SIZE_FAIL_FAST_STATUS:
+        return None
+    if big_size_lock and attempt_index >= 1:
+        return None
+    if not big_size_lock and attempt_index >= len(SMALL_RETRY_DELAYS_SECONDS):
+        return None
+
+    retry_after = _parse_retry_after(headers) if status in RETRY_AFTER_STATUSES else None
+    if retry_after is not None:
+        return retry_after
+
+    if big_size_lock:
+        return BIG_RETRY_DELAY_SECONDS
+
+    return SMALL_RETRY_DELAYS_SECONDS[attempt_index] + random.uniform(0, RETRY_JITTER_SECONDS)
+
+
+def _append_retry_note(
+    notes_out: list[str] | None,
+    *,
+    status: int,
+    delay: float,
+    next_attempt: int,
+    text: str,
+) -> None:
+    if notes_out is None:
+        return
+    detail = _error_detail(text)
+    if detail:
+        detail = f"；原因：{detail}"
+    notes_out.append(f"HTTP {status} 可重试，等待 {delay:.1f}s 后第 {next_attempt} 次尝试{detail}")
 
 # ≥2K 在米醋 origin 走 pro 模型串行队列，单张渲染 ~50-80s。
 # 客户端并发 N 张时第 2 张就要排队等前一张，累积容易撞 CF 120s 硬上限 → 524 雪球。
@@ -813,7 +884,7 @@ async def _call_with_retry(
     big_size_lock: bool = False,
     notes_out: list[str] | None = None,
 ) -> tuple[int, str]:
-    """pro 模型代理端瞬时限流多，4s/8s 两次重试。stream=True 时 chat 走 SSE。
+    """pro 模型代理端瞬时限流多；stream=True 时 chat 走 SSE。
 
     所有调用包在 try/except 里：httpx 网络层异常（ReadError/ConnectError 等）转成 status=0 让重试逻辑接住。
 
@@ -821,7 +892,7 @@ async def _call_with_retry(
       - 网络层异常（status==0）：连接根本没建立，无条件给 1 次免费重试（与 retry_pro 无关），
         2s 退避覆盖瞬时 DNS/TLS 抖动。
       - 上游 5xx / 429 / 408 / CF 5xx：仅在 retry_pro=True（pro 模型 或 size tier ∈ {2k, 4k}）
-        时退避重试。1K 用 4s / 8s + jitter 两次；≥2K 用 60s 单次（origin pro 队列消化时间）。
+        时退避重试。优先尊重 Retry-After；否则 1K 用 4s / 8s + jitter 两次，≥2K 用 60s 单次。
 
     big_size_lock=True：整个调用（含网络层 + 上游重试）包在双层锁内：
       1) 进程内 Semaphore(1)：同 MCP 进程并发请求本地排队（零系统调用）。
@@ -830,36 +901,53 @@ async def _call_with_retry(
     """
     caller = _call_endpoint_stream if stream else _call_endpoint
 
-    async def _attempt() -> tuple[int, str]:
+    async def _attempt() -> tuple[int, str, dict[str, str]]:
         try:
             return await caller(ep, key)
         except Exception as e:  # noqa: BLE001
-            return 0, f"{type(e).__name__}: {e}"
+            return 0, f"{type(e).__name__}: {e}", {}
 
     async def _run() -> tuple[int, str]:
-        status, text = await _attempt()
+        status, text, headers = await _attempt()
+        attempt_number = 1
 
-        # 网络层瞬抖：无条件 1 次免费重试（独立于 retry_pro 预算）
+        # 网络层瞬抖：无条件 1 次免费重试（独立于 retry_pro 预算）。
         if status == 0:
-            await asyncio.sleep(2)
-            status, text = await _attempt()
+            _append_retry_note(
+                notes_out,
+                status=status,
+                delay=NETWORK_RETRY_DELAY_SECONDS,
+                next_attempt=attempt_number + 1,
+                text=text,
+            )
+            await asyncio.sleep(NETWORK_RETRY_DELAY_SECONDS)
+            status, text, headers = await _attempt()
+            attempt_number += 1
 
-        if big_size_lock:
-            # ≥2K：单次 60s 退避（origin pro 队列消化时间）；4K 总尝试时间已 ~3min，再多无意义。
-            # 例外：CF 524 字面意思就是 origin 处理 >120s 已超时，等 60s 大概率仍 524
-            # （origin 持续慢、不是临时抖动），直接 fail fast 让 caller 走 fallback。
-            # 其他 RETRYABLE 5xx（500/502/503/520 等）属临时挂，60s 内可能恢复，仍重试。
-            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS and status != 524:
-                await asyncio.sleep(60)
-                status, text = await _attempt()
-        else:
-            # 1K：4s/8s 退避两次。加 0-2s jitter，5 并发场景避免同步打 origin。
-            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
-                await asyncio.sleep(4 + random.uniform(0, 2))
-                status, text = await _attempt()
-            if not (200 <= status < 300) and retry_pro and status in RETRYABLE_STATUS:
-                await asyncio.sleep(8 + random.uniform(0, 2))
-                status, text = await _attempt()
+        if not retry_pro:
+            return status, text
+
+        retry_attempt = 0
+        while not (200 <= status < 300):
+            delay = _retry_delay(
+                status,
+                headers,
+                attempt_index=retry_attempt,
+                big_size_lock=big_size_lock,
+            )
+            if delay is None:
+                break
+            _append_retry_note(
+                notes_out,
+                status=status,
+                delay=delay,
+                next_attempt=attempt_number + 1,
+                text=text,
+            )
+            await asyncio.sleep(delay)
+            retry_attempt += 1
+            status, text, headers = await _attempt()
+            attempt_number += 1
 
         return status, text
 
@@ -1200,7 +1288,7 @@ async def image_edit(
         ok (bool): 是否成功。
         model (str): 实际用的模型。
         size (str): 请求 size。
-        used_fallback (bool): True 表示主端点失败已切换到 chat/completions（仅 1K 可能触发）。
+        used_fallback (bool): True 表示主端点失败已切换到 chat/completions（fallback 下 size 可能不生效）。
         saved (dict): { path, size_bytes, actual_size, actual_megapixels }。
         notes (list[str]): 决策与提示。
 
@@ -1291,6 +1379,33 @@ async def image_edit(
         status, text = await _call_with_retry(
             gen_ep, key, retry_pro=True, stream=False, big_size_lock=True, notes_out=notes,
         )
+        if not (200 <= status < 300) and status in RETRYABLE_STATUS:
+            used_fallback = True
+            notes.append(
+                f"generations + reference_image 主路径 HTTP {status}，已 fallback chat stream"
+                f"（size 可能不生效，实际输出可能回落 ~1.57MP）"
+            )
+            size_directive = (
+                f"Output the full edited image at exactly {size} pixels if supported by this route."
+                if _parse_size(size)
+                else "Output the full edited image, same dimensions as the input if supported by this route."
+            )
+            header = "Edit the attached image as described. " + size_directive + "\n\nInstruction:\n" + prompt
+            chat_ep = Endpoint(
+                url=f"{baseurl}/v1/chat/completions",
+                json_body={
+                    "model": eff_model,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": header},
+                            {"type": "image_url", "image_url": {"url": img_data_url}},
+                        ],
+                    }],
+                    "size": size,  # 米醋接受但 chat 路径下可能不生效
+                },
+            )
+            status, text = await _call_with_retry(chat_ep, key, retry_pro=is_pro, stream=True)
     else:
         # 1K 路径：走 edits multipart（含 mask）→ 失败 fallback chat stream
         edits_form: dict[str, Any] = {
@@ -1816,8 +1931,20 @@ def server_info() -> dict[str, Any]:
         },
         "retry_policy": {
             "retryable_status": list(RETRYABLE_STATUS),
-            "schedule_1k": "失败 → 4s + jitter → 重试 → 8s + jitter → 重试（共 3 次尝试）；网络层异常额外免费重试 1 次",
-            "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。锁让整机任意时刻只有一个 ≥2K 请求打到 origin，避免多客户端并发 + origin pro 队列堆叠 → CF 524 雪球。锁等待 >2s 时 notes 会提示在排队",
+            "retry_after": (
+                f"HTTP {sorted(RETRY_AFTER_STATUSES)} 若返回 Retry-After，会优先按该值等待；"
+                f"单次最多等待 {MAX_RETRY_AFTER_SECONDS:.0f}s，避免被异常 header 卡死"
+            ),
+            "schedule_1k": (
+                "网络层异常先免费等待 2s 重试 1 次；之后可恢复错误按 "
+                "4s + jitter、8s + jitter 最多再重试 2 次。每次重试会写入 notes"
+            ),
+            "schedule_2k_4k": (
+                "双层锁内：网络层异常先免费等待 2s 重试 1 次；之后可恢复错误最多等待 60s "
+                "重试 1 次。CF 524 fail fast 不重试（origin 已超过 Cloudflare 120s 上限），"
+                "让 caller 尽快走 fallback。锁让整机任意时刻只有一个 ≥2K 请求打到 origin，"
+                "避免多客户端并发 + origin pro 队列堆叠 → CF 524 雪球。锁等待 >2s 时 notes 会提示在排队"
+            ),
             "trigger": "model 含 'pro' 或 size tier ∈ {2k, 4k}",
             "concurrency_2k_4k": (
                 "双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; "
