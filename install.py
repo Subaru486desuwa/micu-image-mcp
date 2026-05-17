@@ -8,6 +8,7 @@
 - 同步设置 MICU_SAVE_DIR_ROOT 沙箱根，避免自定义目录被沙箱拒
 - 自检 server 能不能起来 + 给出脱敏摘要
 - 检测 Claude Code / Codex 进程并提示先关再启
+- 可选顺带配置米醋 Grok 图像通道 token
 
 用法：
     python install.py
@@ -17,6 +18,7 @@
     python install.py --no-claude                  # 不写 Claude 配置
     python install.py --yes                        # 非交互, 全用环境变量
         MICU_API_KEY=... MICU_SAVE_DIR=... python install.py --yes
+        MICU_GROK_API_KEY=... python install.py --yes
 """
 from __future__ import annotations
 
@@ -41,6 +43,9 @@ PIP_MIRRORS = {
 }
 
 DEFAULT_BASEURL = "https://www.micuapi.ai"
+DEFAULT_GROK_MODEL = "grok-imagine-image-lite"
+DEFAULT_GROK_SIZE_MODE = "contain"
+GROK_SIZE_MODES = {"backend", "contain", "cover", "stretch"}
 
 
 # ---------- 日志输出 ----------
@@ -139,7 +144,7 @@ def install_deps(repo_root: Path, mirror_url: str | None) -> None:
     if rc != 0:
         warn("editable install 失败, 改装顶层依赖")
         cmd2 = [sys.executable, "-m", "pip", "install", *extra,
-                "mcp[cli]>=1.0.0", "httpx>=0.27.0"]
+                "mcp[cli]>=1.0.0", "httpx>=0.27.0", "Pillow>=10.0.0"]
         info(" ".join(cmd2))
         rc2 = subprocess.run(cmd2).returncode
         if rc2 != 0:
@@ -171,8 +176,55 @@ def ask_yes_no(prompt: str, default: bool = True) -> bool:
             return False
 
 
-def collect_config(non_interactive: bool, baseurl: str) -> tuple[str, str, str]:
-    """返回 (api_key, save_dir, save_dir_root)."""
+def collect_grok_config(non_interactive: bool) -> dict[str, str]:
+    if non_interactive:
+        grok_key = os.environ.get(
+            "MICU_GROK_API_KEY",
+            os.environ.get("XAI_API_KEY", os.environ.get("GROK_API_KEY", "")),
+        ).strip()
+        if not grok_key:
+            return {}
+        return {
+            "MICU_GROK_API_KEY": grok_key,
+            "XAI_MODEL": os.environ.get("XAI_MODEL", os.environ.get("GROK_MODEL", DEFAULT_GROK_MODEL)).strip() or DEFAULT_GROK_MODEL,
+            "MICU_GROK_SIZE_MODE": _clean_grok_size_mode(os.environ.get("MICU_GROK_SIZE_MODE", DEFAULT_GROK_SIZE_MODE)),
+        }
+
+    if not ask_yes_no("同时配置米醋 Grok 生图通道?", default=False):
+        return {}
+    print("\n=== 配置米醋 Grok 生图通道 ===")
+    info("Grok 图像 token 在米醋后台获取；baseurl 与 image2 共用 MICU_BASEURL")
+    while True:
+        grok_key = ask("米醋 Grok token (sk-...)", secret=True)
+        if not grok_key:
+            warn("Grok token 为空，已跳过")
+            return {}
+        preview = mask_key(grok_key)
+        if not grok_key.startswith("sk-"):
+            warn(f"Grok token 不以 sk- 开头，可能粘错: {preview}")
+        else:
+            info(f"输入的 Grok token: {preview}")
+        if ask_yes_no("确认这个 Grok token?", default=True):
+            break
+    grok_model = ask("Grok model", default=DEFAULT_GROK_MODEL)
+    grok_size_mode = ask("Grok size mode (contain/cover/stretch/backend)", default=DEFAULT_GROK_SIZE_MODE)
+    return {
+        "MICU_GROK_API_KEY": grok_key,
+        "XAI_MODEL": grok_model or DEFAULT_GROK_MODEL,
+        "MICU_GROK_SIZE_MODE": _clean_grok_size_mode(grok_size_mode),
+    }
+
+
+def _clean_grok_size_mode(value: str) -> str:
+    mode = (value or DEFAULT_GROK_SIZE_MODE).strip().lower()
+    if mode not in GROK_SIZE_MODES:
+        warn(f"未知 MICU_GROK_SIZE_MODE={value!r}，已使用 {DEFAULT_GROK_SIZE_MODE}")
+        return DEFAULT_GROK_SIZE_MODE
+    return mode
+
+
+def collect_config(non_interactive: bool, baseurl: str) -> tuple[dict[str, str], str, str]:
+    """返回 (env_dict, save_dir, save_dir_root)."""
     home = Path.home()
     default_save = home / "Pictures" / "micu-out"
 
@@ -209,7 +261,15 @@ def collect_config(non_interactive: bool, baseurl: str) -> tuple[str, str, str]:
     save_root = str(save_path)
     ok(f"输出目录: {save_path}")
     ok(f"沙箱根目录: {save_root}")
-    return api_key, str(save_path), save_root
+    env = {
+        "MICU_API_KEY": api_key,
+        "MICU_SAVE_DIR": str(save_path),
+        "MICU_SAVE_DIR_ROOT": save_root,
+    }
+    if baseurl != DEFAULT_BASEURL:
+        env["MICU_BASEURL"] = baseurl
+    env.update(collect_grok_config(non_interactive))
+    return env, str(save_path), save_root
 
 
 # ---------- 写客户端配置 ----------
@@ -221,17 +281,6 @@ def _backup(path: Path) -> Path | None:
     shutil.copy2(path, bak)
     info(f"备份: {path.name} -> {bak.name}")
     return bak
-
-
-def _build_env(api_key: str, save_dir: str, save_root: str, baseurl: str) -> dict:
-    env = {
-        "MICU_API_KEY": api_key,
-        "MICU_SAVE_DIR": save_dir,
-        "MICU_SAVE_DIR_ROOT": save_root,
-    }
-    if baseurl != DEFAULT_BASEURL:
-        env["MICU_BASEURL"] = baseurl
-    return env
 
 
 def write_claude(server_path: str, env_dict: dict) -> Path:
@@ -270,19 +319,31 @@ def write_codex(server_path: str, env_dict: dict) -> Path:
     def tstr(s: str) -> str:
         return json.dumps(s, ensure_ascii=False)  # JSON 字符串字面量恰好也是合法 TOML basic string
 
-    env_inline = ", ".join(f"{k} = {tstr(v)}" for k, v in env_dict.items())
+    env_lines = "\n".join(f"{k} = {tstr(v)}" for k, v in env_dict.items())
     block = (
         "\n[mcp_servers.micu-image]\n"
         f"command = {tstr(sys.executable)}\n"
         f"args = [{tstr(server_path)}]\n"
-        f"env = {{ {env_inline} }}\n"
+        "\n[mcp_servers.micu-image.env]\n"
+        f"{env_lines}\n\n"
     )
 
     if cfg.exists():
         existing = cfg.read_text(encoding="utf-8")
         if "[mcp_servers.micu-image]" in existing:
-            warn("已存在 [mcp_servers.micu-image] 节, 跳过 (避免破坏其他配置)")
-            warn(f"如需更新: 手动删旧节后重跑, 或编辑 {cfg}")
+            _backup(cfg)
+            pattern = re.compile(
+                r"(?m)^\[mcp_servers\.micu-image\]\n"
+                r"(?:(?!^\[)[^\n]*\n)*"
+                r"(?:^\[mcp_servers\.micu-image\.env\]\n(?:(?!^\[)[^\n]*\n)*)?"
+            )
+            updated, count = pattern.subn(block.lstrip(), existing, count=1)
+            if count != 1:
+                warn("已存在 [mcp_servers.micu-image]，但自动定位旧节失败，跳过以免破坏配置")
+                warn(f"请手动编辑 {cfg}")
+                return cfg
+            cfg.write_text(updated, encoding="utf-8")
+            ok(f"更新 {cfg}")
             return cfg
         _backup(cfg)
         with cfg.open("a", encoding="utf-8") as f:
@@ -341,6 +402,11 @@ def summary(env_dict: dict, claude_cfg: Path | None, codex_cfg: Path | None,
     print(f"  save_root   : {env_dict.get('MICU_SAVE_DIR_ROOT', '')}")
     if "MICU_BASEURL" in env_dict:
         print(f"  baseurl     : {env_dict['MICU_BASEURL']}")
+    if "MICU_GROK_API_KEY" in env_dict:
+        print(f"  grok key    : {mask_key(env_dict.get('MICU_GROK_API_KEY', ''))}")
+        print(f"  grok model  : {env_dict.get('XAI_MODEL', '')}")
+        print(f"  grok size   : {env_dict.get('MICU_GROK_SIZE_MODE', DEFAULT_GROK_SIZE_MODE)}")
+        print(f"  grok base   : {env_dict.get('MICU_BASEURL', DEFAULT_BASEURL)}")
     if claude_cfg:
         print(f"  Claude 配置 : {claude_cfg}")
     if codex_cfg:
@@ -360,7 +426,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-codex", action="store_true", help="不写 Codex CLI 配置")
     p.add_argument("--no-smoke", action="store_true", help="跳过自检")
     p.add_argument("--yes", action="store_true",
-                   help="非交互模式 (从环境变量读 MICU_API_KEY / MICU_SAVE_DIR)")
+                   help="非交互模式 (从环境变量读 MICU_API_KEY / MICU_SAVE_DIR；可选 MICU_GROK_API_KEY)")
     p.add_argument("--mirror", choices=list(PIP_MIRRORS.keys()), default="default",
                    help=f"pip 镜像 (默认: 官方源). 可选: {', '.join(k for k in PIP_MIRRORS if k != 'default')}")
     p.add_argument("--pypi-index", default=None, help="自定义 pip index URL (覆盖 --mirror)")
@@ -386,8 +452,7 @@ def main() -> None:
     mirror_url = args.pypi_index or PIP_MIRRORS.get(args.mirror)
     install_deps(repo_root, mirror_url)
 
-    api_key, save_dir, save_root = collect_config(args.yes, args.baseurl)
-    env_dict = _build_env(api_key, save_dir, save_root, args.baseurl)
+    env_dict, save_dir, save_root = collect_config(args.yes, args.baseurl)
 
     claude_cfg = write_claude(str(server_path), env_dict) if not args.no_claude else None
     codex_cfg = write_codex(str(server_path), env_dict) if not args.no_codex else None
