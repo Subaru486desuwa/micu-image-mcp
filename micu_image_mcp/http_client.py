@@ -21,7 +21,11 @@ from .config import (
     SMALL_RETRY_DELAYS_SECONDS,
     BIG_RETRY_DELAY_SECONDS,
     RETRY_JITTER_SECONDS,
+    MAX_RESPONSE_BYTES,
 )
+
+# 响应体超过上限时返回的状态码（不在 RETRYABLE_STATUS / FALLBACK_STATUS 内，不会重试也不会降级）。
+_RESPONSE_TOO_LARGE_STATUS = 413
 from .extract import _error_detail
 from .locks import _get_big_size_lock, _big_size_file_lock_async
 
@@ -42,8 +46,10 @@ _HTTP_CLIENT: httpx.AsyncClient | None = None
 def _get_http_client() -> httpx.AsyncClient:
     """返回模块级共享 client；首次调用时创建。
 
-    timeout 为 None（不设默认），由 caller 每次 .post() / .stream() 通过 timeout= 覆盖；
-    这样 generations(600s) 与 image url 下载(120s) 可共用同一池。
+    client 本身 timeout=None（不设池级默认），实际超时由每个请求自带：
+      - _call_endpoint / _call_endpoint_stream 默认 600s（经 _call_with_retry 的调用走默认，不另传）。
+      - _save_image_url 单独传 120s。
+    这样不同用途的请求可共用同一连接池。
     """
     global _HTTP_CLIENT
     if _HTTP_CLIENT is None:
@@ -55,8 +61,27 @@ def _get_http_client() -> httpx.AsyncClient:
     return _HTTP_CLIENT
 
 
+async def _read_body_capped(r: httpx.Response) -> tuple[bool, str]:
+    """边读边累加，超过 MAX_RESPONSE_BYTES 立即中断。返回 (ok, text)；ok=False 表示超限。
+
+    防止恶意/异常上游用超大响应体把 r.text 一次性灌进内存（httpx 默认无上限）。
+    """
+    total = 0
+    chunks: list[bytes] = []
+    async for chunk in r.aiter_bytes():
+        total += len(chunk)
+        if total > MAX_RESPONSE_BYTES:
+            return False, ""
+        chunks.append(chunk)
+    return True, b"".join(chunks).decode("utf-8", errors="replace")
+
+
 async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str, dict[str, str]]:
-    """非 stream 调用。timeout 拉到 600s 给慢 origin 留余地（CF 120s 仍可能拦）。"""
+    """非 stream 调用。timeout 拉到 600s 给慢 origin 留余地（CF 120s 仍可能拦）。
+
+    用 cx.stream 而非 cx.post：先看 Content-Length / 边读边截断，超 MAX_RESPONSE_BYTES 即中止，
+    避免把超大响应体全量缓冲进内存。
+    """
     headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
     cx = _get_http_client()
     if ep.multipart is not None:
@@ -67,11 +92,24 @@ async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tupl
                 files.append((k, v))
             else:
                 data[k] = v
-        r = await cx.post(ep.url, headers=headers, data=data, files=files, timeout=timeout)
+        ctx = cx.stream("POST", ep.url, headers=headers, data=data, files=files, timeout=timeout)
     else:
         headers["Content-Type"] = "application/json"
-        r = await cx.post(ep.url, headers=headers, content=json.dumps(ep.json_body), timeout=timeout)
-    return r.status_code, r.text, {k.lower(): v for k, v in r.headers.items()}
+        ctx = cx.stream("POST", ep.url, headers=headers, content=json.dumps(ep.json_body), timeout=timeout)
+    async with ctx as r:
+        resp_headers = {k.lower(): v for k, v in r.headers.items()}
+        cl = resp_headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > MAX_RESPONSE_BYTES:
+            return _RESPONSE_TOO_LARGE_STATUS, (
+                f"响应 Content-Length={int(cl)/1024/1024:.1f}MB 超过 "
+                f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限"
+            ), resp_headers
+        ok, text = await _read_body_capped(r)
+        if not ok:
+            return _RESPONSE_TOO_LARGE_STATUS, (
+                f"响应体超过 {MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限，已中断"
+            ), resp_headers
+        return r.status_code, text, resp_headers
 
 
 async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str, dict[str, str]]:
@@ -91,7 +129,9 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
         "Content-Type": "application/json",
     }
     full_content = ""
-    full_text_parts: list[str] = []
+    line_count = 0
+    content_bytes = 0
+    truncated = False
     final_status = 0
     last_finish: str | None = None
     cx = _get_http_client()
@@ -101,13 +141,20 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
             final_status = r.status_code
             response_headers = {k.lower(): v for k, v in r.headers.items()}
             if not (200 <= r.status_code < 300):
-                err_text = (await r.aread()).decode("utf-8", errors="replace")
+                ok, err_text = await _read_body_capped(r)
+                if not ok:
+                    err_text = f"错误响应体超过 {MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限，已中断"
                 return r.status_code, err_text, response_headers
             async for raw_line in r.aiter_lines():
                 if not raw_line:
                     continue
                 line = raw_line.strip()
-                full_text_parts.append(line)
+                line_count += 1
+                # 累计内容超上限即停止累加（防死循环/超长流把 full_content 撑爆内存）。
+                content_bytes += len(line)
+                if content_bytes > MAX_RESPONSE_BYTES:
+                    truncated = True
+                    break
                 if not line.startswith("data:"):
                     continue
                 payload = line[5:].strip()
@@ -135,9 +182,10 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
     fake_resp = {
         "choices": [{
             "message": {"role": "assistant", "content": full_content},
-            "finish_reason": last_finish or "stop",
+            "finish_reason": last_finish or ("length" if truncated else "stop"),
         }],
-        "_stream_lines": len(full_text_parts),
+        "_stream_lines": line_count,
+        "_truncated": truncated,
     }
     return final_status or 200, json.dumps(fake_resp, ensure_ascii=False), response_headers
 

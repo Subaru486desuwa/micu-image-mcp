@@ -15,14 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import time
-from contextlib import asynccontextmanager  # noqa: F401  (历史 re-export)
-from dataclasses import dataclass  # noqa: F401
-from pathlib import Path  # noqa: F401
 from typing import Any
 
-import httpx  # noqa: F401  (历史 re-export, tests/_common 可能引用)
 from mcp.server.fastmcp import FastMCP
 
 # ---------- 从 internal package re-export (语义零漂移) ----------
@@ -39,7 +34,7 @@ from micu_image_mcp.config import (
     MAX_N, MIN_SIZE_EDGE, MAX_SIZE_EDGE, SIZE_ALIGNMENT,
     MAX_INPUT_FILE_BYTES, MAX_TOTAL_INPUT_BYTES, MAX_RESPONSE_BYTES,
     _SAFE_BASENAME_RE,
-    RETRYABLE_STATUS, RETRY_AFTER_STATUSES, BIG_SIZE_FAIL_FAST_STATUS,
+    RETRYABLE_STATUS, FALLBACK_STATUS, RETRY_AFTER_STATUSES, BIG_SIZE_FAIL_FAST_STATUS,
     MAX_RETRY_AFTER_SECONDS, NETWORK_RETRY_DELAY_SECONDS,
     SMALL_RETRY_DELAYS_SECONDS, BIG_RETRY_DELAY_SECONDS, RETRY_JITTER_SECONDS,
 )
@@ -332,11 +327,14 @@ async def image_generate(
                 if sn and sn not in notes:
                     notes.append(sn)
             saved.append(entry)
+        if len(payloads) < n:
+            notes.append(f"Grok 仅返回 {len(payloads)} 张（< 请求 n={n}）；以 saved 实际张数为准。")
         return {
             "ok": bool(saved),
             "model": eff_model,
             "size": size,
             "requested_n": n,
+            "used_fallback": False,
             "saved": saved,
             "errors": errors,
             "notes": notes,
@@ -370,15 +368,18 @@ async def image_generate(
     can_concurrent = n > 1 and tier in ("small", "1k") and not is_pro
     concurrency = 5 if can_concurrent else 1
     big_size_lock = tier in ("2k", "4k")
+    used_fallback = False  # ≥2K generations 失败切到 chat stream 时置 True（size 不生效）
 
     async def _do_one(idx: int) -> tuple[int, dict | None, str | None]:
+        nonlocal used_fallback
         status, text = await _call_with_retry(
             ep, key, retry_pro=aggressive_retry, stream=False,
             big_size_lock=big_size_lock, notes_out=notes,
         )
         # ≥2K 撞 524（origin t2i+pro+2K 路径间歇死）→ chat stream fallback。
         # 代价：chat 路径 size 不生效，输出固定 ~1.57MP；但比空手回好（已透明告知）。
-        if not (200 <= status < 300) and big_size_lock and status in RETRYABLE_STATUS:
+        # 只对服务端/网络错误降级（FALLBACK_STATUS），429/409 配额冲突不降级以免静默产出错分辨率图。
+        if not (200 <= status < 300) and big_size_lock and status in FALLBACK_STATUS:
             chat_ep = Endpoint(
                 url=f"{baseurl}/v1/chat/completions",
                 json_body={
@@ -387,10 +388,13 @@ async def image_generate(
                     "size": size,  # 米醋接受但 chat 路径下不生效
                 },
             )
+            # fallback 仍是 ≥2K 请求，必须复用同一把大图锁串行打 origin（否则多窗口并发绕过锁）。
             chat_status, chat_text = await _call_with_retry(
                 chat_ep, key, retry_pro=is_pro, stream=True,
+                big_size_lock=big_size_lock, notes_out=notes,
             )
             if 200 <= chat_status < 300:
+                used_fallback = True
                 fb_note = f"generations 主路径 HTTP {status}（origin {size} 路径今晚拥塞）→ fallback chat stream（size 不生效，实际输出 ~1.57MP）"
                 if fb_note not in notes:
                     notes.append(fb_note)
@@ -405,7 +409,8 @@ async def image_generate(
             elif url:
                 p, actual, size_bytes = await _save_image_url(url, out_dir, f"{stem}_{idx + 1}")
             else:
-                return idx, None, f"#{idx + 1} 响应里未找到图片"
+                excerpt = text[:300] if isinstance(text, str) else str(resp)[:300]
+                return idx, None, f"#{idx + 1} 响应里未找到图片（响应摘要：{excerpt}）"
         except Exception as e:  # noqa: BLE001
             return idx, None, f"#{idx + 1} 保存失败: {e}"
         entry: dict[str, Any] = {
@@ -447,6 +452,8 @@ async def image_generate(
         "model": eff_model,
         "size": size,
         "requested_n": n,
+        "used_fallback": used_fallback,
+        "size_honored": not used_fallback,
         "saved": saved,
         "errors": errors,
         "notes": notes,
@@ -717,8 +724,8 @@ async def image_edit(
         )
 
         status, text = await _call_with_retry(edits_ep, key, retry_pro=is_pro, stream=False)
-        # 只对可恢复错误 fallback；400/401/403/413 等用户/鉴权错误不降级，避免掩盖真因
-        if not (200 <= status < 300) and status in RETRYABLE_STATUS:
+        # 只对服务端/网络错误 fallback；400/401/403/413/429 等用户/鉴权/配额错误不降级，避免掩盖真因
+        if not (200 <= status < 300) and status in FALLBACK_STATUS:
             used_fallback = True
             notes.append(f"edits 端点 HTTP {status}，已切到 /v1/chat/completions stream")
             status, text = await _call_with_retry(chat_ep, key, retry_pro=is_pro, stream=True)
@@ -865,7 +872,7 @@ async def image_batch_edit(
                 model=eff_model,
                 save_dir=str(out_dir),
                 basename=f"batch_{time.time_ns()}_{idx + 1}",
-                api_key=key,
+                api_key=api_key,
             )
             r["index"] = idx + 1
             r["input"] = path_str
@@ -1155,8 +1162,8 @@ async def image_multi_reference(
     )
 
     used_fallback = False
-    # 只对可恢复的错误 fallback；400/401/403/413 等用户错误直接返回，避免掩盖真因
-    if not (200 <= status < 300) and status in RETRYABLE_STATUS:
+    # 只对服务端/网络错误 fallback；400/401/403/413/429 等用户/配额错误直接返回，避免掩盖真因
+    if not (200 <= status < 300) and status in FALLBACK_STATUS:
         # generations 失败 → 走 chat stream 兜底
         notes.append(f"generations 主路径 HTTP {status}（米醋多图 + 高分辨率间歇拒），已 fallback chat stream（size 不生效，输出 ~1.57MP）")
         used_fallback = True
@@ -1169,7 +1176,11 @@ async def image_multi_reference(
                 "size": size,  # 米醋接受但 chat 路径下不生效
             },
         )
-        status, text = await _call_with_retry(chat_ep, key, retry_pro=is_pro, stream=True)
+        # fallback 仍是 ≥2K 请求时复用同一把大图锁串行打 origin（否则多窗口并发绕过锁）。
+        status, text = await _call_with_retry(
+            chat_ep, key, retry_pro=is_pro, stream=True,
+            big_size_lock=big_size_lock, notes_out=notes,
+        )
 
     if not (200 <= status < 300):
         return {
@@ -1211,6 +1222,7 @@ async def image_multi_reference(
         "model": eff_model,
         "size": size,
         "used_fallback": used_fallback,
+        "size_honored": not used_fallback,  # fallback 后 size 不生效，真实像素见 saved.actual_size
         "n_references": len(image_paths),
         "saved": saved_info,
         "notes": notes,
@@ -1307,8 +1319,9 @@ def server_info() -> dict[str, Any]:
         },
         "retry_policy": {
             "retryable_status": list(RETRYABLE_STATUS),
-            "schedule_1k": "失败 → 4s + jitter → 重试 → 8s + jitter → 重试（共 3 次尝试）；网络层异常额外免费重试 1 次",
-            "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。锁让整机任意时刻只有一个 ≥2K 请求打到 origin，避免多客户端并发 + origin pro 队列堆叠 → CF 524 雪球。锁等待 >2s 时 notes 会提示在排队",
+            "fallback_status": list(FALLBACK_STATUS),
+            "schedule_1k": "上游 5xx → 4s+jitter → 重试 → 8s+jitter → 重试（退避重试最多 2 次，共 ≤3 次尝试）；网络层异常（status=0）另有 1 次免费重试不计入此预算（故最坏 ≤4 次）。注：带 Retry-After 的 408/429/5xx 会按头部值 sleep（上限 120s），此时单次等待可能远大于 4s/8s",
+            "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。单次 attempt 无字节挂起最长 600s，故 2K 最坏 ≈ 两次 600s attempt + 一次 60s 退避；其间整机所有 ≥2K 请求经跨进程锁串行等待。锁等待 >2s 时 notes 会提示在排队",
             "trigger": "model 含 'pro' 或 size tier ∈ {2k, 4k}",
             "concurrency_2k_4k": (
                 "双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; "

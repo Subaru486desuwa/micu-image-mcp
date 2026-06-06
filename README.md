@@ -2,7 +2,16 @@
 
 把 [米醋](https://www.micuapi.ai) 的图像接口包装成 MCP server，让 Claude Code / Codex / Cursor 等 MCP 客户端直接生图、改图、批处理、多图参考。
 
-默认使用 `gpt-image-2` / `gpt-image-2-pro`。可选配置 `MICU_GROK_API_KEY` 后，也能走米醋 Grok 图像通道，当前实测模型包括：
+默认使用 `gpt-image-2` / `gpt-image-2-pro`。可选配置 `MICU_GROK_API_KEY` 后，也能走米醋 Grok 图像通道。
+
+注意：米醋后台的 Image2 分组和 Grok 分组通常是两把不同的 key：
+
+- `MICU_API_KEY`: Image2 分组 token，必须能看到 `gpt-image-2` / `gpt-image-2-pro`
+- `MICU_GROK_API_KEY`: Grok 图像分组 token，必须能看到 `grok-imagine-image-*`
+
+如果把 Grok 分组 token 填进 `MICU_API_KEY`，运行时会出现类似 `分组 grok 下模型 gpt-image-2 无可用渠道` 的错误。
+
+当前实测 Grok 图像模型包括：
 
 - `grok-imagine-image-lite`
 - `grok-imagine-image`
@@ -55,10 +64,12 @@ python install.py
 
 1. 检查 Python >= 3.10
 2. 安装依赖
-3. 交互配置米醋 API key、输出目录
-4. 可选配置米醋 Grok 生图 token
+3. 交互配置米醋 Image2 分组 API key、输出目录
+4. 可选配置米醋 Grok 生图分组 token
 5. 写入 `~/.claude.json` 和 `~/.codex/config.toml`
 6. 启动 server 做一次 initialize 握手
+
+安装脚本会用 `/v1/models` 做轻量校验，尽量在安装阶段发现 key 分组粘错的问题。
 
 非交互安装：
 
@@ -69,6 +80,8 @@ MICU_SAVE_DIR=~/Pictures/micu-out \
 python install.py --yes
 ```
 
+`--yes` 模式下如果 `MICU_API_KEY` 看不到 `gpt-image-2`，或 `MICU_GROK_API_KEY` 看不到 `grok-imagine-image-*`，安装会直接失败，避免写入错误配置。
+
 常用选项：
 
 ```bash
@@ -78,7 +91,17 @@ python install.py --mirror tsinghua
 python install.py --baseurl https://www.micuapi.ai
 ```
 
-安装完成后重启 Claude Code / Codex，让 LLM 调 `server_info` 验证。
+卸载/重置（仅删 MCP 配置节，不动 pip 包）：
+
+```bash
+python install.py --reset
+# 想顺手卸 pip 包再加:
+python -m pip uninstall -y micu-image-mcp
+```
+
+`--reset` 会备份原配置后，从 `~/.claude.json` 移除 `mcpServers.micu-image`、从 `~/.codex/config.toml` 移除 `[mcp_servers.micu-image]` 整节，其他 MCP server 节点保持不动。
+
+安装完成后会自动跑一次 `initialize` 握手 + `tools/list`，预期能看到 5 个 tool：`image_generate / image_edit / image_batch_edit / image_multi_reference / server_info`。安装日志里看到这 5 个名字才算装好。然后重启 Claude Code / Codex，让 LLM 调 `server_info` 验证。
 
 ---
 
@@ -196,3 +219,65 @@ MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
 MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 XAI_MODEL = "grok-imagine-image-lite"
 ```
+
+---
+
+## 性能 / 压力测试
+
+`tests/` 下两个独立脚本，直接 in-process import `server.py` 调 `image_generate`，不走 stdio MCP（避免子进程开销污染样本）。需要至少一个有效 key 才能跑真实请求；不带 key 用 `--dry-run` 也能验证脚本/导入/校验链路。
+
+报告默认落到 `tests/reports/<title>_<ts>.{json,md}`，已被 `.gitignore` 排除。生成的图扔到 `/tmp/micu-bench/<label>/`，不会污染你的 `~/Pictures/micu-out`。
+
+### 性能基线 `tests/perf_bench.py`
+
+串行跑 image2 / Grok 在不同 `size` 下的 `image_generate`，记录单次延迟、actual_size 偏差、保存后字节数。
+
+```bash
+# smoke (默认): image2 + grok 各 2 张, 共 4 张 → ~3-5 分钟
+python tests/perf_bench.py
+
+# 完整 sweep, 每组重复 3 次
+python tests/perf_bench.py --full --repeat 3
+
+# 只跑某一通道
+python tests/perf_bench.py --channels image2
+python tests/perf_bench.py --channels grok
+
+# 干跑 (不打 API, 只验证脚本链路)
+python tests/perf_bench.py --dry-run
+```
+
+报告 markdown 表头：`group | n | ok | fail | rate | p50_ms | p95_ms | mean_ms | actual_match`。`actual_match` 是 PNG header 读出的实际像素严格等于请求 size 的比例 — 对 image2 1K 福利档预期会偏低（被代理压到 ~1.57MP），2K/4K 严格 1:1，Grok 由 `MICU_GROK_SIZE_MODE` 决定。
+
+### 并发压力 `tests/stress_concurrent.py`
+
+验证：
+1. 1K 单进程多并发 → 进程内不卡，吞吐近似线性
+2. ≥2K 多进程并发 → 进程内 `asyncio.Semaphore(1)` + 跨进程 `flock` 双层锁串行
+3. CF 524 / 上游 5xx → 重试/fail-fast 策略
+4. Grok 路径不走 ≥2K 锁，可线性并发
+
+```bash
+# in-process 并发 (默认 smoke, image2 1K x 3)
+python tests/stress_concurrent.py
+
+# 验证 ≥2K 锁串行
+python tests/stress_concurrent.py --size 2048x2048 --concurrency 4
+
+# 跨进程模式 (spawn N 个子进程, 模拟多 Claude Code 窗口)
+python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
+
+# Grok 并发
+python tests/stress_concurrent.py --model grok-imagine-image-lite --concurrency 5
+```
+
+报告关键派生指标：
+
+| 指标 | 含义 |
+|---|---|
+| `total_wall_ms` | 整批耗时（从 gather 到全部返回） |
+| `serial_estimate_ms` | 所有成功请求 wall_ms 之和（串行下界） |
+| `concurrency_efficiency` | `total_wall_ms / serial_estimate_ms`。≈ 1 → 强串行（锁生效）；≈ 1/N → 强并发；中间 → 部分排队 |
+| `lock_wait_observed` | notes 里出现 “等待跨进程 ≥2K 锁” 的请求数（>2s 才记） |
+
+> 提醒：image2 真实并发会按米醋后台 pro 队列限流计费，跑 `--concurrency` ≥ 3 之前先确认账户额度。dry-run / 401 路径不计费。

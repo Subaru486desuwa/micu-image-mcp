@@ -6,7 +6,7 @@ import re
 from .config import (
     DEFAULT_MODEL, PRO_MODEL,
     GROK_MODEL_ALIASES, GROK_ASPECT_RATIO_CHOICES,
-    HIGH_RES_EDGE,
+    HIGH_RES_EDGE, MIN_SIZE_EDGE, MAX_SIZE_EDGE,
 )
 from .sizes import _parse_size, _max_edge, _size_tier, _round_to_alignment
 
@@ -112,6 +112,10 @@ def _infer_size_from_prompt(prompt: str) -> tuple[str, str] | None:
     if m:
         w, h = int(m.group(1)), int(m.group(2))
         w16, h16 = _round_to_alignment(w), _round_to_alignment(h)
+        # 对齐后若越界（如 prompt 写了 "128x128 icon"），不要返回一个会被 _validate_size 硬拒的 size，
+        # 返回 None 让 image_generate 兜底默认 1024x1024，而非直接报错。
+        if not (MIN_SIZE_EDGE <= w16 <= MAX_SIZE_EDGE and MIN_SIZE_EDGE <= h16 <= MAX_SIZE_EDGE):
+            return None
         if w16 != w or h16 != h:
             return f"{w16}x{h16}", f"prompt 含像素 {w}x{h}，对齐 8 倍数为 {w16}x{h16}"
         return f"{w16}x{h16}", f"prompt 含明确像素 {w}x{h}"

@@ -19,6 +19,10 @@ class ImageSaveError(Exception):
     """落盘前校验失败（响应过大 / 不是合法图片 / 路径越界）。"""
 
 
+# PIL 归一化前的像素上限（防解压炸弹）。4K=8.3MP / 2K=4MP，64MP 留足余量且远低于 Pillow 默认 bomb 阈值。
+_MAX_NORMALIZE_PIXELS = 64 * 1024 * 1024
+
+
 def _normalized_image_bytes_sync(raw: bytes, requested_size: str, mode: str) -> tuple[bytes, tuple[int, int] | None]:
     target = _parse_size(requested_size)
     actual = _detect_actual_size(raw)
@@ -34,6 +38,12 @@ def _normalized_image_bytes_sync(raw: bytes, requested_size: str, mode: str) -> 
 
     tw, th = target
     with Image.open(io.BytesIO(raw)) as im:
+        # 像素上限防解压炸弹：header 宣称的尺寸在 decode 前就能拿到。
+        if im.width * im.height > _MAX_NORMALIZE_PIXELS:
+            raise ImageSaveError(
+                f"待归一化图 {im.width}x{im.height} 像素超过上限 {_MAX_NORMALIZE_PIXELS}；"
+                f"疑似异常响应，已拒绝。可设 MICU_GROK_SIZE_MODE=backend 跳过本地后处理。"
+            )
         im = ImageOps.exif_transpose(im)
         has_alpha = im.mode in ("RGBA", "LA") or ("transparency" in im.info)
         if has_alpha:
@@ -135,6 +145,13 @@ async def _save_image_b64(
     notes: list[str] | None = None,
     normalize_label: str = "图片",
 ) -> tuple[Path, tuple[int, int] | None, int]:
+    # 解码前先按 b64 长度估算解码后字节（约 3/4），超上限直接拒，避免先把超大响应解进内存再事后检查。
+    est_decoded = len(b64) * 3 // 4
+    if est_decoded > MAX_RESPONSE_BYTES:
+        raise ImageSaveError(
+            f"b64 响应解码后约 {est_decoded/1024/1024:.1f}MB 超过单图上限 "
+            f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB；可能是代理返回了错误内容"
+        )
     try:
         # 大图 base64 解码（4K 16MB → 12MB）走 to_thread，避免 30-50ms 事件循环阻塞
         raw = await asyncio.to_thread(base64.b64decode, b64, validate=False)

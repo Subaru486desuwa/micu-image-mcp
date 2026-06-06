@@ -38,3 +38,6 @@ out/
 
 # Logs
 *.log
+
+# 测试报告
+tests/reports/

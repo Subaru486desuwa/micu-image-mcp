@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import time
 from contextlib import asynccontextmanager
@@ -47,22 +48,34 @@ def _acquire_big_size_file_lock_blocking() -> int:
     _BIG_SIZE_FILE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     if _LOCK_BACKEND == "posix":
         fd = os.open(str(_BIG_SIZE_FILE_LOCK_PATH), os.O_WRONLY | os.O_CREAT, 0o644)
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        # flock 抛错（EINTR/EDEADLK/ENOLCK 等）时必须关 fd，否则每次失败泄漏一个 fd。
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
         return fd
     if _LOCK_BACKEND == "windows":
         fd = os.open(str(_BIG_SIZE_FILE_LOCK_PATH), os.O_RDWR | os.O_CREAT, 0o644)
         try:
-            os.write(fd, b"\x00")
-        except OSError:
-            pass
-        os.lseek(fd, 0, os.SEEK_SET)
-        while True:
             try:
-                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
-                return fd
+                os.write(fd, b"\x00")
             except OSError:
-                # 10s timeout 未拿到，再试
-                continue
+                pass
+            os.lseek(fd, 0, os.SEEK_SET)
+            while True:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                    return fd
+                except OSError as e:
+                    # EDEADLK = msvcrt 10s 内未拿到锁的超时信号，继续等待重试；
+                    # 其它 errno（EACCES/EBADF 等）是永久错误，不能无限 busy-loop，关 fd 后抛出。
+                    if e.errno == errno.EDEADLK:
+                        continue
+                    raise
+        except BaseException:
+            os.close(fd)
+            raise
     raise RuntimeError("file lock backend unavailable")
 
 
