@@ -87,7 +87,9 @@ class TestValidateImageBytes:
 
     def test_garbage(self):
         msg = S._validate_image_bytes(b"\x00" * 32)
-        assert msg is not None and "不是 PNG" in msg
+        assert msg is not None and "magic 不匹配" in msg
+        # PATH-2 回归：错误信息不得回显文件原始字节
+        assert "\\x00" not in msg and repr(b"\x00" * 16) not in msg
 
     def test_label_in_error(self):
         msg = S._validate_image_bytes(b"", label="mask_path")

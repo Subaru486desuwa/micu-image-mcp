@@ -96,26 +96,87 @@ def _release_big_size_file_lock(fd: int) -> None:
             pass
 
 
+# 轮询间隔：非阻塞获取失败后等多久再试。锁竞争是分钟级（≥2K 单张 50-80s），0.1s 轮询开销可忽略。
+_LOCK_POLL_INTERVAL_SECONDS = 0.1
+
+
+def _open_lock_fd() -> int:
+    """打开（必要时创建）锁文件返回 fd。不获取锁，构造近乎瞬时。"""
+    _BIG_SIZE_FILE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if _LOCK_BACKEND == "posix":
+        return os.open(str(_BIG_SIZE_FILE_LOCK_PATH), os.O_WRONLY | os.O_CREAT, 0o644)
+    if _LOCK_BACKEND == "windows":
+        fd = os.open(str(_BIG_SIZE_FILE_LOCK_PATH), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            os.write(fd, b"\x00")
+        except OSError:
+            pass
+        os.lseek(fd, 0, os.SEEK_SET)
+        return fd
+    raise RuntimeError("file lock backend unavailable")
+
+
+def _try_lock_nb(fd: int) -> bool:
+    """非阻塞尝试获取锁：成功 True，被他人占用 False，其它错误抛出。
+
+    非阻塞是关键：调用方在 async 侧轮询，使取消能在 await 点干净中断，
+    不会像阻塞 flock 那样把 to_thread 线程永久卡住并孤儿持锁。
+    """
+    if _LOCK_BACKEND == "posix":
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError as e:
+            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES):
+                return False
+            raise
+    if _LOCK_BACKEND == "windows":
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError as e:
+            if e.errno in (errno.EDEADLK, errno.EACCES, errno.EAGAIN):
+                return False
+            raise
+    return True
+
+
 @asynccontextmanager
 async def _big_size_file_lock_async(notes_out: list[str] | None = None):
     """跨进程串行 ≥2K 请求。Windows 无 fcntl 时退化为 no-op（仅进程内 Semaphore 生效）。
 
     notes_out: 可选 list[str]，等锁 >2s 时附加排队 note 让多窗口排队对用户可见。
+
+    取消安全：async 侧非阻塞获取 + asyncio.sleep 轮询；无论在哪步被取消，finally 都会 close(fd)，
+    而 close 本身即释放该 fd 上的 advisory 锁——不会留下孤儿持锁线程 / 泄漏 fd。
     """
     if not _FILE_LOCK_AVAILABLE:
         yield
         return
     t0 = time.monotonic()
-    fd = await asyncio.to_thread(_acquire_big_size_file_lock_blocking)
-    wait_s = time.monotonic() - t0
-    if notes_out is not None and wait_s > 2.0:
-        notes_out.append(
-            f"等待跨进程 ≥2K 锁 {wait_s:.1f}s（其他 Claude Code / Codex 窗口同时在跑 ≥2K，已串行）"
-        )
+    fd = await asyncio.to_thread(_open_lock_fd)
+    acquired = False
     try:
+        while True:
+            acquired = await asyncio.to_thread(_try_lock_nb, fd)
+            if acquired:
+                break
+            await asyncio.sleep(_LOCK_POLL_INTERVAL_SECONDS)
+        wait_s = time.monotonic() - t0
+        if notes_out is not None and wait_s > 2.0:
+            notes_out.append(
+                f"等待跨进程 ≥2K 锁 {wait_s:.1f}s（其他 Claude Code / Codex 窗口同时在跑 ≥2K，已串行）"
+            )
         yield
     finally:
-        await asyncio.to_thread(_release_big_size_file_lock, fd)
+        if acquired:
+            _release_big_size_file_lock(fd)  # 显式 LOCK_UN + close
+        else:
+            try:
+                os.close(fd)  # close 即释放任何已持有的 advisory 锁
+            except OSError:
+                pass
 
 
 __all__ = [
@@ -123,5 +184,6 @@ __all__ = [
     "_get_big_size_lock",
     "_acquire_big_size_file_lock_blocking",
     "_release_big_size_file_lock",
+    "_open_lock_fd", "_try_lock_nb",
     "_big_size_file_lock_async",
 ]

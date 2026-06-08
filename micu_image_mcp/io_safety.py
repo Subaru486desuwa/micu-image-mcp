@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .config import (
-    _SAVE_ROOT, DEFAULT_SAVE_DIR,
+    _SAVE_ROOT, DEFAULT_SAVE_DIR, _INPUT_ROOT,
     _SAFE_BASENAME_RE,
     MAX_INPUT_FILE_BYTES,
 )
@@ -70,7 +70,7 @@ def _validate_image_bytes(raw: bytes, label: str = "image") -> str | None:
     # GIF
     if raw[:6] in (b"GIF87a", b"GIF89a"):
         return None
-    return f"{label} 不是 PNG/JPEG/WebP/GIF（前 16 字节: {raw[:16]!r}）"
+    return f"{label} 不是受支持的图片格式（PNG/JPEG/WebP/GIF magic 不匹配）"
 
 
 def _validate_image_path(image_path: str, label: str = "image_path") -> tuple[Path, bytes, str, str | None]:
@@ -79,6 +79,15 @@ def _validate_image_path(image_path: str, label: str = "image_path") -> tuple[Pa
     """
     err: str | None = None
     p = Path(image_path).expanduser()
+    # 可选输入白名单根（MICU_INPUT_ROOT）：启用后拒绝根外路径，resolve 后比对可挡符号链接逃逸。
+    # 防被 prompt 注入的 LLM 用任意本地路径读取并外发文件。默认 _INPUT_ROOT=None 不限制。
+    if _INPUT_ROOT is not None:
+        try:
+            p.resolve().relative_to(_INPUT_ROOT)
+        except (ValueError, OSError):
+            return p, b"", "", (
+                f"{label} 必须在 MICU_INPUT_ROOT={_INPUT_ROOT} 之下（已启用输入路径白名单）；收到 {image_path!r}"
+            )
     if not p.is_file():
         return p, b"", "", f"{label} 不存在: {p}"
     try:
@@ -194,15 +203,21 @@ def _detect_actual_size(raw: bytes) -> tuple[int, int] | None:
     if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
         chunk = raw[12:16]
         if chunk == b"VP8 ":
+            if len(raw) < 30:
+                return None  # 截断：与其它分支一致返回 None 而非越界 IndexError
             w = int.from_bytes(raw[26:28], "little") & 0x3FFF
             h = int.from_bytes(raw[28:30], "little") & 0x3FFF
             return w, h
         if chunk == b"VP8L":
+            if len(raw) < 25:
+                return None
             b1, b2, b3, b4 = raw[21], raw[22], raw[23], raw[24]
             w = ((b2 & 0x3F) << 8 | b1) + 1
             h = ((b4 & 0x0F) << 10 | b3 << 2 | (b2 & 0xC0) >> 6) + 1
             return w, h
         if chunk == b"VP8X":
+            if len(raw) < 30:
+                return None
             w = (raw[24] | raw[25] << 8 | raw[26] << 16) + 1
             h = (raw[27] | raw[28] << 8 | raw[29] << 16) + 1
             return w, h

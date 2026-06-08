@@ -31,6 +31,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 PY_MIN = (3, 10)
 
@@ -115,8 +116,21 @@ def _atomic_write_secure(path: Path, text: str) -> None:
     并保证落盘文件不带宽松权限。
     """
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
-    tmp.write_text(text, encoding="utf-8")
-    _chmod_600(tmp)
+    try:
+        os.unlink(tmp)  # 清掉同 pid 的陈旧 tmp（极少见），让 O_EXCL 不被绊住
+    except OSError:
+        pass
+    # 以 0600 原子创建（O_EXCL）后再写，消除"先 0644 写明文 key、后 chmod"的宽松权限窗口。
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     os.replace(tmp, path)
 
 
@@ -231,6 +245,15 @@ def _model_ids_for_key(baseurl: str, api_key: str) -> tuple[list[str] | None, st
         return None, "httpx unavailable", None
 
     url = baseurl.rstrip("/") + "/v1/models"
+    # KEYLEAK-1：拒绝把 key 发往非 https 且非本地的 baseurl（防误把 key 发到攻击者 host）。
+    _parts = urlsplit(baseurl)
+    _host = (_parts.hostname or "").lower()
+    _is_local = _host in ("localhost", "127.0.0.1", "::1") or _host.endswith(".localhost")
+    if not (_parts.scheme == "https" or (_parts.scheme == "http" and _is_local)):
+        return None, (
+            f"拒绝把 key 发往非 https 且非本地的 baseurl（scheme={_parts.scheme!r} host={_host!r}）；"
+            f"自定义代理请用 https，本地调试可用 http://localhost"
+        ), None
     try:
         r = httpx.get(
             url,
@@ -441,6 +464,7 @@ def _backup(path: Path) -> Path | None:
         return None
     bak = path.with_name(path.name + f".bak.{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     shutil.copy2(path, bak)
+    _chmod_600(bak)  # 备份含明文 key，收紧到仅属主可读写（继承源文件 0644 会泄露给同机其他用户）
     info(f"备份: {path.name} -> {bak.name}")
     return bak
 

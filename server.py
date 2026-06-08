@@ -255,8 +255,6 @@ async def image_generate(
                 f"本地归一化到请求 size={size}。"
             )
         aspect_ratio = _grok_aspect_ratio(size)
-        if aspect_ratio == "auto":
-            notes.append(f"Grok 路径对 size={size} 的比例未找到精确匹配，已使用 auto")
         grok_ep = Endpoint(
             url=f"{baseurl}/v1/images/generations",
             json_body={

@@ -48,6 +48,14 @@ _SAVE_ROOT = Path(os.environ.get(
 # 时会触发 _resolve_save_dir 把 cwd/out 重定向到 _SAVE_ROOT，对用户是静默的坑。
 DEFAULT_SAVE_DIR = Path(os.environ.get("MICU_SAVE_DIR", str(_SAVE_ROOT)))
 
+# 输入图路径默认不受根限制（工具核心用途就是编辑磁盘上任意位置的图）。
+# 安全敏感部署可设 MICU_INPUT_ROOT=<dir>，把输入图也关进白名单根，拒绝根外路径
+# （防被 prompt 注入的 LLM 用任意本地路径读取并外发文件）。默认 None = 保持原有行为。
+_INPUT_ROOT_RAW = os.environ.get("MICU_INPUT_ROOT", "").strip()
+_INPUT_ROOT: Path | None = (
+    Path(_INPUT_ROOT_RAW).expanduser().resolve() if _INPUT_ROOT_RAW else None
+)
+
 PRO_MODEL = "gpt-image-2-pro"
 NONPRO_MODEL = "gpt-image-2"
 GROK_MODEL_ALIASES = {
@@ -124,7 +132,7 @@ __all__ = [
     "_LOCK_BACKEND", "_FILE_LOCK_AVAILABLE",
     "DEFAULT_BASEURL", "API_KEY", "DEFAULT_MODEL",
     "GROK_BASEURL", "GROK_API_KEY", "XAI_MODEL", "GROK_SIZE_MODE",
-    "_TRUST_ENV", "_SAVE_ROOT", "DEFAULT_SAVE_DIR",
+    "_TRUST_ENV", "_SAVE_ROOT", "DEFAULT_SAVE_DIR", "_INPUT_ROOT",
     "PRO_MODEL", "NONPRO_MODEL",
     "GROK_MODEL_ALIASES", "GROK_AVAILABLE_MODELS",
     "GROK_ASPECT_RATIO_CHOICES", "GROK_SIZE_MODES",
