@@ -265,7 +265,7 @@ async def image_generate(
                 "n": n,
                 "resolution": _grok_resolution(size),
                 "aspect_ratio": aspect_ratio,
-                "response_format": "b64_json",
+                "response_format": "url",
             },
         )
         status, text = await _call_with_retry(
@@ -353,7 +353,7 @@ async def image_generate(
             "prompt": prompt,
             "n": 1,
             "size": size,
-            "response_format": "b64_json",
+            "response_format": "url",
         },
     )
 
@@ -594,7 +594,7 @@ async def image_edit(
                     "resolution": _grok_resolution(size),
                     "aspect_ratio": _grok_aspect_ratio(size),
                     "reference_image": img_data_url,
-                    "response_format": "b64_json",
+                    "response_format": "url",
                 },
             ),
             key,
@@ -675,7 +675,7 @@ async def image_edit(
                 "n": 1,
                 "size": size,
                 "reference_image": img_data_url,
-                "response_format": "b64_json",
+                "response_format": "url",
             },
         )
         notes.append(f"≥2K 路径：/v1/images/generations + reference_image（size 真实生效，无 mask 支持）")
@@ -688,7 +688,7 @@ async def image_edit(
             "model": eff_model,
             "prompt": prompt,
             "size": size,
-            "response_format": "b64_json",
+            "response_format": "url",
             "image": (img_p.name, img_bytes, img_mime),
         }
         if mask_bytes:
@@ -1063,7 +1063,7 @@ async def image_multi_reference(
                     "resolution": _grok_resolution(size),
                     "aspect_ratio": _grok_aspect_ratio(size),
                     "image_urls": image_urls,
-                    "response_format": "b64_json",
+                    "response_format": "url",
                 },
             ),
             key,
@@ -1150,7 +1150,7 @@ async def image_multi_reference(
             "n": 1,
             "size": size,
             "image_urls": image_urls,
-            "response_format": "b64_json",
+            "response_format": "url",
         },
     )
 
