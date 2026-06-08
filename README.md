@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="MICU IMAGE — 米醋 gpt-image-2 / grok image MCP server" width="820">
+</p>
+
 # 米醋画图 MCP
 
 把 [米醋](https://www.micuapi.ai) 的图像接口包装成 MCP server，让 Claude Code / Codex / Cursor 等 MCP 客户端直接生图、改图、批处理、多图参考。

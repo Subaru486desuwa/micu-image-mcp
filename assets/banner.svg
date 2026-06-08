@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="240" viewBox="0 0 880 240" role="img" aria-label="MICU IMAGE — 米醋 gpt-image-2 / grok image MCP server">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#11161d"/>
+      <stop offset="1" stop-color="#0a0d12"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF4D3D"/>
+      <stop offset="0.5" stop-color="#FF7A1A"/>
+      <stop offset="1" stop-color="#FFB020"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-25%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect x="1" y="1" width="878" height="238" rx="22" fill="url(#bg)" stroke="#222b36" stroke-width="1"/>
+
+  <g filter="url(#shadow)" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+    <text x="440" y="120" text-anchor="middle" font-size="92" font-weight="800" letter-spacing="3" fill="url(#brand)">MICU IMAGE</text>
+  </g>
+
+  <rect x="306" y="140" width="268" height="3" rx="1.5" fill="url(#brand)" opacity="0.9"/>
+
+  <text x="440" y="178" text-anchor="middle" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#c8d2dc">米醋 · gpt-image-2 / grok image · MCP server</text>
+
+  <text x="440" y="210" text-anchor="middle" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="14" fill="#6b7785" letter-spacing="0.5">v0.1.0  ·  github.com/Subaru486desuwa/micu-image-mcp</text>
+</svg>
