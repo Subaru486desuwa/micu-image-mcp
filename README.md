@@ -29,7 +29,7 @@
 | Tool | 说明 |
 |---|---|
 | `image_generate` | 文生图。米醋 image2 支持 1K / 2K / 4K；Grok 支持 1K / 2K 路由 |
-| `image_edit` | 单图参考/编辑。image2 走 edits 或 `reference_image`；Grok 走 `reference_image` |
+| `image_edit` | 单图参考/编辑。image2 走 `/v1/images/edits`（1K ~1.57MP，2K best-effort 真 2K）；Grok 走 `reference_image` |
 | `image_batch_edit` | 多张图逐张同指令处理 |
 | `image_multi_reference` | 2-10 张参考图融合成 1 张新图；Grok 走 `image_urls` |
 | `server_info` | 查看 base URL、模型、size 规则、重试策略、安全约束 |
@@ -45,12 +45,12 @@
 | 默认用途 | 主通道，覆盖文生图、图生图、批量编辑、多图参考 | 可选通道，适合快速文生图、单图参考、多图参考 |
 | 可选模型 | `gpt-image-2`, `gpt-image-2-pro` | `grok-imagine-image-lite`, `grok-imagine-image`, `grok-imagine-image-pro`, `grok-imagine-image-edit` |
 | `image_generate` 文生图 | 支持 1K / 2K / 4K；2K/4K 自动切 pro，强制 `n=1` | 支持 1K / 2K 路由；`n` 会传给后端，实际返回张数以响应为准 |
-| `image_edit` 单图参考/编辑 | 1K 走 `/v1/images/edits`；2K 走 `reference_image`；4K 参考图入口拒绝 | 走 `/v1/images/generations` + `reference_image`；4K 会映射到 `resolution=2k` |
-| 局部 mask | 仅 1K edits multipart 支持 alpha mask；2K 不支持 | 当前不支持 mask，传入会忽略并写入 `notes` |
-| `image_multi_reference` 多图参考 | 2-10 张参考图；1K 稳定，2K 可能 fallback，4K 入口拒绝 | 2-10 张参考图走 `image_urls`；实测可用，按 `resolution` + `aspect_ratio` 映射 |
+| `image_edit` 单图参考/编辑 | 所有尺寸走 `/v1/images/edits`（1K ~1.57MP，2K best-effort 真 2K）；4K 入口拒绝 | 走 `/v1/images/generations` + `reference_image`；4K 会映射到 `resolution=2k` |
+| 局部 mask | `/v1/images/edits` 所有尺寸支持 alpha mask | 当前不支持 mask，传入会忽略并写入 `notes` |
+| `image_multi_reference` 多图参考 | 2-10 张参考图走 `/v1/images/edits` + `image[]`（1K ~1.57MP，2K best-effort 真 2K）；4K 入口拒绝 | 2-10 张参考图走 `image_urls`；实测可用，按 `resolution` + `aspect_ratio` 映射 |
 | `image_batch_edit` 批量逐张编辑 | 支持 1K；non-pro 5 并发，pro 串行 | 当前不支持 Grok 批量逐张编辑 |
 | size 校验 | `WxH`，边长 256-4096，W/H 必须是 8 的倍数 | 只校验 `WxH` 正整数，不强制 8 倍数和 4096 边长 |
-| 实际输出尺寸 | ≥4MP 通常严格 1:1；≤2.25MP 会被代理处理到约 1.57MP | 不保证等于请求 `WxH`，以 `saved.actual_size` 为准 |
+| 实际输出尺寸 | 纯文生图 2K/4K best-effort（常缩到 ~1.57MP 或 524）；带参考图 1K ~1.57MP、2K best-effort 真 2K | 不保证等于请求 `WxH`，以 `saved.actual_size` 为准 |
 | 重试/限流 | 2K/4K 使用跨进程锁，避免多个 MCP 同时打 pro 队列 | 不走高分辨率锁；可恢复错误仍自动重试并记录到 `notes` |
 | 配置变量 | `MICU_API_KEY`, `MICU_MODEL`, `MICU_BASEURL` | `MICU_GROK_API_KEY`, `XAI_MODEL`；默认复用 `MICU_BASEURL` |
 
@@ -166,6 +166,25 @@ Grok 路径：
 - 不强制 8 倍数
 - 当前按 1K / 2K 路由
 - 4K 请求会映射到 `resolution=2k`
+
+---
+
+## 尺寸能力矩阵 / Size capability
+
+实测确认的真实能力（image2 路径）。1K 档可靠输出 ~1.57MP；纯文生图 2K/4K 是 best-effort；带参考图 2K 为 best-effort 真 2K。
+
+| 场景 | 可靠性 | 实际输出 |
+|---|---|---|
+| ≤1.57MP（1K 档，所有 tool） | 可靠、快 | ~1.57MP（福利档） |
+| 2K/4K 纯文生图（`image_generate`，无参考图） | best-effort | base 常缩到 ~1.57MP；pro 常 524 超时 |
+| 带参考图 2K（`image_edit` / `image_multi_reference`） | best-effort 真 2K | 走 `/v1/images/edits`，约 2/3 成功真返回 2048²；524 时 fallback chat → ~1.57MP |
+| 带参考图 4K | 已禁用 | 入口拒绝（origin > 120s 撞 CF 524） |
+
+说明：
+
+- `/v1/images/edits` 是米醋唯一真正消费输入图的端点。1K 档稳定输出 ~1.57MP；2K 档自动切 pro 后 best-effort 真 2K（压测约 2/3 成功真返回 2048×2048，524 时 fallback chat stream → ~1.57MP，较慢 2-4 分钟/单次）。
+- 旧的 `generations + reference_image`（单图 2K）和 `generations + image_urls`（多图）路径要么 524 断流、要么参考图被静默忽略，已废弃。
+- 想要真 4K 用**两步法**：先出一张 ~1.57MP/2K 的综合/编辑图 → 再用 `image_generate` 描述同场景升 4K（4K 升分辨率本身也常 524，best-effort；这一步对 `image_generate` 的真 4K 仍有意义）。
 
 ---
 

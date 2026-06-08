@@ -34,7 +34,7 @@ from .locks import _get_big_size_lock, _big_size_file_lock_async
 class Endpoint:
     url: str
     json_body: dict | None = None
-    multipart: dict | None = None  # {field_name: (filename, bytes, mime)}
+    multipart: dict | None = None  # {field: (filename, bytes, mime)} 或 {field: [(fn,bytes,mime), ...]} 同名多文件（image[]）
 
 
 # 模块级共享 httpx.AsyncClient：复用 keepalive 连接，减少每次请求的 TLS handshake / DNS。
@@ -90,6 +90,10 @@ async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tupl
         for k, v in ep.multipart.items():
             if isinstance(v, tuple) and len(v) == 3:
                 files.append((k, v))
+            elif isinstance(v, list):
+                # 同名多文件：米醋多图编辑要求重复的 image[] part（参考图唯一被消费的端点/字段）
+                for item in v:
+                    files.append((k, item))
             else:
                 data[k] = v
         ctx = cx.stream("POST", ep.url, headers=headers, data=data, files=files, timeout=timeout)
