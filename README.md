@@ -50,7 +50,7 @@
 | `image_multi_reference` 多图参考 | 2-10 张参考图走 `/v1/images/edits` + `image[]`（1K ~1.57MP，2K best-effort 真 2K）；4K 入口拒绝 | 2-10 张参考图走 `image_urls`；实测可用，按 `resolution` + `aspect_ratio` 映射 |
 | `image_batch_edit` 批量逐张编辑 | 支持 1K；non-pro 5 并发，pro 串行 | 当前不支持 Grok 批量逐张编辑 |
 | size 校验 | `WxH`，边长 256-4096，W/H 必须是 8 的倍数 | 只校验 `WxH` 正整数，不强制 8 倍数和 4096 边长 |
-| 实际输出尺寸 | 纯文生图 2K/4K best-effort（常缩到 ~1.57MP 或 524）；带参考图 1K ~1.57MP、2K best-effort 真 2K | 不保证等于请求 `WxH`，以 `saved.actual_size` 为准 |
+| 实际输出尺寸 | 纯文生图 2K/4K 真分辨率可用（pro + 重试吸收瞬时 524，~80s/张）；带参考图 1K ~1.57MP、2K best-effort 真 2K | 不保证等于请求 `WxH`，以 `saved.actual_size` 为准 |
 | 重试/限流 | 2K/4K 使用跨进程锁，避免多个 MCP 同时打 pro 队列 | 不走高分辨率锁；可恢复错误仍自动重试并记录到 `notes` |
 | 配置变量 | `MICU_API_KEY`, `MICU_MODEL`, `MICU_BASEURL` | `MICU_GROK_API_KEY`, `XAI_MODEL`；默认复用 `MICU_BASEURL` |
 
@@ -171,12 +171,12 @@ Grok 路径：
 
 ## 尺寸能力矩阵 / Size capability
 
-实测确认的真实能力（image2 路径）。1K 档可靠输出 ~1.57MP；纯文生图 2K/4K 是 best-effort；带参考图 2K 为 best-effort 真 2K。
+实测确认的真实能力（image2 路径）。1K 档可靠输出 ~1.57MP；纯文生图 2K/4K 真分辨率可用（pro + 重试）；带参考图 2K 为 best-effort 真 2K。
 
 | 场景 | 可靠性 | 实际输出 |
 |---|---|---|
 | ≤1.57MP（1K 档，所有 tool） | 可靠、快 | ~1.57MP（福利档） |
-| 2K/4K 纯文生图（`image_generate`，无参考图） | best-effort | base 常缩到 ~1.57MP；pro 常 524 超时 |
+| 2K/4K 纯文生图（`image_generate`，无参考图） | 真 2K/4K 可用 | 自动切 pro + MCP 重试吸收瞬时 524，实测真返回 2048² / 3840×2160，~80s/张（高负载偶慢/偶失败） |
 | 带参考图 2K（`image_edit` / `image_multi_reference`） | best-effort 真 2K | 走 `/v1/images/edits`，约 2/3 成功真返回 2048²；524 时 fallback chat → ~1.57MP |
 | 带参考图 4K | 已禁用 | 入口拒绝（origin > 120s 撞 CF 524） |
 
@@ -184,7 +184,7 @@ Grok 路径：
 
 - `/v1/images/edits` 是米醋唯一真正消费输入图的端点。1K 档稳定输出 ~1.57MP；2K 档自动切 pro 后 best-effort 真 2K（压测约 2/3 成功真返回 2048×2048，524 时 fallback chat stream → ~1.57MP，较慢 2-4 分钟/单次）。
 - 旧的 `generations + reference_image`（单图 2K）和 `generations + image_urls`（多图）路径要么 524 断流、要么参考图被静默忽略，已废弃。
-- 想要真 4K 用**两步法**：先出一张 ~1.57MP/2K 的综合/编辑图 → 再用 `image_generate` 描述同场景升 4K（4K 升分辨率本身也常 524，best-effort；这一步对 `image_generate` 的真 4K 仍有意义）。
+- 带参考图想要真 4K 用**两步法**：先出一张 ~1.57MP/2K 的综合/编辑图 → 再用 `image_generate` 描述同场景升 4K（`image_generate` 4K 真分辨率可用，自动切 pro + MCP 重试吸收瞬时 524）。
 
 ---
 

@@ -142,9 +142,9 @@ async def image_generate(
       - 用户提到"FullHD/1080p/横屏视频封面" → "2048x1152"（横）或 "1152x2048"（竖），跨过 2.25MP 阈值。
       - **pro 与非 pro 价格一致** —— 想要真分辨率请直接拉高 size，1920×1080 这种 ≤2.25MP 的会被压成 ~1.57MP。
       - W 与 H 必须都是 8 的倍数（米醋实测约束；OpenAI 官方要 16，米醋更宽容）。
-      - ≤2.25MP 的请求都被代理压到 ~1.57MP；可靠输出就是 ~1.57MP。
-      - **2K/4K 为 best-effort**：base 模型常把高分请求缩成 ~1.57MP，pro 模型常 524 超时；
-        真 2K/4K 基本拿不到，需要更高分辨率时多试几次或接受 ~1.57MP。
+      - ≤2.25MP（含 1K 档与名义 2K 的 1920×1080）被代理压到 ~1.57MP 福利档，可靠输出 ~1.57MP。
+      - **2K/4K 真分辨率可用**：≥2K 自动切 pro，MCP 内置重试吃掉瞬时 524，实测 2048² 真返回 2K、
+        3840×2160 真返回 4K，约 80s/张（高负载下可能更慢或偶发失败）。想要真分辨率直接拉高 size。
 
     [PROMPT 写法建议]
       - 中英文混合可。gpt-image-2 文本渲染近完美，可大段嵌字（中英标点都行）。
@@ -156,8 +156,8 @@ async def image_generate(
               强 LLM 已知偏好时**直接显式传**更准。W 和 H 都必须是 8 的倍数（米醋约束）。常用：
               "1024x1024" "1280x720" "1024x1536" "1536x1024" "720x1280"        ← 1K 档（被压到 1.57MP，可靠）
               "1920x1080" "1080x1920"                                          ← 名义 2K 但 ≤2.25MP，被压到 1.57MP
-              "2048x2048" "2048x1152" "1152x2048"                              ← 真 2K 档（best-effort，常缩到 1.57MP 或 524）
-              "3840x2160" "2160x3840"                                          ← 4K 档（best-effort，pro 常 524）
+              "2048x2048" "2048x1152" "1152x2048"                              ← 真 2K 档（自动 pro，重试吸收瞬时 524，~80s/张）
+              "3840x2160" "2160x3840"                                          ← 4K 档（自动 pro，重试吸收瞬时 524，~80s/张）
               默认 None（推断后兜底 1024x1024）。
         n: 张数 1-10。1K 时 N>1 自动 5 并发；≥2K 强制 N=1（代理限流）。默认 1。
         model: 显式指定模型。留空时按 size 自动选（max edge ≥1600 用 pro，否则 non-pro）。
@@ -1262,9 +1262,10 @@ def server_info() -> dict[str, Any]:
                 "请求总像素 ≤ 2.25MP（如 1024² / 1280×720 / 1500² / 1920×1080）会被代理"
                 "等比放大或压缩到 ~1.57MP（福利档），实际输出 ≠ 请求 size。"
             ),
-            "above_4mp_best_effort": (
-                "请求总像素 ≥ 4MP（如 2048² / 3840×2160）为 best-effort：base 模型常缩成 ~1.57MP，"
-                "pro 模型常 524 超时。真 2K/4K 不可靠；可靠输出 ~1.57MP。"
+            "above_4mp_real_resolution": (
+                "纯文生图 image_generate 请求总像素 ≥ 4MP（如 2048² / 3840×2160）真分辨率可用："
+                "自动切 pro，MCP 重试吃掉瞬时 524，实测 2048²→真 2K、3840×2160→真 4K，~80s/张"
+                "（高负载下可能更慢或偶发失败）。带参考图路径另见 reference_2k_best_effort。"
             ),
             "reference_2k_best_effort": (
                 "带参考图的 tool（image_edit / image_multi_reference）走 /v1/images/edits：1K 档稳定 ~1.57MP；"
@@ -1291,18 +1292,18 @@ def server_info() -> dict[str, Any]:
         },
         "recommended_sizes": {
             "1k_福利档_约1.57MP": sorted(VALID_SIZES_1K),
-            "2k_pro_best_effort": sorted(VALID_SIZES_2K),
-            "4k_pro_best_effort": sorted(VALID_SIZES_4K),
-            "tip": "纯文生图（image_generate）：1K 可靠 ~1.57MP，2K/4K best-effort（base 常缩到 1.57MP，pro 常 524）。带参考图（edit/multi_reference）：1K 稳定 ~1.57MP，2K best-effort 真 2K（约 2/3 成功，524 时 fallback ~1.57MP），4K 禁用。",
-            "two_step_tip": "想拼真 4K：先出 ~1.57MP/2K 综合/编辑图 → 再 image_generate(size=\"3840x...\") 描述同场景升 4K（4K 升分辨率本身也常 524，best-effort）。",
+            "2k_pro_real_resolution": sorted(VALID_SIZES_2K),
+            "4k_pro_real_resolution": sorted(VALID_SIZES_4K),
+            "tip": "纯文生图（image_generate）：1K 可靠 ~1.57MP，2K/4K 真分辨率可用（自动切 pro + MCP 重试吸收瞬时 524，~80s/张，高负载偶慢/偶失败）。带参考图（edit/multi_reference）：1K 稳定 ~1.57MP，2K best-effort 真 2K（约 2/3 成功，524 时 fallback ~1.57MP），4K 禁用。",
+            "two_step_tip": "带参考图想拼真 4K：先出 ~1.57MP/2K 综合/编辑图 → 再 image_generate(size=\"3840x...\") 描述同场景升 4K（image_generate 4K 真分辨率可用，重试吸收瞬时 524）。",
             "grok_tip": "Grok 路径按 aspect_ratio + resolution(1k/2k) 映射，不强制 8 倍数，size 仅用于本地路由选择。",
             "grok_actual_size_tip": "实测 Grok 返回像素不严格等于请求 WxH；以 saved.actual_size 为准。",
         },
         "capability_matrix": {
             "image_generate": {
                 "1k": "可靠，single 30s，N>1 自动 5 并发，输出 ~1.57MP",
-                "2k_pro": "best-effort，N=1 强制；base 常缩成 ~1.57MP，pro 常 524 超时（自动 fallback chat stream，输出 ~1.57MP，notes 里有标记）",
-                "4k_pro": "best-effort，N=1 强制；pro 常 524 超时，自动重试仍可能拿不到真 4K",
+                "2k_pro": "真 2K 可用，N=1 强制；自动切 pro，MCP 重试吃掉瞬时 524，实测真返回 2048²，~80s/张（高负载偶慢/偶失败）",
+                "4k_pro": "真 4K 可用，N=1 强制；自动切 pro，MCP 重试吃掉瞬时 524，实测真返回 3840×2160，~80s/张（高负载偶慢/偶失败）",
             },
             "grok_image_generate": {
                 "1k": f"可用，默认 model={XAI_MODEL}，resolution=1k，按 aspect_ratio 自动选图",
