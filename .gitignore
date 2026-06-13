@@ -41,3 +41,11 @@ out/
 
 # 测试报告
 tests/reports/
+
+# 本地 AI 开发工作流脚手架（仅本机使用，不随公开工具仓库发布）
+.agents/
+.claude/
+.codex/
+.trellis/
+.polygon/
+AGENTS.md
