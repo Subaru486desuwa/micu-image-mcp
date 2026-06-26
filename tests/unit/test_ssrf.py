@@ -82,6 +82,70 @@ def test_allow_hostname_resolving_to_public(monkeypatch):
     _assert_download_url_safe("https://oss.filenest.top/uploads/x.png")
 
 
+def test_allow_trusted_hostname_fake_ip(monkeypatch):
+    """Clash/Surge fake-ip：可信 CDN 域名解析到 198.18.x.x 应放行。"""
+    def fake_getaddrinfo(host, port, *a, **k):
+        return [(2, 1, 6, "", ("198.18.1.23", port or 443))]
+    monkeypatch.setattr(save.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(save, "ALLOW_FAKE_IP_DOWNLOAD", True)
+    _assert_download_url_safe("https://oss.filenest.top/uploads/x.png")
+
+
+def test_block_trusted_hostname_resolving_to_true_private(monkeypatch):
+    """可信域名若解析到真内网仍拒绝（防 DNS 投毒）。"""
+    def fake_getaddrinfo(host, port, *a, **k):
+        return [(2, 1, 6, "", ("10.1.2.3", port or 443))]
+    monkeypatch.setattr(save.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(save, "ALLOW_FAKE_IP_DOWNLOAD", True)
+    with pytest.raises(ImageSaveError):
+        _assert_download_url_safe("https://oss.filenest.top/uploads/x.png")
+
+
+def test_block_untrusted_hostname_fake_ip(monkeypatch):
+    def fake_getaddrinfo(host, port, *a, **k):
+        return [(2, 1, 6, "", ("198.18.1.23", port or 443))]
+    monkeypatch.setattr(save.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(save, "ALLOW_FAKE_IP_DOWNLOAD", True)
+    with pytest.raises(ImageSaveError):
+        _assert_download_url_safe("https://images.evil.example/x.png")
+
+
+def test_block_fake_ip_when_disabled(monkeypatch):
+    def fake_getaddrinfo(host, port, *a, **k):
+        return [(2, 1, 6, "", ("198.18.1.23", port or 443))]
+    monkeypatch.setattr(save.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(save, "ALLOW_FAKE_IP_DOWNLOAD", False)
+    with pytest.raises(ImageSaveError):
+        _assert_download_url_safe("https://oss.filenest.top/uploads/x.png")
+
+
+def test_save_image_url_fake_ip_trusted_host(monkeypatch, tmp_path):
+    """端到端：fake-ip 地址下载可信 CDN URL 能落盘。"""
+    png = _png_bytes()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=png, headers={"content-length": str(len(png))})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http_client, "_HTTP_CLIENT", client)
+    monkeypatch.setattr(save, "ALLOW_FAKE_IP_DOWNLOAD", True)
+
+    def fake_getaddrinfo(host, port, *a, **k):
+        return [(2, 1, 6, "", ("198.18.1.23", port or 443))]
+
+    monkeypatch.setattr(save.socket, "getaddrinfo", fake_getaddrinfo)
+
+    save_dir = config._SAVE_ROOT / "ssrf_fake_ip"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    p, actual, size_bytes = asyncio.run(
+        save._save_image_url("https://oss.filenest.top/img.png", save_dir, "fakeip")
+    )
+    assert p.exists()
+    assert actual == (32, 32)
+    asyncio.run(client.aclose())
+
+
 # ---------- _save_image_url 端到端（now-primary 路径） ----------
 
 def test_save_image_url_downloads_and_writes(monkeypatch, tmp_path):

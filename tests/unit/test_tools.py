@@ -87,6 +87,44 @@ def test_image_generate_happy_path(fake_http):
     assert r["saved"], r
 
 
+def test_image_generate_uses_url_first_response_format(monkeypatch):
+    """auto 模式默认先请求 response_format=url。"""
+    captured: dict = {}
+
+    async def fake_call(ep, key, *args, **kwargs):  # noqa: ANN001
+        if ep.json_body:
+            captured.update(ep.json_body)
+        return 200, _canned_b64_response()
+
+    monkeypatch.setattr(server, "_call_with_retry", fake_call)
+    monkeypatch.setattr(server, "RESPONSE_FORMATS_TO_TRY", ("url", "b64_json"))
+    r = asyncio.run(server.image_generate(prompt="test", size="1024x1024", api_key="sk-test"))
+    assert r["ok"] is True, r
+    assert captured.get("response_format") == "url"
+
+
+def test_save_extracted_payload_url_then_b64(monkeypatch, tmp_path):
+    """同响应含 url+b64 时：url 失败应 fallback 到 b64。"""
+    from micu_image_mcp import config
+
+    png = _png_bytes()
+    b64 = base64.b64encode(png).decode()
+    save_dir = config._SAVE_ROOT / "url_b64_fb"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    async def failing_url(*_a, **_k):
+        raise save.ImageSaveError("url fail")
+
+    monkeypatch.setattr(save, "_save_image_url", failing_url)
+    notes: list[str] = []
+    p, actual, size_bytes = asyncio.run(
+        save._save_extracted_payload(b64, "https://example.com/x.png", save_dir, "t", notes)
+    )
+    assert p.exists()
+    assert size_bytes == len(png)
+    assert any("b64_json" in n for n in notes)
+
+
 # ---------- M7 子项：推断尺寸越界不再硬错，回退默认 ----------
 
 @pytest.mark.parametrize("prompt", ["a 128x128 icon", "make a 100x100 thumbnail"])

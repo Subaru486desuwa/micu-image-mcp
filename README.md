@@ -38,6 +38,13 @@
 
 ---
 
+## 使用教程
+
+面向 Cursor / Claude Code / Codex 用户的完整 MCP 使用指南见 [docs/MCP使用教程.md](docs/MCP使用教程.md)，
+涵盖工具选型、尺寸规则、环境变量与故障排查（含 Clash/Surge fake-ip 落盘问题）。
+
+---
+
 ## Grok 与 GPT Image2 功能差异
 
 | 能力 | `gpt-image-2` / `gpt-image-2-pro` | 米醋 Grok 图像模型 |

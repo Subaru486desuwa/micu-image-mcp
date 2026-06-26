@@ -24,6 +24,8 @@ from mcp.server.fastmcp import FastMCP
 from micu_image_mcp.config import (
     _LOCK_BACKEND, _FILE_LOCK_AVAILABLE,
     DEFAULT_BASEURL, API_KEY, DEFAULT_MODEL,
+    API_RESPONSE_FORMAT, TRUSTED_DOWNLOAD_HOSTS, ALLOW_FAKE_IP_DOWNLOAD,
+    RESPONSE_FORMATS_TO_TRY,
     GROK_BASEURL, GROK_API_KEY, XAI_MODEL, GROK_SIZE_MODE,
     _TRUST_ENV, _SAVE_ROOT, DEFAULT_SAVE_DIR,
     PRO_MODEL, NONPRO_MODEL,
@@ -77,7 +79,7 @@ from micu_image_mcp.save import (
     ImageSaveError,
     _normalized_image_bytes_sync, _maybe_normalize_image_bytes,
     _save_validated_bytes, _save_image_b64, _save_image_url,
-    _save_first_payload_from_response,
+    _save_extracted_payload, _save_first_payload_from_response,
 )
 
 
@@ -111,6 +113,61 @@ def _get_baseurl() -> str:
 
 def _get_grok_baseurl() -> str:
     return GROK_BASEURL
+
+
+async def _call_and_save_with_format_fallback(
+    *,
+    build_ep: "Callable[[str], Endpoint]",
+    key: str,
+    retry_pro: bool,
+    stream: bool,
+    big_size_lock: bool,
+    notes: list[str],
+    out_dir: Path,
+    stem: str,
+    requested_size: str,
+    on_http_fallback: "Callable[[], Awaitable[tuple[int, str]]] | None" = None,
+    normalize_size: str | None = None,
+    normalize_mode: str | None = None,
+    normalize_label: str = "图片",
+) -> tuple[dict[str, Any] | None, str | None, bool]:
+    """按 RESPONSE_FORMATS_TO_TRY 顺序调 API 并落盘；默认先 url，保存失败再 b64_json。
+
+    返回 (saved_info, error, used_http_fallback)。
+  on_http_fallback 仅在第一种 format 的 HTTP 失败时触发（如 edits→chat stream）。
+    """
+    last_err: str | None = None
+    used_http_fallback = False
+    for fmt_i, fmt in enumerate(RESPONSE_FORMATS_TO_TRY):
+        if fmt_i > 0:
+            notes.append(f"URL 落盘失败（{last_err}）→ 重试 API response_format={fmt}")
+        ep = build_ep(fmt)
+        status, text = await _call_with_retry(
+            ep, key, retry_pro=retry_pro, stream=stream,
+            big_size_lock=big_size_lock, notes_out=notes,
+        )
+        if not (200 <= status < 300) and fmt_i == 0 and on_http_fallback is not None:
+            status, text = await on_http_fallback()
+            used_http_fallback = True
+        if not (200 <= status < 300):
+            last_err = f"HTTP {status}: {_error_detail(text)}"
+            continue
+        saved_info, save_err = await _save_first_payload_from_response(
+            text,
+            out_dir,
+            stem,
+            notes,
+            requested_size,
+            normalize_size=normalize_size,
+            normalize_mode=normalize_mode,
+            normalize_label=normalize_label,
+        )
+        if saved_info:
+            if fmt_i > 0:
+                notes.append(f"已通过 response_format={fmt} 成功落盘")
+            return saved_info, None, used_http_fallback
+        last_err = save_err or "保存失败"
+    return None, last_err, used_http_fallback
 
 
 @mcp.tool()
@@ -257,86 +314,83 @@ async def image_generate(
                 f"本地归一化到请求 size={size}。"
             )
         aspect_ratio = _grok_aspect_ratio(size)
-        grok_ep = Endpoint(
-            url=f"{baseurl}/v1/images/generations",
-            json_body={
-                "model": eff_model,
-                "prompt": prompt,
-                "n": n,
-                "resolution": _grok_resolution(size),
-                "aspect_ratio": aspect_ratio,
-                "response_format": "url",
-            },
-        )
-        status, text = await _call_with_retry(
-            grok_ep, key, retry_pro=True, stream=False,
-            big_size_lock=False, notes_out=notes,
-        )
-        if not (200 <= status < 300):
-            return {
-                "ok": False,
-                "error": f"HTTP {status}: {_error_detail(text)}",
-                "errors": [f"HTTP {status}: {_error_detail(text)}"],
-                "model": eff_model,
-                "size": size,
-                "requested_n": n,
-                "notes": notes,
-            }
+        last_grok_err: str | None = None
+        for fmt_i, fmt in enumerate(RESPONSE_FORMATS_TO_TRY):
+            if fmt_i > 0:
+                notes.append(f"URL 落盘失败（{last_grok_err}）→ 重试 API response_format={fmt}")
+            grok_ep = Endpoint(
+                url=f"{baseurl}/v1/images/generations",
+                json_body={
+                    "model": eff_model,
+                    "prompt": prompt,
+                    "n": n,
+                    "resolution": _grok_resolution(size),
+                    "aspect_ratio": aspect_ratio,
+                    "response_format": fmt,
+                },
+            )
+            status, text = await _call_with_retry(
+                grok_ep, key, retry_pro=True, stream=False,
+                big_size_lock=False, notes_out=notes,
+            )
+            if not (200 <= status < 300):
+                last_grok_err = f"HTTP {status}: {_error_detail(text)}"
+                continue
 
-        resp = _parse_response(text)
-        payloads = _extract_image_payloads(resp)
-        saved: list[dict[str, Any]] = []
-        errors: list[str] = []
-        for idx, (b64, url) in enumerate(payloads[:n]):
-            try:
-                if b64:
-                    p, actual, size_bytes = await _save_image_b64(
+            resp = _parse_response(text)
+            payloads = _extract_image_payloads(resp)
+            saved: list[dict[str, Any]] = []
+            errors: list[str] = []
+            for idx, (b64, url) in enumerate(payloads[:n]):
+                try:
+                    p, actual, size_bytes = await _save_extracted_payload(
                         b64,
-                        out_dir,
-                        f"{stem}_{idx + 1}",
-                        normalize_size=size,
-                        normalize_mode=size_mode,
-                        notes=notes,
-                        normalize_label="Grok 文生图",
-                    )
-                elif url:
-                    p, actual, size_bytes = await _save_image_url(
                         url,
                         out_dir,
                         f"{stem}_{idx + 1}",
+                        notes,
                         normalize_size=size,
                         normalize_mode=size_mode,
-                        notes=notes,
                         normalize_label="Grok 文生图",
                     )
-                else:
-                    errors.append(f"#{idx + 1} 响应里未找到图片")
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"#{idx + 1} 保存失败: {e}")
                     continue
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"#{idx + 1} 保存失败: {e}")
-                continue
-            entry: dict[str, Any] = {
-                "index": idx + 1,
-                "path": str(p.resolve()),
-                "size_bytes": size_bytes,
-            }
-            if actual:
-                entry["actual_size"] = f"{actual[0]}x{actual[1]}"
-                entry["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
-                sn = _size_note(size, actual)
-                if sn and sn not in notes:
-                    notes.append(sn)
-            saved.append(entry)
-        if len(payloads) < n:
-            notes.append(f"Grok 仅返回 {len(payloads)} 张（< 请求 n={n}）；以 saved 实际张数为准。")
+                entry: dict[str, Any] = {
+                    "index": idx + 1,
+                    "path": str(p.resolve()),
+                    "size_bytes": size_bytes,
+                }
+                if actual:
+                    entry["actual_size"] = f"{actual[0]}x{actual[1]}"
+                    entry["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
+                    sn = _size_note(size, actual)
+                    if sn and sn not in notes:
+                        notes.append(sn)
+                saved.append(entry)
+            if saved:
+                if fmt_i > 0:
+                    notes.append(f"已通过 response_format={fmt} 成功落盘")
+                if len(payloads) < n:
+                    notes.append(f"Grok 仅返回 {len(payloads)} 张（< 请求 n={n}）；以 saved 实际张数为准。")
+                return {
+                    "ok": True,
+                    "model": eff_model,
+                    "size": size,
+                    "requested_n": n,
+                    "used_fallback": False,
+                    "saved": saved,
+                    "errors": errors,
+                    "notes": notes,
+                }
+            last_grok_err = "; ".join(errors) if errors else "保存失败"
         return {
-            "ok": bool(saved),
+            "ok": False,
+            "error": last_grok_err,
+            "errors": [last_grok_err or "保存失败"],
             "model": eff_model,
             "size": size,
             "requested_n": n,
-            "used_fallback": False,
-            "saved": saved,
-            "errors": errors,
             "notes": notes,
         }
 
@@ -346,17 +400,6 @@ async def image_generate(
     # ≥2K 失败兜底：chat stream（size 不生效，输出 ~1.57MP），见下方 _do_one。
     # 1K 不需要兜底（generations 1K 路径稳定）。
     # CF 524 = origin 处理 >120s，60s 退避大概率仍 524（origin 持续慢），fail fast 直走 fallback。
-    ep = Endpoint(
-        url=f"{baseurl}/v1/images/generations",
-        json_body={
-            "model": eff_model,
-            "prompt": prompt,
-            "n": 1,
-            "size": size,
-            "response_format": "url",
-        },
-    )
-
     saved: list[dict] = []
     errors: list[str] = []
     # 客户端循环 N 次单图请求（米醋 image_generation tool 不接受 n 字段）。
@@ -372,56 +415,76 @@ async def image_generate(
 
     async def _do_one(idx: int) -> tuple[int, dict | None, str | None]:
         nonlocal used_fallback
-        status, text = await _call_with_retry(
-            ep, key, retry_pro=aggressive_retry, stream=False,
-            big_size_lock=big_size_lock, notes_out=notes,
-        )
-        # ≥2K 撞 524（origin t2i+pro+2K 路径间歇死）→ chat stream fallback。
-        # 代价：chat 路径 size 不生效，输出固定 ~1.57MP；但比空手回好（已透明告知）。
-        # 只对服务端/网络错误降级（FALLBACK_STATUS），429/409 配额冲突不降级以免静默产出错分辨率图。
-        if not (200 <= status < 300) and big_size_lock and status in FALLBACK_STATUS:
-            chat_ep = Endpoint(
-                url=f"{baseurl}/v1/chat/completions",
+        last_err: str | None = None
+        for fmt_i, fmt in enumerate(RESPONSE_FORMATS_TO_TRY):
+            if fmt_i > 0:
+                notes.append(f"URL 落盘失败（{last_err}）→ 重试 API response_format={fmt}")
+            ep = Endpoint(
+                url=f"{baseurl}/v1/images/generations",
                 json_body={
                     "model": eff_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "size": size,  # 米醋接受但 chat 路径下不生效
+                    "prompt": prompt,
+                    "n": 1,
+                    "size": size,
+                    "response_format": fmt,
                 },
             )
-            # fallback 仍是 ≥2K 请求，必须复用同一把大图锁串行打 origin（否则多窗口并发绕过锁）。
-            chat_status, chat_text = await _call_with_retry(
-                chat_ep, key, retry_pro=is_pro, stream=True,
+            status, text = await _call_with_retry(
+                ep, key, retry_pro=aggressive_retry, stream=False,
                 big_size_lock=big_size_lock, notes_out=notes,
             )
-            if 200 <= chat_status < 300:
-                used_fallback = True
-                fb_note = f"generations 主路径 HTTP {status}（origin {size} 路径今晚拥塞）→ fallback chat stream（size 不生效，实际输出 ~1.57MP）"
-                if fb_note not in notes:
-                    notes.append(fb_note)
-                status, text = chat_status, chat_text
-        if not (200 <= status < 300):
-            return idx, None, f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
-        resp = _parse_response(text)
-        b64, url = _extract_image_payload(resp)
-        try:
-            if b64:
-                p, actual, size_bytes = await _save_image_b64(b64, out_dir, f"{stem}_{idx + 1}")
-            elif url:
-                p, actual, size_bytes = await _save_image_url(url, out_dir, f"{stem}_{idx + 1}")
-            else:
-                excerpt = text[:300] if isinstance(text, str) else str(resp)[:300]
-                return idx, None, f"#{idx + 1} 响应里未找到图片（响应摘要：{excerpt}）"
-        except Exception as e:  # noqa: BLE001
-            return idx, None, f"#{idx + 1} 保存失败: {e}"
-        entry: dict[str, Any] = {
-            "index": idx + 1,
-            "path": str(p.resolve()),
-            "size_bytes": size_bytes,
-        }
-        if actual:
-            entry["actual_size"] = f"{actual[0]}x{actual[1]}"
-            entry["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
-        return idx, entry, None
+            # ≥2K 撞 524 → chat stream fallback（仅第一种 format 的 HTTP 失败时）。
+            if (
+                not (200 <= status < 300)
+                and big_size_lock
+                and status in FALLBACK_STATUS
+                and fmt_i == 0
+            ):
+                chat_ep = Endpoint(
+                    url=f"{baseurl}/v1/chat/completions",
+                    json_body={
+                        "model": eff_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "size": size,
+                    },
+                )
+                chat_status, chat_text = await _call_with_retry(
+                    chat_ep, key, retry_pro=is_pro, stream=True,
+                    big_size_lock=big_size_lock, notes_out=notes,
+                )
+                if 200 <= chat_status < 300:
+                    used_fallback = True
+                    fb_note = (
+                        f"generations 主路径 HTTP {status}（origin {size} 路径今晚拥塞）"
+                        "→ fallback chat stream（size 不生效，实际输出 ~1.57MP）"
+                    )
+                    if fb_note not in notes:
+                        notes.append(fb_note)
+                    status, text = chat_status, chat_text
+            if not (200 <= status < 300):
+                last_err = f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
+                continue
+            resp = _parse_response(text)
+            b64, url = _extract_image_payload(resp)
+            try:
+                p, actual, size_bytes = await _save_extracted_payload(
+                    b64, url, out_dir, f"{stem}_{idx + 1}", notes,
+                )
+            except Exception as e:  # noqa: BLE001
+                last_err = f"#{idx + 1} 保存失败: {e}"
+                continue
+            if fmt_i > 0:
+                notes.append(f"已通过 response_format={fmt} 成功落盘")
+            entry: dict[str, Any] = {
+                "index": idx + 1,
+                "path": str(p.resolve()),
+                "size_bytes": size_bytes,
+            }
+            if actual:
+                entry["actual_size"] = f"{actual[0]}x{actual[1]}"
+                entry["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
+            return idx, entry, None
+        return idx, None, last_err or f"#{idx + 1} 保存失败"
 
     if concurrency > 1:
         sem = asyncio.Semaphore(concurrency)
@@ -588,8 +651,8 @@ async def image_edit(
             notes.append("Grok reference_image 路径当前不支持 mask，已忽略 mask_path。")
         img_b64 = await asyncio.to_thread(lambda: base64.b64encode(img_bytes).decode())
         img_data_url = f"data:{img_mime};base64,{img_b64}"
-        status, text = await _call_with_retry(
-            Endpoint(
+        saved_info, save_err, _ = await _call_and_save_with_format_fallback(
+            build_ep=lambda fmt: Endpoint(
                 url=f"{baseurl}/v1/images/generations",
                 json_body={
                     "model": eff_model,
@@ -598,32 +661,17 @@ async def image_edit(
                     "resolution": _grok_resolution(size),
                     "aspect_ratio": _grok_aspect_ratio(size),
                     "reference_image": img_data_url,
-                    "response_format": "url",
+                    "response_format": fmt,
                 },
             ),
-            key,
+            key=key,
             retry_pro=True,
             stream=False,
             big_size_lock=False,
-            notes_out=notes,
-        )
-        if not (200 <= status < 300):
-            msg = f"HTTP {status}: {_error_detail(text)}"
-            return {
-                "ok": False,
-                "model": eff_model,
-                "size": size,
-                "used_fallback": False,
-                "error": msg,
-                "errors": [msg],
-                "notes": notes,
-            }
-        saved_info, save_err = await _save_first_payload_from_response(
-            text,
-            out_dir,
-            stem,
-            notes,
-            size,
+            notes=notes,
+            out_dir=out_dir,
+            stem=stem,
+            requested_size=size,
             normalize_size=size,
             normalize_mode=size_mode,
             normalize_label="Grok 图生图",
@@ -664,19 +712,7 @@ async def image_edit(
     img_data_url = f"data:{img_mime};base64,{img_b64}"
     used_fallback = False
 
-    # 所有尺寸统一走 /v1/images/edits multipart（含 mask）→ 失败 fallback chat stream。
-    # edits 是米醋唯一真正消费输入图的端点（旧 ≥2K generations+reference_image 路径 524 硬失败，已废弃）；
-    # 1K 档稳定 ~1.57MP，2K 档 best-effort 真 2K（pro + edits，约 2/3 成功，524 时 fallback chat → ~1.57MP）。
-    edits_form: dict[str, Any] = {
-        "model": eff_model,
-        "prompt": prompt,
-        "size": size,
-        "response_format": "url",
-        "image": (img_p.name, img_bytes, img_mime),
-    }
-    if mask_bytes:
-        edits_form["mask"] = ("mask.png", mask_bytes, "image/png")
-    edits_ep = Endpoint(url=f"{baseurl}/v1/images/edits", multipart=edits_form)
+    used_fallback = False
 
     # chat fallback：把图嵌成 data URL
     size_directive = (
@@ -706,56 +742,55 @@ async def image_edit(
         json_body={"model": eff_model, "messages": [{"role": "user", "content": chat_content}]},
     )
 
-    # 2K/4K 复用跨进程大图锁串行打 pro 队列（避免多窗口并发绕过锁），并放宽重试
     aggressive_retry = is_pro or _size_tier(size) in ("2k", "4k")
     big_size_lock = _size_tier(size) in ("2k", "4k")
-    status, text = await _call_with_retry(
-        edits_ep, key, retry_pro=aggressive_retry, stream=False,
-        big_size_lock=big_size_lock, notes_out=notes,
-    )
-    # 只对服务端/网络错误 fallback；400/401/403/413/429 等用户/鉴权/配额错误不降级，避免掩盖真因
-    if not (200 <= status < 300) and status in FALLBACK_STATUS:
-        used_fallback = True
-        notes.append(f"edits 端点 HTTP {status}，已切到 /v1/chat/completions stream")
-        # fallback 仍是 ≥2K 请求时复用同一把大图锁串行打 origin
+    last_err: str | None = None
+    saved_info: dict[str, Any] | None = None
+
+    for fmt_i, fmt in enumerate(RESPONSE_FORMATS_TO_TRY):
+        if fmt_i > 0:
+            notes.append(f"URL 落盘失败（{last_err}）→ 重试 API response_format={fmt}")
+        edits_form: dict[str, Any] = {
+            "model": eff_model,
+            "prompt": prompt,
+            "size": size,
+            "response_format": fmt,
+            "image": (img_p.name, img_bytes, img_mime),
+        }
+        if mask_bytes:
+            edits_form["mask"] = ("mask.png", mask_bytes, "image/png")
+        edits_ep = Endpoint(url=f"{baseurl}/v1/images/edits", multipart=edits_form)
         status, text = await _call_with_retry(
-            chat_ep, key, retry_pro=aggressive_retry, stream=True,
+            edits_ep, key, retry_pro=aggressive_retry, stream=False,
             big_size_lock=big_size_lock, notes_out=notes,
         )
+        if not (200 <= status < 300) and status in FALLBACK_STATUS and fmt_i == 0:
+            used_fallback = True
+            notes.append(f"edits 端点 HTTP {status}，已切到 /v1/chat/completions stream")
+            status, text = await _call_with_retry(
+                chat_ep, key, retry_pro=aggressive_retry, stream=True,
+                big_size_lock=big_size_lock, notes_out=notes,
+            )
+        if not (200 <= status < 300):
+            last_err = f"HTTP {status}: {_error_detail(text)}"
+            continue
+        saved_info, save_err = await _save_first_payload_from_response(
+            text, out_dir, stem, notes, size,
+        )
+        if saved_info:
+            if fmt_i > 0:
+                notes.append(f"已通过 response_format={fmt} 成功落盘")
+            break
+        last_err = save_err or "保存失败"
 
-    if not (200 <= status < 300):
+    if not saved_info:
         return {
             "ok": False,
             "model": eff_model,
             "size": size,
-            "error": f"HTTP {status}: {_error_detail(text)}",
+            "error": last_err or "保存失败",
             "notes": notes,
         }
-
-    resp = _parse_response(text)
-    b64, url = _extract_image_payload(resp)
-    try:
-        if b64:
-            p, actual, size_bytes = await _save_image_b64(b64, out_dir, stem)
-        elif url:
-            p, actual, size_bytes = await _save_image_url(url, out_dir, stem)
-        else:
-            return {
-                "ok": False,
-                "error": "响应中未识别到图片",
-                "raw_excerpt": (text[:500] if isinstance(text, str) else str(resp)[:500]),
-                "notes": notes,
-            }
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": f"保存失败: {e}", "notes": notes}
-
-    saved_info: dict[str, Any] = {"path": str(p.resolve()), "size_bytes": size_bytes}
-    if actual:
-        saved_info["actual_size"] = f"{actual[0]}x{actual[1]}"
-        saved_info["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
-        sn = _size_note(size, actual)
-        if sn and sn not in notes:
-            notes.append(sn)
 
     return {
         "ok": True,
@@ -1051,8 +1086,8 @@ async def image_multi_reference(
             "Do NOT collage, tile, or montage the references side-by-side unless explicitly asked.\n\n"
             f"Instruction:\n{prompt}"
         )
-        status, text = await _call_with_retry(
-            Endpoint(
+        saved_info, save_err, _ = await _call_and_save_with_format_fallback(
+            build_ep=lambda fmt: Endpoint(
                 url=f"{baseurl}/v1/images/generations",
                 json_body={
                     "model": eff_model,
@@ -1061,39 +1096,31 @@ async def image_multi_reference(
                     "resolution": _grok_resolution(size),
                     "aspect_ratio": _grok_aspect_ratio(size),
                     "image_urls": image_urls,
-                    "response_format": "url",
+                    "response_format": fmt,
                 },
             ),
-            key,
+            key=key,
             retry_pro=True,
             stream=False,
             big_size_lock=False,
-            notes_out=notes,
-        )
-        if not (200 <= status < 300):
-            msg = f"HTTP {status}: {_error_detail(text)}"
-            return {
-                "ok": False,
-                "model": eff_model,
-                "size": size,
-                "n_references": len(image_paths),
-                "used_fallback": False,
-                "error": msg,
-                "errors": [msg],
-                "notes": notes,
-            }
-        saved_info, save_err = await _save_first_payload_from_response(
-            text,
-            out_dir,
-            stem,
-            notes,
-            size,
+            notes=notes,
+            out_dir=out_dir,
+            stem=stem,
+            requested_size=size,
             normalize_size=size,
             normalize_mode=size_mode,
             normalize_label="Grok 多图参考",
         )
         if save_err:
-            return {"ok": False, "model": eff_model, "size": size, "error": save_err, "errors": [save_err], "notes": notes}
+            return {
+                "ok": False,
+                "model": eff_model,
+                "size": size,
+                "n_references": len(image_paths),
+                "error": save_err,
+                "errors": [save_err],
+                "notes": notes,
+            }
         return {
             "ok": True,
             "model": eff_model,
@@ -1145,86 +1172,77 @@ async def image_multi_reference(
         f"Do NOT collage, tile, or montage the references side-by-side unless explicitly asked.\n\n"
         f"Instruction:\n{prompt}"
     )
-    edits_ep = Endpoint(
-        url=f"{baseurl}/v1/images/edits",
-        multipart={
+    chat_ep = Endpoint(
+        url=f"{baseurl}/v1/chat/completions",
+        json_body={
             "model": eff_model,
-            "prompt": full_prompt,
+            "messages": [{"role": "user", "content": full_prompt}],
+            "image_urls": image_urls,
             "size": size,
-            "response_format": "url",
-            "image[]": ref_files,
         },
     )
 
     aggressive_retry = is_pro or _size_tier(size) in ("2k", "4k")
     big_size_lock = _size_tier(size) in ("2k", "4k")
-    status, text = await _call_with_retry(
-        edits_ep, key, retry_pro=aggressive_retry, stream=False,
-        big_size_lock=big_size_lock, notes_out=notes,
-    )
-
     used_fallback = False
-    # 只对服务端/网络错误 fallback；400/401/403/413/429 等用户/配额错误直接返回，避免掩盖真因
-    if not (200 <= status < 300) and status in FALLBACK_STATUS:
-        # generations 失败 → 走 chat stream 兜底
-        notes.append(f"edits 主路径 HTTP {status}（米醋多图间歇拒/断流），已 fallback chat stream（size 不生效，输出 ~1.57MP）")
-        used_fallback = True
-        chat_ep = Endpoint(
-            url=f"{baseurl}/v1/chat/completions",
-            json_body={
+    last_err: str | None = None
+    saved_info: dict[str, Any] | None = None
+
+    for fmt_i, fmt in enumerate(RESPONSE_FORMATS_TO_TRY):
+        if fmt_i > 0:
+            notes.append(f"URL 落盘失败（{last_err}）→ 重试 API response_format={fmt}")
+        edits_ep = Endpoint(
+            url=f"{baseurl}/v1/images/edits",
+            multipart={
                 "model": eff_model,
-                "messages": [{"role": "user", "content": full_prompt}],
-                "image_urls": image_urls,
-                "size": size,  # 米醋接受但 chat 路径下不生效
+                "prompt": full_prompt,
+                "size": size,
+                "response_format": fmt,
+                "image[]": ref_files,
             },
         )
-        # fallback 仍是 ≥2K 请求时复用同一把大图锁串行打 origin（否则多窗口并发绕过锁）。
         status, text = await _call_with_retry(
-            chat_ep, key, retry_pro=is_pro, stream=True,
+            edits_ep, key, retry_pro=aggressive_retry, stream=False,
             big_size_lock=big_size_lock, notes_out=notes,
         )
+        if not (200 <= status < 300) and status in FALLBACK_STATUS and fmt_i == 0:
+            notes.append(
+                f"edits 主路径 HTTP {status}（米醋多图间歇拒/断流），"
+                "已 fallback chat stream（size 不生效，输出 ~1.57MP）"
+            )
+            used_fallback = True
+            status, text = await _call_with_retry(
+                chat_ep, key, retry_pro=is_pro, stream=True,
+                big_size_lock=big_size_lock, notes_out=notes,
+            )
+        if not (200 <= status < 300):
+            last_err = f"HTTP {status}: {_error_detail(text)}"
+            continue
+        saved_info, save_err = await _save_first_payload_from_response(
+            text, out_dir, stem, notes, size,
+        )
+        if saved_info:
+            if fmt_i > 0:
+                notes.append(f"已通过 response_format={fmt} 成功落盘")
+            break
+        last_err = save_err or "保存失败"
 
-    if not (200 <= status < 300):
+    if not saved_info:
         return {
             "ok": False,
             "model": eff_model,
             "n_references": len(image_paths),
             "used_fallback": used_fallback,
-            "error": f"HTTP {status}: {_error_detail(text)}",
+            "error": last_err or "保存失败",
             "notes": notes,
         }
 
-    resp = _parse_response(text)
-    b64, url = _extract_image_payload(resp)
-    try:
-        if b64:
-            p, actual, size_bytes = await _save_image_b64(b64, out_dir, stem)
-        elif url:
-            p, actual, size_bytes = await _save_image_url(url, out_dir, stem)
-        else:
-            return {
-                "ok": False,
-                "error": "响应中未识别到图片",
-                "raw_excerpt": text[:500] if isinstance(text, str) else str(resp)[:500],
-                "notes": notes,
-            }
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": f"保存失败: {e}", "notes": notes}
-
-    saved_info: dict[str, Any] = {"path": str(p.resolve()), "size_bytes": size_bytes}
-    if actual:
-        saved_info["actual_size"] = f"{actual[0]}x{actual[1]}"
-        saved_info["actual_megapixels"] = round(actual[0] * actual[1] / 1_000_000, 2)
-        sn = _size_note(size, actual)
-        if sn and sn not in notes:
-            notes.append(sn)
-
+    actual = _parse_actual(saved_info.get("actual_size"))
     return {
         "ok": True,
         "model": eff_model,
         "size": size,
         "used_fallback": used_fallback,
-        # 按实际像素如实判定是否命中请求 size（2K 成功时 actual==requested → true）；真实像素见 saved.actual_size
         "size_honored": bool(actual and _parse_size(size) and actual == _parse_size(size)),
         "n_references": len(image_paths),
         "saved": saved_info,
@@ -1254,6 +1272,10 @@ def server_info() -> dict[str, Any]:
         "default_save_dir": str(DEFAULT_SAVE_DIR),
         "api_key_configured": bool(API_KEY),
         "grok_api_key_configured": bool(GROK_API_KEY),
+        "response_format": API_RESPONSE_FORMAT,
+        "response_formats_to_try": list(RESPONSE_FORMATS_TO_TRY),
+        "trusted_download_hosts": sorted(TRUSTED_DOWNLOAD_HOSTS),
+        "allow_fake_ip_download": ALLOW_FAKE_IP_DOWNLOAD,
         "size_rules": {
             "format": "WxH 字符串（如 '1024x1024'）",
             "alignment": f"W 与 H 都必须是 {SIZE_ALIGNMENT} 的整数倍（米醋实测约束，OpenAI 官方要 16）",
