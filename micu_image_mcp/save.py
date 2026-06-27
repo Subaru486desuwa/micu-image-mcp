@@ -295,29 +295,31 @@ async def _save_image_url(
     # SSRF 防护：下载前校验 url（DNS 解析走线程，不阻塞事件循环）。
     await asyncio.to_thread(_assert_download_url_safe, url)
     cx = _get_http_client()
-    # stream 提前读 Content-Length 拒超大响应；follow_redirects=False 防经 3xx 重定向到内网绕过校验；
-    # asyncio.timeout 给整段下载加墙钟上限，防慢滴流无限挂起独占大图锁。
-    try:
-        async with asyncio.timeout(_DOWNLOAD_TOTAL_TIMEOUT_SECONDS):
-            async with cx.stream("GET", url, timeout=120.0, follow_redirects=False) as r:
-                r.raise_for_status()
-                cl = r.headers.get("content-length")
-                if cl and cl.isdigit() and int(cl) > MAX_RESPONSE_BYTES:
+    # stream 提前读 Content-Length 拒超大响应；follow_redirects=False 防经 3xx 重定向到内网绕过校验。
+    async def _download_raw() -> bytes:
+        async with cx.stream("GET", url, timeout=120.0, follow_redirects=False) as r:
+            r.raise_for_status()
+            cl = r.headers.get("content-length")
+            if cl and cl.isdigit() and int(cl) > MAX_RESPONSE_BYTES:
+                raise ImageSaveError(
+                    f"远端图 Content-Length={int(cl)/1024/1024:.1f}MB 超过 "
+                    f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限"
+                )
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in r.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_RESPONSE_BYTES:
                     raise ImageSaveError(
-                        f"远端图 Content-Length={int(cl)/1024/1024:.1f}MB 超过 "
-                        f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限"
+                        f"远端图实际下载 >{MAX_RESPONSE_BYTES/1024/1024:.0f}MB，已中断"
                     )
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in r.aiter_bytes():
-                    total += len(chunk)
-                    if total > MAX_RESPONSE_BYTES:
-                        raise ImageSaveError(
-                            f"远端图实际下载 >{MAX_RESPONSE_BYTES/1024/1024:.0f}MB，已中断"
-                        )
-                    chunks.append(chunk)
-                raw = b"".join(chunks)
-    except TimeoutError as e:
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+    # 给整段下载加墙钟上限，防慢滴流无限挂起独占大图锁；wait_for 兼容 Python 3.10。
+    try:
+        raw = await asyncio.wait_for(_download_raw(), timeout=_DOWNLOAD_TOTAL_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError as e:
         raise ImageSaveError(
             f"远端图下载超过 {_DOWNLOAD_TOTAL_TIMEOUT_SECONDS:.0f}s 墙钟上限，已中断"
         ) from e

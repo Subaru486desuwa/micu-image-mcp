@@ -27,9 +27,10 @@ def test_lock_cancel_during_wait_does_not_deadlock():
             with pytest.raises(asyncio.CancelledError):
                 await t
         # 外层退出释放锁后，再次获取必须能在合理时间内拿到（无死锁/无孤儿持锁）。
-        async with asyncio.timeout(5):
+        async def acquire_once() -> bool:
             async with locks._big_size_file_lock_async():
                 return True
-        return False
+
+        return await asyncio.wait_for(acquire_once(), timeout=5)
 
     assert asyncio.run(scenario()) is True
