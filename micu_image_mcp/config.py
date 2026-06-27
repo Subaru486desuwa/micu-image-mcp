@@ -4,6 +4,7 @@ server.py 顶部 from .config import * 让原代码引用方式不变。
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 from pathlib import Path
@@ -36,6 +37,30 @@ GROK_SIZE_MODE = os.environ.get("MICU_GROK_SIZE_MODE", "contain").strip().lower(
 # 米醋是国内站，不应走 shell 的 SOCKS/HTTP 代理；默认 trust_env=False。
 # 设 MICU_USE_SHELL_PROXY=1 才让 httpx 拾取 HTTPS_PROXY/HTTP_PROXY/ALL_PROXY。
 _TRUST_ENV = os.environ.get("MICU_USE_SHELL_PROXY", "").strip() in ("1", "true", "yes")
+
+# API 响应格式策略：
+#   auto（默认）— 先 url 请求并下载落盘，失败再重试 API response_format=b64_json
+#   url — 仅 url； b64_json — 仅 b64_json
+_rf_raw = os.environ.get("MICU_RESPONSE_FORMAT", "auto").strip().lower()
+if _rf_raw == "url":
+    API_RESPONSE_FORMAT = "url"
+    RESPONSE_FORMATS_TO_TRY: tuple[str, ...] = ("url",)
+elif _rf_raw == "b64_json":
+    API_RESPONSE_FORMAT = "b64_json"
+    RESPONSE_FORMATS_TO_TRY = ("b64_json",)
+else:
+    API_RESPONSE_FORMAT = "auto"
+    RESPONSE_FORMATS_TO_TRY = ("url", "b64_json")
+
+# URL 下载 SSRF：可信 CDN 主机 + fake-ip（198.18.0.0/15）放行，真内网永不放行。
+_trusted_hosts_raw = os.environ.get("MICU_TRUSTED_DOWNLOAD_HOSTS", "oss.filenest.top").strip()
+TRUSTED_DOWNLOAD_HOSTS: frozenset[str] = frozenset(
+    h.strip().lower() for h in _trusted_hosts_raw.split(",") if h.strip()
+) if _trusted_hosts_raw else frozenset({"oss.filenest.top"})
+ALLOW_FAKE_IP_DOWNLOAD = os.environ.get(
+    "MICU_ALLOW_FAKE_IP_DOWNLOAD", "1"
+).strip().lower() in ("1", "true", "yes")
+FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 # save_dir 的安全根目录：tool 调用方无论传什么 save_dir，都不能写到此根之外。
 # 默认 = 用户家目录下的 Pictures/micu-out；可用 MICU_SAVE_DIR_ROOT 覆盖。
@@ -133,6 +158,8 @@ __all__ = [
     "DEFAULT_BASEURL", "API_KEY", "DEFAULT_MODEL",
     "GROK_BASEURL", "GROK_API_KEY", "XAI_MODEL", "GROK_SIZE_MODE",
     "_TRUST_ENV", "_SAVE_ROOT", "DEFAULT_SAVE_DIR", "_INPUT_ROOT",
+    "API_RESPONSE_FORMAT", "RESPONSE_FORMATS_TO_TRY",
+    "TRUSTED_DOWNLOAD_HOSTS", "ALLOW_FAKE_IP_DOWNLOAD", "FAKE_IP_NETWORK",
     "PRO_MODEL", "NONPRO_MODEL",
     "GROK_MODEL_ALIASES", "GROK_AVAILABLE_MODELS",
     "GROK_ASPECT_RATIO_CHOICES", "GROK_SIZE_MODES",

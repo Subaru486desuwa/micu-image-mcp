@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from .config import MAX_RESPONSE_BYTES, _SAVE_ROOT
+from .config import (
+    MAX_RESPONSE_BYTES,
+    _SAVE_ROOT,
+    TRUSTED_DOWNLOAD_HOSTS,
+    ALLOW_FAKE_IP_DOWNLOAD,
+    FAKE_IP_NETWORK,
+)
 from .extract import _extract_image_payload, _parse_response
 from .io_safety import _detect_actual_size, _validate_image_bytes
 from .routing import _size_note
@@ -33,14 +39,47 @@ _DOWNLOAD_TOTAL_TIMEOUT_SECONDS = 180.0
 _ALLOWED_DOWNLOAD_SCHEMES = ("http", "https")
 
 
-def _ip_is_blocked(ip: "ipaddress.IPv4Address | ipaddress.IPv6Address") -> bool:
+def _host_is_trusted(host: str) -> bool:
+    """hostname 是否匹配可信 CDN 下载白名单（精确或后缀，如 cdn.oss.filenest.top）。"""
+    h = host.lower().rstrip(".")
+    for trusted in TRUSTED_DOWNLOAD_HOSTS:
+        t = trusted.lower()
+        if h == t or h.endswith("." + t):
+            return True
+    return False
+
+
+def _is_fake_ip(ip: "ipaddress.IPv4Address | ipaddress.IPv6Address") -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    try:
+        return ip in FAKE_IP_NETWORK
+    except TypeError:
+        return False
+
+
+def _ip_is_blocked(
+    ip: "ipaddress.IPv4Address | ipaddress.IPv6Address",
+    *,
+    host: str | None = None,
+) -> bool:
     # IPv4-mapped IPv6（如 ::ffff:127.0.0.1）先解包再判，避免绕过。
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
-    return (
+    # Clash/Surge fake-ip（198.18.0.0/15）：须在 is_private 之前判（Py3.14+ 将该段标为 private）。
+    if _is_fake_ip(ip):
+        if ALLOW_FAKE_IP_DOWNLOAD and host and _host_is_trusted(host):
+            return False
+        return True
+    # 真内网/环回/链路本地/多播/unspecified：无论是否可信域名一律拒绝。
+    if (
         ip.is_private or ip.is_loopback or ip.is_link_local
-        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
-    )
+        or ip.is_multicast or ip.is_unspecified
+    ):
+        return True
+    if ip.is_reserved:
+        return True
+    return False
 
 
 def _assert_download_url_safe(url: str) -> None:
@@ -75,7 +114,7 @@ def _assert_download_url_safe(url: str) -> None:
             ip = ipaddress.ip_address(addr.split("%")[0])  # 去掉 IPv6 zone id
         except ValueError as e:
             raise ImageSaveError(f"下载 URL 解析出非法地址 {addr!r}") from e
-        if _ip_is_blocked(ip):
+        if _ip_is_blocked(ip, host=host):
             raise ImageSaveError(
                 f"下载 URL host {host!r} 指向受限地址 {ip}"
                 f"（私网/环回/链路本地/保留），已拒绝（SSRF 防护）"
@@ -256,29 +295,31 @@ async def _save_image_url(
     # SSRF 防护：下载前校验 url（DNS 解析走线程，不阻塞事件循环）。
     await asyncio.to_thread(_assert_download_url_safe, url)
     cx = _get_http_client()
-    # stream 提前读 Content-Length 拒超大响应；follow_redirects=False 防经 3xx 重定向到内网绕过校验；
-    # asyncio.timeout 给整段下载加墙钟上限，防慢滴流无限挂起独占大图锁。
-    try:
-        async with asyncio.timeout(_DOWNLOAD_TOTAL_TIMEOUT_SECONDS):
-            async with cx.stream("GET", url, timeout=120.0, follow_redirects=False) as r:
-                r.raise_for_status()
-                cl = r.headers.get("content-length")
-                if cl and cl.isdigit() and int(cl) > MAX_RESPONSE_BYTES:
+    # stream 提前读 Content-Length 拒超大响应；follow_redirects=False 防经 3xx 重定向到内网绕过校验。
+    async def _download_raw() -> bytes:
+        async with cx.stream("GET", url, timeout=120.0, follow_redirects=False) as r:
+            r.raise_for_status()
+            cl = r.headers.get("content-length")
+            if cl and cl.isdigit() and int(cl) > MAX_RESPONSE_BYTES:
+                raise ImageSaveError(
+                    f"远端图 Content-Length={int(cl)/1024/1024:.1f}MB 超过 "
+                    f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限"
+                )
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in r.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_RESPONSE_BYTES:
                     raise ImageSaveError(
-                        f"远端图 Content-Length={int(cl)/1024/1024:.1f}MB 超过 "
-                        f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB 上限"
+                        f"远端图实际下载 >{MAX_RESPONSE_BYTES/1024/1024:.0f}MB，已中断"
                     )
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in r.aiter_bytes():
-                    total += len(chunk)
-                    if total > MAX_RESPONSE_BYTES:
-                        raise ImageSaveError(
-                            f"远端图实际下载 >{MAX_RESPONSE_BYTES/1024/1024:.0f}MB，已中断"
-                        )
-                    chunks.append(chunk)
-                raw = b"".join(chunks)
-    except TimeoutError as e:
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+    # 给整段下载加墙钟上限，防慢滴流无限挂起独占大图锁；wait_for 兼容 Python 3.10。
+    try:
+        raw = await asyncio.wait_for(_download_raw(), timeout=_DOWNLOAD_TOTAL_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError as e:
         raise ImageSaveError(
             f"远端图下载超过 {_DOWNLOAD_TOTAL_TIMEOUT_SECONDS:.0f}s 墙钟上限，已中断"
         ) from e
@@ -290,6 +331,52 @@ async def _save_image_url(
         label=normalize_label,
     )
     return await _save_validated_bytes(raw, save_dir, basename, source_label=f"远端图 {url[:80]}")
+
+
+async def _save_extracted_payload(
+    b64: str | None,
+    url: str | None,
+    save_dir: Path,
+    basename: str,
+    notes: list[str],
+    *,
+    normalize_size: str | None = None,
+    normalize_mode: str | None = None,
+    normalize_label: str = "图片",
+) -> tuple[Path, tuple[int, int] | None, int]:
+    """优先 URL 下载；失败且响应含 b64 时改用 b64_json。"""
+    url_err: Exception | None = None
+    if url:
+        try:
+            return await _save_image_url(
+                url,
+                save_dir,
+                basename,
+                normalize_size=normalize_size,
+                normalize_mode=normalize_mode,
+                notes=notes,
+                normalize_label=normalize_label,
+            )
+        except Exception as e:  # noqa: BLE001
+            url_err = e
+            if not b64:
+                raise
+            note = f"URL 下载失败（{e}）→ 改用响应内 b64_json"
+            if note not in notes:
+                notes.append(note)
+    if b64:
+        return await _save_image_b64(
+            b64,
+            save_dir,
+            basename,
+            normalize_size=normalize_size,
+            normalize_mode=normalize_mode,
+            notes=notes,
+            normalize_label=normalize_label,
+        )
+    if url_err is not None:
+        raise url_err
+    raise ImageSaveError("响应中未识别到图片")
 
 
 async def _save_first_payload_from_response(
@@ -306,28 +393,16 @@ async def _save_first_payload_from_response(
     resp = _parse_response(text)
     b64, url = _extract_image_payload(resp)
     try:
-        if b64:
-            p, actual, size_bytes = await _save_image_b64(
-                b64,
-                out_dir,
-                stem,
-                normalize_size=normalize_size,
-                normalize_mode=normalize_mode,
-                notes=notes,
-                normalize_label=normalize_label,
-            )
-        elif url:
-            p, actual, size_bytes = await _save_image_url(
-                url,
-                out_dir,
-                stem,
-                normalize_size=normalize_size,
-                normalize_mode=normalize_mode,
-                notes=notes,
-                normalize_label=normalize_label,
-            )
-        else:
-            return None, "响应中未识别到图片"
+        p, actual, size_bytes = await _save_extracted_payload(
+            b64,
+            url,
+            out_dir,
+            stem,
+            notes,
+            normalize_size=normalize_size,
+            normalize_mode=normalize_mode,
+            normalize_label=normalize_label,
+        )
     except Exception as e:  # noqa: BLE001
         return None, f"保存失败: {e}"
 
@@ -345,5 +420,5 @@ __all__ = [
     "ImageSaveError",
     "_normalized_image_bytes_sync", "_maybe_normalize_image_bytes",
     "_save_validated_bytes", "_save_image_b64", "_save_image_url",
-    "_save_first_payload_from_response",
+    "_save_extracted_payload", "_save_first_payload_from_response",
 ]
