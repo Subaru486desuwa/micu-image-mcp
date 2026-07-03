@@ -176,6 +176,7 @@ async def image_generate(
     size: str | None = None,
     n: int = 1,
     model: str | None = None,
+    quality: str | None = None,
     save_dir: str | None = None,
     basename: str | None = None,
     api_key: str | None = None,
@@ -219,6 +220,7 @@ async def image_generate(
         n: 张数 1-10。1K 时 N>1 自动 5 并发；≥2K 强制 N=1（代理限流）。默认 1。
         model: 显式指定模型。留空时按 size 自动选（max edge ≥1600 用 pro，否则 non-pro）。
               可选值："gpt-image-2"（快、便宜）/ "gpt-image-2-pro"（高细节、≥2K 必需）。
+        quality: 可选质量参数。非空时原样透传给米醋后端；留空则不发送该字段，保持后端默认质量。
         save_dir: 输出目录。**必须在安全根目录 MICU_SAVE_DIR_ROOT 之下**（默认 ~/Pictures/micu-out）；
                   传 root 之外路径会被拒。留空使用默认。
         basename: 文件名前缀（不带扩展名），仅允许 [A-Za-z0-9_\\-.]。
@@ -260,6 +262,9 @@ async def image_generate(
     if basename is not None and safe_stem is None:
         msg = f"basename {basename!r} 含非法字符或路径分量；仅允许 [A-Za-z0-9_-.]，禁含 / 与 .."
         return {"ok": False, "error": msg, "errors": [msg]}
+    cleaned_quality = quality.strip() if isinstance(quality, str) else None
+    if cleaned_quality == "":
+        cleaned_quality = None
     out_dir, dir_err = _resolve_save_dir(save_dir)
     if dir_err:
         return {"ok": False, "error": dir_err, "errors": [dir_err]}
@@ -327,6 +332,7 @@ async def image_generate(
                     "resolution": _grok_resolution(size),
                     "aspect_ratio": aspect_ratio,
                     "response_format": fmt,
+                    **({"quality": cleaned_quality} if cleaned_quality is not None else {}),
                 },
             )
             status, text = await _call_with_retry(
@@ -427,6 +433,7 @@ async def image_generate(
                     "n": 1,
                     "size": size,
                     "response_format": fmt,
+                    **({"quality": cleaned_quality} if cleaned_quality is not None else {}),
                 },
             )
             status, text = await _call_with_retry(
@@ -446,6 +453,7 @@ async def image_generate(
                         "model": eff_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "size": size,
+                        **({"quality": cleaned_quality} if cleaned_quality is not None else {}),
                     },
                 )
                 chat_status, chat_text = await _call_with_retry(

@@ -119,6 +119,11 @@ def test_block_fake_ip_when_disabled(monkeypatch):
         _assert_download_url_safe("https://oss.filenest.top/uploads/x.png")
 
 
+def test_block_fake_ip_literal():
+    with pytest.raises(ImageSaveError):
+        _assert_download_url_safe("https://198.18.0.168/x.png")
+
+
 def test_save_image_url_fake_ip_trusted_host(monkeypatch, tmp_path):
     """端到端：fake-ip 地址下载可信 CDN URL 能落盘。"""
     png = _png_bytes()

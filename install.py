@@ -615,7 +615,7 @@ def smoke_test(server_path: str, env_dict: dict) -> None:
     extra = found_tools - _EXPECTED_TOOLS
     if missing:
         warn(f"tools/list 缺少预期 tool: {sorted(missing)}")
-        warn("server.py 可能被改坏了；重装 / git pull 后再试")
+        warn("server.py 可能被改坏了；用 git pull --ff-only 更新，或用 npm exec --yes tiged 重新下载源码后再试")
     else:
         ok(f"tools/list OK，可用 tools: {sorted(found_tools)}")
     if extra:

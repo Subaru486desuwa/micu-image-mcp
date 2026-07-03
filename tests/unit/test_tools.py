@@ -103,6 +103,28 @@ def test_image_generate_uses_url_first_response_format(monkeypatch):
     assert captured.get("response_format") == "url"
 
 
+def test_image_generate_forwards_quality(monkeypatch):
+    resp = _canned_b64_response()
+    calls = []
+
+    async def fake_call(ep, key, *args, **kwargs):  # noqa: ANN001
+        calls.append(ep)
+        return 200, resp
+
+    monkeypatch.setattr(server, "_call_with_retry", fake_call)
+
+    r = asyncio.run(server.image_generate(
+        prompt="一只红苹果",
+        size="1024x1024",
+        quality="high",
+        api_key="sk-test",
+    ))
+
+    assert r["ok"] is True, r
+    assert calls, "expected image_generate to call the backend"
+    assert calls[0].json_body["quality"] == "high"
+
+
 def test_save_extracted_payload_url_then_b64(monkeypatch, tmp_path):
     """同响应含 url+b64 时：url 失败应 fallback 到 b64。"""
     from micu_image_mcp import config

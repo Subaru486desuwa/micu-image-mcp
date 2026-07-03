@@ -65,8 +65,26 @@
 
 ## 一键安装
 
+方式一：用 Git 下载源码（推荐）。
+
 ```bash
-git clone https://github.com/Subaru486desuwa/micu-image-mcp.git
+git clone --depth 1 https://github.com/Subaru486desuwa/micu-image-mcp.git micu-image-mcp
+cd micu-image-mcp
+python install.py
+```
+
+以后更新同一个目录：
+
+```bash
+cd micu-image-mcp
+git pull --ff-only
+python install.py
+```
+
+方式二：用 npm 临时下载源码（适合没有 `git` 命令的环境）。这个项目不是 npm 包，不要用 `npm install micu-image-mcp`；下面的命令只是通过 `tiged` 从 GitHub 拉取源码，仍需要当前网络能访问 GitHub。
+
+```bash
+npm exec --yes tiged -- github:Subaru486desuwa/micu-image-mcp#main micu-image-mcp
 cd micu-image-mcp
 python install.py
 ```
