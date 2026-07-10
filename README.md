@@ -63,6 +63,8 @@
 
 ---
 
+> **2026-07 线路兼容更新**：支持将限流包装为 `HTTP 400 + Too Many Requests` 的新线路行为，并按 429 语义自动重试；同时兼容 `response_format=url` 返回 `data:image/...;base64,...`。实测 `https://www.micuapi.ai` 经 Cloudflare LAX + Caddy 正常，1K 可用；4K/pro 队列仍可能受上游限流，因此仅保留纯文生图 4K，参考图 4K 暂不放开。
+
 ## 一键安装
 
 方式一：用 Git 下载源码（推荐）。

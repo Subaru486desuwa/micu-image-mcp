@@ -72,8 +72,8 @@ from micu_image_mcp.http_client import (
     Endpoint,
     _get_http_client,
     _call_endpoint, _call_endpoint_stream,
-    _parse_retry_after, _retry_delay, _append_retry_note,
-    _call_with_retry,
+    _parse_retry_after, _effective_retry_status,
+    _retry_delay, _append_retry_note, _call_with_retry,
 )
 from micu_image_mcp.save import (
     ImageSaveError,
@@ -151,7 +151,7 @@ async def _call_and_save_with_format_fallback(
             used_http_fallback = True
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
-            continue
+            break
         saved_info, save_err = await _save_first_payload_from_response(
             text,
             out_dir,
@@ -341,7 +341,7 @@ async def image_generate(
             )
             if not (200 <= status < 300):
                 last_grok_err = f"HTTP {status}: {_error_detail(text)}"
-                continue
+                break
 
             resp = _parse_response(text)
             payloads = _extract_image_payloads(resp)
@@ -471,7 +471,7 @@ async def image_generate(
                     status, text = chat_status, chat_text
             if not (200 <= status < 300):
                 last_err = f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
-                continue
+                break
             resp = _parse_response(text)
             b64, url = _extract_image_payload(resp)
             try:
@@ -781,7 +781,7 @@ async def image_edit(
             )
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
-            continue
+            break
         saved_info, save_err = await _save_first_payload_from_response(
             text, out_dir, stem, notes, size,
         )
@@ -1225,7 +1225,7 @@ async def image_multi_reference(
             )
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
-            continue
+            break
         saved_info, save_err = await _save_first_payload_from_response(
             text, out_dir, stem, notes, size,
         )

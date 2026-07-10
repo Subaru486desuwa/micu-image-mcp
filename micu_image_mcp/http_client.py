@@ -213,6 +213,20 @@ def _parse_retry_after(headers: dict[str, str]) -> float | None:
     return min(seconds, MAX_RETRY_AFTER_SECONDS)
 
 
+def _effective_retry_status(status: int, text: str) -> int:
+    """Normalize proxy errors that carry retry semantics under the wrong HTTP code."""
+    if status == 400:
+        detail = _error_detail(text).strip().lower()
+        if any(marker in detail for marker in (
+            "too many requests",
+            "rate limit",
+            "rate_limit",
+            "ratelimit",
+        )):
+            return 429
+    return status
+
+
 def _retry_delay(
     status: int,
     headers: dict[str, str],
@@ -309,8 +323,9 @@ async def _call_with_retry(
 
         retry_attempt = 0
         while not (200 <= status < 300):
+            retry_status = _effective_retry_status(status, text)
             delay = _retry_delay(
-                status,
+                retry_status,
                 headers,
                 attempt_index=retry_attempt,
                 big_size_lock=big_size_lock,
@@ -319,7 +334,7 @@ async def _call_with_retry(
                 break
             _append_retry_note(
                 notes_out,
-                status=status,
+                status=retry_status,
                 delay=delay,
                 next_attempt=attempt_number + 1,
                 text=text,
@@ -342,6 +357,7 @@ __all__ = [
     "Endpoint",
     "_get_http_client",
     "_call_endpoint", "_call_endpoint_stream",
-    "_parse_retry_after", "_retry_delay", "_append_retry_note",
+    "_parse_retry_after", "_effective_retry_status",
+    "_retry_delay", "_append_retry_note",
     "_call_with_retry",
 ]
