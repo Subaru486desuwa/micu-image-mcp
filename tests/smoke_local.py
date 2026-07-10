@@ -35,11 +35,11 @@ sys.path.insert(0, str(REPO))
 
 
 def ok(msg: str) -> None:
-    print(f"  \033[32m✓\033[0m {msg}")
+    print(f"  \033[32mOK\033[0m {msg}")
 
 
 def fail(msg: str) -> None:
-    print(f"  \033[31m✗\033[0m {msg}")
+    print(f"  \033[31mFAIL\033[0m {msg}")
     raise SystemExit(1)
 
 
