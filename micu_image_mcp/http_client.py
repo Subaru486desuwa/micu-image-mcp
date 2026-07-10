@@ -43,6 +43,11 @@ class Endpoint:
 _HTTP_CLIENT: httpx.AsyncClient | None = None
 
 
+def _json_request_bytes(body: dict | None) -> bytes:
+    """Serialize JSON as literal UTF-8 instead of ASCII-only Unicode escapes."""
+    return json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 def _get_http_client() -> httpx.AsyncClient:
     """返回模块级共享 client；首次调用时创建。
 
@@ -98,8 +103,8 @@ async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tupl
                 data[k] = v
         ctx = cx.stream("POST", ep.url, headers=headers, data=data, files=files, timeout=timeout)
     else:
-        headers["Content-Type"] = "application/json"
-        ctx = cx.stream("POST", ep.url, headers=headers, content=json.dumps(ep.json_body), timeout=timeout)
+        headers["Content-Type"] = "application/json; charset=utf-8"
+        ctx = cx.stream("POST", ep.url, headers=headers, content=_json_request_bytes(ep.json_body), timeout=timeout)
     async with ctx as r:
         resp_headers = {k.lower(): v for k, v in r.headers.items()}
         cl = resp_headers.get("content-length")
@@ -130,7 +135,7 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
     headers = {
         "Authorization": f"Bearer {key}",
         "Accept": "text/event-stream",
-        "Content-Type": "application/json",
+        "Content-Type": "application/json; charset=utf-8",
     }
     full_content = ""
     line_count = 0
@@ -141,7 +146,7 @@ async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) 
     cx = _get_http_client()
     response_headers: dict[str, str] = {}
     try:
-        async with cx.stream("POST", ep.url, headers=headers, content=json.dumps(body), timeout=timeout) as r:
+        async with cx.stream("POST", ep.url, headers=headers, content=_json_request_bytes(body), timeout=timeout) as r:
             final_status = r.status_code
             response_headers = {k.lower(): v for k, v in r.headers.items()}
             if not (200 <= r.status_code < 300):
@@ -355,6 +360,7 @@ async def _call_with_retry(
 
 __all__ = [
     "Endpoint",
+    "_json_request_bytes",
     "_get_http_client",
     "_call_endpoint", "_call_endpoint_stream",
     "_parse_retry_after", "_effective_retry_status",

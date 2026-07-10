@@ -70,6 +70,7 @@ from micu_image_mcp.extract import (
 )
 from micu_image_mcp.http_client import (
     Endpoint,
+    _json_request_bytes,
     _get_http_client,
     _call_endpoint, _call_endpoint_stream,
     _parse_retry_after, _effective_retry_status,
