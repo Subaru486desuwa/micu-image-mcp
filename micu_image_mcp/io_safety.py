@@ -1,8 +1,11 @@
 """basename / save_dir / 图片字节 / mask 安全校验 + PNG header 解析。"""
 from __future__ import annotations
 
+import io
 import time
 from pathlib import Path
+
+from PIL import Image, UnidentifiedImageError
 
 from .config import (
     _SAVE_ROOT, DEFAULT_SAVE_DIR, _INPUT_ROOT,
@@ -106,23 +109,21 @@ def _validate_image_path(image_path: str, label: str = "image_path") -> tuple[Pa
     err = _validate_image_bytes(raw, label)
     if err:
         return p, raw, "", err
-    # 重型校验：能否真解出宽高（防只有头的伪文件 / 截断文件）
-    actual = _detect_actual_size(raw)
-    if actual is None:
-        return p, raw, "", (
-            f"{label} 头部像图片，但解析不出宽高（可能截断、损坏或伪造）"
-        )
+    # 完整解码校验：只检查 magic/宽高会放过“保留头部、像素数据已截断”的文件，
+    # 随后上游只能返回 invalid_file。Pillow 已是项目依赖，这里用 verify() 在请求前拦截。
+    try:
+        with Image.open(io.BytesIO(raw)) as decoded:
+            actual = decoded.size
+            decoded_format = (decoded.format or "").upper()
+            decoded.verify()
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError):
+        return p, raw, "", f"{label} 无法完整解码（文件可能截断、损坏或格式标记错误）"
+    if decoded_format not in {"PNG", "JPEG", "WEBP"}:
+        return p, raw, "", f"{label} 格式 {decoded_format or '未知'} 不受上游支持；请转换为 PNG、JPEG 或 WebP"
     if actual[0] < 16 or actual[1] < 16:
         return p, raw, "", f"{label} 尺寸 {actual[0]}x{actual[1]} 太小，不像正常图片"
-    # 由 magic 决定 mime（不再信扩展名）
-    if raw[:8] == b"\x89PNG\r\n\x1a\n":
-        mime = "image/png"
-    elif raw[:3] == b"\xff\xd8\xff":
-        mime = "image/jpeg"
-    elif raw[:4] == b"RIFF":
-        mime = "image/webp"
-    else:
-        mime = "image/gif"
+    # 由实际解码格式决定 MIME（不信扩展名，也不信调用方传入的 Content-Type）。
+    mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[decoded_format]
     return p, raw, mime, None
 
 

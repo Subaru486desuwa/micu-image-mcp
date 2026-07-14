@@ -528,7 +528,7 @@ MCP 内置多项安全限制：
 |------|------|
 | 输出目录牢笼 | 所有输出必须在 `MICU_SAVE_DIR_ROOT` 下 |
 | basename 校验 | 仅允许 `[A-Za-z0-9_\-.]`，禁止 `/`、`..` |
-| 输入图校验 | 按 magic bytes 验证为 PNG/JPEG/WebP/GIF |
+| 输入图校验 | 按 magic bytes 识别并用 Pillow 完整解码；仅允许 PNG/JPEG/WebP，截断或损坏文件在请求前拒绝 |
 | 输入大小 | 单图 ≤4MB；多图参考总和 ≤8MB |
 | 响应大小 | 远端响应 ≤25MB |
 | SSRF 防护 | 拒绝真内网地址；可信 CDN + fake-ip（198.18.0.0/15）在默认配置下放行 |
