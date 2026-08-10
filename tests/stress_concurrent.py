@@ -4,7 +4,7 @@
   1. 1K 多张并发 (n>1 → server 内 5 并发) → 吞吐线性 ≈ 5x
   2. ≥2K 多请求并发 → 进程内 Semaphore(1) + 跨进程 flock 强串行
   3. ≥4K 撞 CF 524 → fail-fast 不重试 (锁视角)
-  4. Grok 并发 → 不走锁，可线性并发
+  4. 仅允许 gpt-image-2 / gpt-image-2-pro；Grok 渠道暂时关闭
 
 模式:
   inprocess (默认): asyncio.gather N 个 image_generate 调用。
@@ -23,8 +23,6 @@
   # 跨进程模式 (开多窗口模拟)
   python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
 
-  # Grok 并发
-  python tests/stress_concurrent.py --model grok-imagine-image-lite --size 1024x1024 --concurrency 5
 """
 from __future__ import annotations
 
@@ -41,7 +39,6 @@ from pathlib import Path
 from _common import (
     Trial,
     ensure_save_dir,
-    has_grok_key,
     has_image2_key,
     import_server,
     parse_actual_size,
@@ -274,10 +271,16 @@ def derived_metrics(trials: list[Trial], total_wall_ms: float) -> dict:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="米醋 MCP 并发压力测试")
+    p = argparse.ArgumentParser(
+        description="米醋 MCP 并发压力测试（仅 gpt-image-2 / gpt-image-2-pro）"
+    )
     p.add_argument("--mode", choices=["inprocess", "multiprocess"], default="inprocess")
     p.add_argument("--concurrency", type=int, default=3)
-    p.add_argument("--model", default="gpt-image-2")
+    p.add_argument(
+        "--model",
+        choices=["gpt-image-2", "gpt-image-2-pro"],
+        default="gpt-image-2",
+    )
     p.add_argument("--size", default="1024x1024")
     p.add_argument("--worker-timeout", type=int, default=300,
                    help="multiprocess 模式下单个 worker 最大等待秒数")
@@ -288,11 +291,7 @@ def main() -> None:
     print(f"[..] 沙箱根: {save_root}")
 
     # key 校验
-    is_grok = args.model.startswith("grok-")
-    if is_grok and not has_grok_key():
-        print("[ERR] 选了 grok model 但 MICU_GROK_API_KEY 未配置")
-        sys.exit(1)
-    if not is_grok and not has_image2_key():
+    if not has_image2_key():
         print("[ERR] MICU_API_KEY 未配置")
         sys.exit(1)
 

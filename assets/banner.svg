@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="240" viewBox="0 0 880 240" role="img" aria-label="MICU IMAGE — 米醋 gpt-image-2 / grok image MCP server">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="240" viewBox="0 0 880 240" role="img" aria-label="MICU IMAGE — 米醋 gpt-image-2 MCP server">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#11161d"/>
@@ -22,7 +22,7 @@
 
   <rect x="306" y="140" width="268" height="3" rx="1.5" fill="url(#brand)" opacity="0.9"/>
 
-  <text x="440" y="178" text-anchor="middle" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#c8d2dc">米醋 · gpt-image-2 / grok image · MCP server</text>
+  <text x="440" y="178" text-anchor="middle" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#c8d2dc">米醋 · gpt-image-2 / gpt-image-2-pro · MCP server</text>
 
   <text x="440" y="210" text-anchor="middle" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="14" fill="#6b7785" letter-spacing="0.5">v0.1.0  ·  github.com/Subaru486desuwa/micu-image-mcp</text>
 </svg>

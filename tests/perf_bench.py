@@ -1,7 +1,7 @@
-"""性能基线测试。
+"""Image2 性能基线测试。
 
-串行跑 image2 / Grok 在不同 size 下的 image_generate，收集延迟、actual_size。
-默认 --smoke 跑最小集合（约 6 张图，~3 分钟）；--full 跑完整 sweep。
+串行跑 gpt-image-2 / gpt-image-2-pro 在不同 size 下的 image_generate，
+收集延迟与 actual_size。Grok 渠道暂时关闭，不进入压测矩阵。
 
 用法：
     # smoke（默认）
@@ -9,9 +9,6 @@
 
     # 跑完整 sweep, 每组重复 3 次
     python tests/perf_bench.py --full --repeat 3
-
-    # 只跑 Grok
-    python tests/perf_bench.py --channels grok
 
     # 干跑（不打 API，只验证导入 / 校验链路通）
     python tests/perf_bench.py --dry-run
@@ -28,7 +25,6 @@ from pathlib import Path
 from _common import (
     Trial,
     ensure_save_dir,
-    has_grok_key,
     has_image2_key,
     import_server,
     parse_actual_size,
@@ -50,17 +46,6 @@ IMAGE2_FULL: list[tuple[str, str, str]] = [
     ("image2", "gpt-image-2-pro", "2048x1152"),
     ("image2", "gpt-image-2-pro", "3840x2160"),
 ]
-GROK_SMOKE: list[tuple[str, str, str]] = [
-    ("grok", "grok-imagine-image-lite", "1024x1024"),
-    ("grok", "grok-imagine-image", "2048x2048"),
-]
-GROK_FULL: list[tuple[str, str, str]] = [
-    ("grok", "grok-imagine-image-lite", "1024x1024"),
-    ("grok", "grok-imagine-image-lite", "1536x1024"),
-    ("grok", "grok-imagine-image", "1024x1024"),
-    ("grok", "grok-imagine-image", "2048x2048"),
-    ("grok", "grok-imagine-image-pro", "1024x1024"),
-]
 
 PROMPT = (
     "A minimalist studio photograph of a single red apple on a white background, "
@@ -70,41 +55,29 @@ PROMPT = (
 
 def select_combinations(args) -> list[tuple[str, str, str]]:
     src_image2 = IMAGE2_FULL if args.full else IMAGE2_SMOKE
-    src_grok = GROK_FULL if args.full else GROK_SMOKE
-    combos: list[tuple[str, str, str]] = []
-    if args.channels in ("image2", "all"):
-        if not has_image2_key() and not args.dry_run:
-            print("[!!] MICU_API_KEY 未配置，跳过 image2 组")
-        else:
-            combos.extend(src_image2)
-    if args.channels in ("grok", "all"):
-        if not has_grok_key() and not args.dry_run:
-            print("[!!] MICU_GROK_API_KEY 未配置，跳过 grok 组")
-        else:
-            combos.extend(src_grok)
-    return combos
+    if not has_image2_key() and not args.dry_run:
+        print("[!!] MICU_API_KEY 未配置，无法运行 Image2 压测")
+        return []
+    return list(src_image2)
 
 
 async def run_one(server, *, channel: str, model: str, size: str, dry_run: bool) -> Trial:
     label = f"{channel}|{model}|{size}"
     if dry_run:
-        # 不打 API：只验证入口校验 + 路由 + 推理（用一个故意会被入口拦的请求）
+        # 不调用 tool，避免任何 HTTP；只验证当前压测矩阵的 model / size 路由。
         t0 = time.perf_counter()
-        r = await server.image_generate(
-            prompt="dry run smoke",
-            size=size,
-            model=model,
-            api_key="sk-fake-dry-run-token",
-        )
+        model_error = server._model_error(model)
+        _cleaned_size, size_error = server._validate_size(size, allow_none=False)
+        errors = [e for e in (model_error, size_error) if e]
         elapsed = (time.perf_counter() - t0) * 1000
         return Trial(
             label=label,
             model=model,
             size=size,
-            ok=False,
+            ok=not errors,
             wall_ms=elapsed,
-            error=str(r.get("error", "dry run"))[:240],
-            notes=list(r.get("notes", []))[:8],
+            error="; ".join(errors)[:240] or None,
+            notes=["offline dry-run：未调用 MCP tool，未发出 HTTP 请求"],
             extra={"dry_run": True},
         )
 
@@ -159,7 +132,7 @@ async def run_one(server, *, channel: str, model: str, size: str, dry_run: bool)
 async def main_async(args) -> int:
     combos = select_combinations(args)
     if not combos:
-        print("[ERR] 没有可跑的组合（缺 key 或 --channels 排除了全部）")
+        print("[ERR] 没有可跑的组合（缺少 MICU_API_KEY）")
         return 1
 
     save_root = ensure_save_dir("perf")
@@ -193,7 +166,7 @@ async def main_async(args) -> int:
         out_dir=out_dir,
         meta={
             "mode": "full" if args.full else "smoke",
-            "channels": args.channels,
+            "models": ["gpt-image-2", "gpt-image-2-pro"],
             "repeat": args.repeat,
             "dry_run": args.dry_run,
             "save_root": str(save_root),
@@ -212,10 +185,11 @@ async def main_async(args) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="米醋 MCP 性能基线测试")
+    p = argparse.ArgumentParser(
+        description="米醋 MCP 性能基线测试（仅 gpt-image-2 / gpt-image-2-pro）"
+    )
     p.add_argument("--full", action="store_true", help="跑完整 sweep（默认 smoke）")
     p.add_argument("--repeat", type=int, default=1, help="每组重复次数")
-    p.add_argument("--channels", choices=["image2", "grok", "all"], default="all")
     p.add_argument("--out-dir", default=str(Path(__file__).parent / "reports"))
     p.add_argument("--dry-run", action="store_true",
                    help="不打真实 API，只跑入口校验链路（看脚本本身能不能跑通）")

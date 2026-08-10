@@ -28,7 +28,7 @@ from micu_image_mcp.config import (
     RESPONSE_FORMATS_TO_TRY,
     GROK_BASEURL, GROK_API_KEY, XAI_MODEL, GROK_SIZE_MODE,
     _TRUST_ENV, _SAVE_ROOT, DEFAULT_SAVE_DIR,
-    PRO_MODEL, NONPRO_MODEL,
+    PRO_MODEL, NONPRO_MODEL, SUPPORTED_IMAGE_MODELS,
     GROK_MODEL_ALIASES, GROK_AVAILABLE_MODELS,
     GROK_ASPECT_RATIO_CHOICES, GROK_SIZE_MODES,
     HIGH_RES_EDGE, EDITS_MAX_EDGE,
@@ -46,7 +46,7 @@ from micu_image_mcp.sizes import (
     _round_to_alignment, _parse_actual,
 )
 from micu_image_mcp.routing import (
-    _is_grok_model, _reject_4k_with_reference,
+    _is_grok_model, _model_error, _reject_4k_with_reference,
     _resolve_model, _bypass_edits,
     _size_note, _grok_aspect_ratio, _grok_resolution,
     _infer_size_from_prompt,
@@ -258,6 +258,8 @@ async def image_generate(
     err_n = _validate_n(n)
     if err_n:
         return {"ok": False, "error": err_n, "errors": [err_n]}
+    if model_err := _model_error(model):
+        return {"ok": False, "error": model_err, "errors": [model_err]}
     safe_stem = _safe_basename(basename) if basename is not None else None
     if basename is not None and safe_stem is None:
         msg = f"basename {basename!r} 含非法字符或路径分量；仅允许 [A-Za-z0-9_-.]，禁含 / 与 .."
@@ -616,6 +618,8 @@ async def image_edit(
     # === 入口校验 ===
     if not isinstance(prompt, str) or not prompt.strip():
         return {"ok": False, "error": "prompt 不能为空", "errors": ["prompt 不能为空"]}
+    if model_err := _model_error(model):
+        return {"ok": False, "error": model_err, "errors": [model_err]}
     use_grok_request = _is_grok_model(model or DEFAULT_MODEL)
     if use_grok_request:
         cleaned_size, size_err = _validate_grok_size(size, allow_none=False)
@@ -869,6 +873,8 @@ async def image_batch_edit(
     if len(image_paths) > 20:
         msg = f"image_paths 最多 20 张，收到 {len(image_paths)} 张（防止意外 burn quota）"
         return {"ok": False, "error": msg, "errors": [msg], "total": len(image_paths)}
+    if model_err := _model_error(model):
+        return {"ok": False, "error": model_err, "errors": [model_err], "total": len(image_paths)}
     use_grok_request = _is_grok_model(model or DEFAULT_MODEL)
     if use_grok_request:
         cleaned_size, size_err = _validate_grok_size(size, allow_none=False)
@@ -1040,6 +1046,8 @@ async def image_multi_reference(
     if len(image_paths) > 10:
         msg = f"参考图最多 10 张，当前 {len(image_paths)} 张。请减少或分批。"
         return {"ok": False, "error": msg, "errors": [msg]}
+    if model_err := _model_error(model):
+        return {"ok": False, "error": model_err, "errors": [model_err]}
     use_grok_request = _is_grok_model(model or DEFAULT_MODEL)
     if use_grok_request:
         cleaned_size, size_err = _validate_grok_size(size, allow_none=False)
@@ -1275,8 +1283,10 @@ def server_info() -> dict[str, Any]:
         "default_model": DEFAULT_MODEL,
         "grok_default_model": XAI_MODEL,
         "grok_size_mode": _grok_size_mode(),
-        "available_models": [NONPRO_MODEL, PRO_MODEL],
-        "grok_available_models": GROK_AVAILABLE_MODELS,
+        "available_models": list(SUPPORTED_IMAGE_MODELS),
+        "grok_available_models": [],
+        "grok_channel_enabled": False,
+        "grok_channel_status": "暂时关闭，待服务器支持后再启用",
         "default_save_dir": str(DEFAULT_SAVE_DIR),
         "api_key_configured": bool(API_KEY),
         "grok_api_key_configured": bool(GROK_API_KEY),
@@ -1326,8 +1336,8 @@ def server_info() -> dict[str, Any]:
             "4k_pro_real_resolution": sorted(VALID_SIZES_4K),
             "tip": "纯文生图（image_generate）：1K 可靠 ~1.57MP，2K/4K 真分辨率可用（自动切 pro + MCP 重试吸收瞬时 524，~80s/张，高负载偶慢/偶失败）。带参考图（edit/multi_reference）：1K 稳定 ~1.57MP，2K best-effort 真 2K（约 2/3 成功，524 时 fallback ~1.57MP），4K 禁用。",
             "two_step_tip": "带参考图想拼真 4K：先出 ~1.57MP/2K 综合/编辑图 → 再 image_generate(size=\"3840x...\") 描述同场景升 4K（image_generate 4K 真分辨率可用，重试吸收瞬时 524）。",
-            "grok_tip": "Grok 路径按 aspect_ratio + resolution(1k/2k) 映射，不强制 8 倍数，size 仅用于本地路由选择。",
-            "grok_actual_size_tip": "实测 Grok 返回像素不严格等于请求 WxH；以 saved.actual_size 为准。",
+            "grok_tip": "Grok 生图渠道暂时关闭，待服务器支持后再启用。",
+            "grok_actual_size_tip": "Grok 生图渠道暂时关闭，当前不会生成 Grok 输出。",
         },
         "capability_matrix": {
             "image_generate": {
@@ -1336,25 +1346,25 @@ def server_info() -> dict[str, Any]:
                 "4k_pro": "真 4K 可用，N=1 强制；自动切 pro，MCP 重试吃掉瞬时 524，实测真返回 3840×2160，~80s/张（高负载偶慢/偶失败）",
             },
             "grok_image_generate": {
-                "1k": f"可用，默认 model={XAI_MODEL}，resolution=1k，按 aspect_ratio 自动选图",
-                "2k": "可用，resolution=2k，按 aspect_ratio 自动选图；实际像素以返回图片为准",
-                "4k": "不支持；Grok 目前只开放 1k / 2k",
+                "1k": "暂时关闭，待服务器支持后再启用",
+                "2k": "暂时关闭，待服务器支持后再启用",
+                "4k": "暂时关闭，待服务器支持后再启用",
             },
             "image_edit": {
-                "1k": "gpt-image-2 可靠，~10s，edits multipart + 可选 alpha mask，输出 ~1.57MP；Grok 模型走 generations + reference_image（无 mask）",
-                "2k_pro": "gpt-image-2 统一走 edits（+ mask），自动切 pro；带参考图 best-effort 真 2K（约 2/3 成功真返回 2048²，524 时 fallback chat stream → ~1.57MP，较慢 2-4 分钟）；Grok 映射到 resolution=2k",
-                "4k_pro": "gpt-image-2 已禁用：origin 处理 4K + 参考图稳定 > 120s 撞 CF；Grok 不拒绝 WxH，但只映射到 resolution=2k",
+                "1k": "gpt-image-2 可靠，~10s，edits multipart + 可选 alpha mask，输出 ~1.57MP",
+                "2k_pro": "gpt-image-2 统一走 edits（+ mask），自动切 pro；带参考图 best-effort 真 2K（约 2/3 成功真返回 2048²，524 时 fallback chat stream → ~1.57MP，较慢 2-4 分钟）",
+                "4k_pro": "已禁用：origin 处理 4K + 参考图稳定 > 120s 撞 CF",
             },
             "image_batch_edit": {
                 "1k_non_pro": "5 并发",
                 "1k_pro": "串行 + 1.5s gap",
                 ">=2k": "拒绝",
-                "grok": "当前不支持 Grok 批量逐张编辑；请用 image_edit 单图循环或 image_multi_reference。",
+                "grok": "暂时关闭，待服务器支持后再启用",
             },
             "image_multi_reference": {
-                "1k": "gpt-image-2 稳定可用，2-10 张参考图融合输出 1 张，走 edits + image[]（米醋唯一真消费参考图的端点），N=2..10 实测 100% 成功，输出 ~1.57MP；Grok 模型走 generations + image_urls",
-                "2k_pro": "gpt-image-2 走 edits + image[]，自动切 pro；带参考图 best-effort 真 2K（约 2/3 成功真返回 2048²，524 时 fallback chat stream → ~1.57MP，较慢）；Grok 映射到 resolution=2k",
-                "4k_pro": "gpt-image-2 已禁用：origin 处理 4K 多图融合稳定 > 120s 撞 CF；Grok 不拒绝 WxH，但只映射到 resolution=2k",
+                "1k": "gpt-image-2 稳定可用，2-10 张参考图融合输出 1 张，走 edits + image[]（米醋唯一真消费参考图的端点），N=2..10 实测 100% 成功，输出 ~1.57MP",
+                "2k_pro": "gpt-image-2 走 edits + image[]，自动切 pro；带参考图 best-effort 真 2K（约 2/3 成功真返回 2048²，524 时 fallback chat stream → ~1.57MP，较慢）",
+                "4k_pro": "已禁用：origin 处理 4K 多图融合稳定 > 120s 撞 CF",
             },
         },
         "retry_policy": {
@@ -1374,7 +1384,7 @@ def server_info() -> dict[str, Any]:
             "saved_to_disk": "所有生成的图片落盘到 save_dir（默认 cwd/out 或 MICU_SAVE_DIR）",
             "actual_size_field": "返回的 saved[].actual_size 是从 PNG/JPEG header 读出的真实像素，可与请求 size 对比验证",
             "extract_paths": "支持 data[].b64_json / data[].url / chat content markdown 三种响应格式",
-            "grok_extract_paths": "Grok 也支持 data[].b64_json / data[].url，size 由本地映射到 resolution/aspect_ratio",
+            "grok_extract_paths": "Grok 生图渠道暂时关闭，当前不会执行 Grok 响应提取。",
         },
     }
 

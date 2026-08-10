@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from .config import (
-    DEFAULT_MODEL, PRO_MODEL,
+    DEFAULT_MODEL, PRO_MODEL, SUPPORTED_IMAGE_MODELS,
     GROK_MODEL_ALIASES, GROK_ASPECT_RATIO_CHOICES,
     HIGH_RES_EDGE, MIN_SIZE_EDGE, MAX_SIZE_EDGE,
 )
@@ -16,6 +16,20 @@ def _is_grok_model(model: str | None) -> bool:
         return False
     m = model.strip().lower()
     return m in GROK_MODEL_ALIASES or m.startswith("grok-")
+
+
+def _model_error(model: str | None) -> str | None:
+    """Return a public validation error while the Grok channel is disabled."""
+    requested = DEFAULT_MODEL if model is None else model
+    if requested in SUPPORTED_IMAGE_MODELS:
+        return None
+    supported = " / ".join(SUPPORTED_IMAGE_MODELS)
+    if isinstance(requested, str) and _is_grok_model(requested):
+        return f"Grok 生图渠道暂时关闭，待服务器支持后再启用；当前仅支持 {supported}。"
+    return (
+        f"不支持 model={requested!r}；当前仅支持 {supported}。"
+        "Grok 生图渠道暂时关闭，待服务器支持后再启用。"
+    )
 
 
 def _reject_4k_with_reference(size: str, tool: str) -> str | None:
@@ -164,7 +178,7 @@ def _infer_size_from_prompt(prompt: str) -> tuple[str, str] | None:
 
 
 __all__ = [
-    "_is_grok_model", "_reject_4k_with_reference",
+    "_is_grok_model", "_model_error", "_reject_4k_with_reference",
     "_resolve_model", "_bypass_edits",
     "_size_note", "_grok_aspect_ratio", "_grok_resolution",
     "_infer_size_from_prompt",

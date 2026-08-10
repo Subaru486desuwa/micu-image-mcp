@@ -1,26 +1,13 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="MICU IMAGE — 米醋 gpt-image-2 / grok image MCP server" width="820">
+  <img src="assets/banner.svg" alt="MICU IMAGE — 米醋 gpt-image-2 MCP server" width="820">
 </p>
 
 # 米醋画图 MCP
 
 把 [米醋](https://www.micuapi.ai) 的图像接口包装成 MCP server，让 Claude Code / Codex / Cursor 等 MCP 客户端直接生图、改图、批处理、多图参考。
 
-默认使用 `gpt-image-2` / `gpt-image-2-pro`。可选配置 `MICU_GROK_API_KEY` 后，也能走米醋 Grok 图像通道。
-
-注意：米醋后台的 Image2 分组和 Grok 分组通常是两把不同的 key：
-
-- `MICU_API_KEY`: Image2 分组 token，必须能看到 `gpt-image-2` / `gpt-image-2-pro`
-- `MICU_GROK_API_KEY`: Grok 图像分组 token，必须能看到 `grok-imagine-image-*`
-
-如果把 Grok 分组 token 填进 `MICU_API_KEY`，运行时会出现类似 `分组 grok 下模型 gpt-image-2 无可用渠道` 的错误。
-
-当前实测 Grok 图像模型包括：
-
-- `grok-imagine-image-lite`
-- `grok-imagine-image`
-- `grok-imagine-image-pro`
-- `grok-imagine-image-edit`
+当前仅支持 `gpt-image-2` / `gpt-image-2-pro`，`MICU_API_KEY` 必须能看到这两个模型。
+Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧的 Grok 环境变量，安装器也不会写入，工具调用会在发出请求前拒绝 Grok 模型。
 
 ---
 
@@ -28,10 +15,10 @@
 
 | Tool | 说明 |
 |---|---|
-| `image_generate` | 文生图。米醋 image2 支持 1K / 2K / 4K；Grok 支持 1K / 2K 路由 |
-| `image_edit` | 单图参考/编辑。image2 走 `/v1/images/edits`（1K ~1.57MP，2K best-effort 真 2K）；Grok 走 `reference_image` |
+| `image_generate` | 文生图。米醋 image2 支持 1K / 2K / 4K |
+| `image_edit` | 单图参考/编辑。走 `/v1/images/edits`（1K ~1.57MP，2K best-effort 真 2K） |
 | `image_batch_edit` | 多张图逐张同指令处理 |
-| `image_multi_reference` | 2-10 张参考图融合成 1 张新图；Grok 走 `image_urls` |
+| `image_multi_reference` | 2-10 张参考图融合成 1 张新图 |
 | `server_info` | 查看 base URL、模型、size 规则、重试策略、安全约束 |
 
 第一次使用前，让 LLM 调一次 `server_info`，可以看到当前运行时配置和可用能力。
@@ -45,21 +32,9 @@
 
 ---
 
-## Grok 与 GPT Image2 功能差异
+## 当前模型范围
 
-| 能力 | `gpt-image-2` / `gpt-image-2-pro` | 米醋 Grok 图像模型 |
-|---|---|---|
-| 默认用途 | 主通道，覆盖文生图、图生图、批量编辑、多图参考 | 可选通道，适合快速文生图、单图参考、多图参考 |
-| 可选模型 | `gpt-image-2`, `gpt-image-2-pro` | `grok-imagine-image-lite`, `grok-imagine-image`, `grok-imagine-image-pro`, `grok-imagine-image-edit` |
-| `image_generate` 文生图 | 支持 1K / 2K / 4K；2K/4K 自动切 pro，强制 `n=1` | 支持 1K / 2K 路由；`n` 会传给后端，实际返回张数以响应为准 |
-| `image_edit` 单图参考/编辑 | 所有尺寸走 `/v1/images/edits`（1K ~1.57MP，2K best-effort 真 2K）；4K 入口拒绝 | 走 `/v1/images/generations` + `reference_image`；4K 会映射到 `resolution=2k` |
-| 局部 mask | `/v1/images/edits` 所有尺寸支持 alpha mask | 当前不支持 mask，传入会忽略并写入 `notes` |
-| `image_multi_reference` 多图参考 | 2-10 张参考图走 `/v1/images/edits` + `image[]`（1K ~1.57MP，2K best-effort 真 2K）；4K 入口拒绝 | 2-10 张参考图走 `image_urls`；实测可用，按 `resolution` + `aspect_ratio` 映射 |
-| `image_batch_edit` 批量逐张编辑 | 支持 1K；non-pro 5 并发，pro 串行 | 当前不支持 Grok 批量逐张编辑 |
-| size 校验 | `WxH`，边长 256-4096，W/H 必须是 8 的倍数 | 只校验 `WxH` 正整数，不强制 8 倍数和 4096 边长 |
-| 实际输出尺寸 | 纯文生图 2K/4K 真分辨率可用（pro + 重试吸收瞬时 524，~80s/张）；带参考图 1K ~1.57MP、2K best-effort 真 2K | 不保证等于请求 `WxH`，以 `saved.actual_size` 为准 |
-| 重试/限流 | 2K/4K 使用跨进程锁，避免多个 MCP 同时打 pro 队列 | 不走高分辨率锁；可恢复错误仍自动重试并记录到 `notes` |
-| 配置变量 | `MICU_API_KEY`, `MICU_MODEL`, `MICU_BASEURL` | `MICU_GROK_API_KEY`, `XAI_MODEL`；默认复用 `MICU_BASEURL` |
+所有工具与压测脚本仅接受 `gpt-image-2` 和 `gpt-image-2-pro`。2K/4K 会自动切换到 pro；Grok 相关实现暂时保留为休眠代码，服务器恢复支持后可重新开放。
 
 ---
 
@@ -94,9 +69,8 @@ python install.py
 1. 检查 Python >= 3.10
 2. 安装依赖
 3. 交互配置米醋 Image2 分组 API key、输出目录
-4. 可选配置米醋 Grok 生图分组 token
-5. 写入 `~/.claude.json` 和 `~/.codex/config.toml`
-6. 启动 server 做一次 initialize 握手
+4. 写入 `~/.claude.json` 和 `~/.codex/config.toml`
+5. 启动 server 做一次 initialize 握手
 
 安装脚本会用 `/v1/models` 做轻量校验，尽量在安装阶段发现 key 分组粘错的问题。
 
@@ -104,12 +78,11 @@ python install.py
 
 ```bash
 MICU_API_KEY=sk-... \
-MICU_GROK_API_KEY=sk-... \
 MICU_SAVE_DIR=~/Pictures/micu-out \
 python install.py --yes
 ```
 
-`--yes` 模式下如果 `MICU_API_KEY` 看不到 `gpt-image-2`，或 `MICU_GROK_API_KEY` 看不到 `grok-imagine-image-*`，安装会直接失败，避免写入错误配置。
+`--yes` 模式下如果 `MICU_API_KEY` 看不到 `gpt-image-2` / `gpt-image-2-pro`，安装会直接失败，避免写入错误配置。
 
 常用选项：
 
@@ -134,40 +107,6 @@ python -m pip uninstall -y micu-image-mcp
 
 ---
 
-## Grok 路径
-
-Grok 走米醋中转，base URL 默认仍是：
-
-```text
-https://www.micuapi.ai
-```
-
-只需要额外配置：
-
-```bash
-MICU_GROK_API_KEY=sk-...
-XAI_MODEL=grok-imagine-image-lite
-MICU_GROK_SIZE_MODE=contain
-```
-
-Grok 的 `size` 不套用 image2 的 8 倍数和 4096 边长约束。本地只检查 `WxH` 格式，然后映射为：
-
-- `resolution`: `1k` 或 `2k`
-- `aspect_ratio`: 最接近的比例，如 `1:1`、`16:9`、`9:16`
-
-注意：Grok 后端返回像素不保证严格等于请求的 `WxH`。MCP 默认会在保存前用 Pillow 把 Grok 输出归一化到请求尺寸，`MICU_GROK_SIZE_MODE` 可选：
-
-| 值 | 行为 |
-|---|---|
-| `contain` | 默认。等比缩放，补边到请求尺寸，不裁主体 |
-| `cover` | 等比缩放并居中裁切，铺满请求尺寸 |
-| `stretch` | 直接拉伸到请求尺寸，可能变形 |
-| `backend` | 不做本地后处理，保留 Grok 后端原始像素 |
-
-建议仍优先用常见比例和不太小的边长，例如 `1024x1024`、`1536x1024`、`1024x1536`、`1501x1001`。过小或很奇异的比例可能被米醋 Grok 后端返回 500，MCP 会自动重试并在 `notes` 里记录。
-
----
-
 ## Size 规则
 
 image2 路径：
@@ -185,14 +124,6 @@ image2 路径：
 | 1K | `1024x1024`, `1280x720`, `720x1280`, `1024x1536`, `1536x1024` |
 | 2K | `2048x2048`, `2048x1152`, `1152x2048` |
 | 4K | `3840x2160`, `2160x3840` |
-
-Grok 路径：
-
-- 不强制 8 倍数
-- 当前按 1K / 2K 路由
-- 4K 请求会映射到 `resolution=2k`
-
----
 
 ## 尺寸能力矩阵 / Size capability
 
@@ -220,16 +151,9 @@ Grok 路径：
 | `MICU_API_KEY` | 空 | 米醋 image2 token |
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 base URL |
 | `MICU_MODEL` | `gpt-image-2` | image2 默认模型 |
-| `MICU_GROK_API_KEY` | 空 | 米醋 Grok 图像 token |
-| `XAI_MODEL` | `grok-imagine-image-lite` | Grok 默认模型 |
-| `MICU_GROK_SIZE_MODE` | `contain` | Grok 保存前尺寸归一化策略：`contain` / `cover` / `stretch` / `backend` |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同输出目录 | 输出安全根目录 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取 shell 代理 |
-
-兼容旧 Grok 变量 `XAI_API_KEY` / `GROK_API_KEY`，但推荐新配置统一使用 `MICU_GROK_API_KEY`。
-
----
 
 ## 手动配置
 
@@ -243,10 +167,8 @@ Claude Code:
       "args": ["/absolute/path/to/micu-image-mcp/server.py"],
       "env": {
         "MICU_API_KEY": "sk-...",
-        "MICU_GROK_API_KEY": "sk-...",
         "MICU_SAVE_DIR": "/Users/you/Pictures/micu-out",
-        "MICU_SAVE_DIR_ROOT": "/Users/you/Pictures/micu-out",
-        "XAI_MODEL": "grok-imagine-image-lite"
+        "MICU_SAVE_DIR_ROOT": "/Users/you/Pictures/micu-out"
       }
     }
   }
@@ -262,10 +184,8 @@ args = ["/absolute/path/to/micu-image-mcp/server.py"]
 
 [mcp_servers.micu-image.env]
 MICU_API_KEY = "sk-..."
-MICU_GROK_API_KEY = "sk-..."
 MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
 MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
-XAI_MODEL = "grok-imagine-image-lite"
 ```
 
 ---
@@ -278,24 +198,20 @@ XAI_MODEL = "grok-imagine-image-lite"
 
 ### 性能基线 `tests/perf_bench.py`
 
-串行跑 image2 / Grok 在不同 `size` 下的 `image_generate`，记录单次延迟、actual_size 偏差、保存后字节数。
+串行跑 `gpt-image-2` / `gpt-image-2-pro` 在不同 `size` 下的 `image_generate`，记录单次延迟、actual_size 偏差、保存后字节数。
 
 ```bash
-# smoke (默认): image2 + grok 各 2 张, 共 4 张 → ~3-5 分钟
+# smoke（默认）：两个 Image2 模型各 1 张
 python tests/perf_bench.py
 
 # 完整 sweep, 每组重复 3 次
 python tests/perf_bench.py --full --repeat 3
 
-# 只跑某一通道
-python tests/perf_bench.py --channels image2
-python tests/perf_bench.py --channels grok
-
 # 干跑 (不打 API, 只验证脚本链路)
 python tests/perf_bench.py --dry-run
 ```
 
-报告 markdown 表头：`group | n | ok | fail | rate | p50_ms | p95_ms | mean_ms | actual_match`。`actual_match` 是 PNG header 读出的实际像素严格等于请求 size 的比例 — 对 image2 1K 福利档预期会偏低（被代理压到 ~1.57MP），2K/4K 严格 1:1，Grok 由 `MICU_GROK_SIZE_MODE` 决定。
+报告 markdown 表头：`group | n | ok | fail | rate | p50_ms | p95_ms | mean_ms | actual_match`。`actual_match` 是 PNG header 读出的实际像素严格等于请求 size 的比例；1K 福利档预期会偏低（被代理压到 ~1.57MP），2K/4K 严格 1:1。
 
 ### 并发压力 `tests/stress_concurrent.py`
 
@@ -303,7 +219,7 @@ python tests/perf_bench.py --dry-run
 1. 1K 单进程多并发 → 进程内不卡，吞吐近似线性
 2. ≥2K 多进程并发 → 进程内 `asyncio.Semaphore(1)` + 跨进程 `flock` 双层锁串行
 3. CF 524 / 上游 5xx → 重试/fail-fast 策略
-4. Grok 路径不走 ≥2K 锁，可线性并发
+4. `--model` 仅接受 `gpt-image-2` / `gpt-image-2-pro`
 
 ```bash
 # in-process 并发 (默认 smoke, image2 1K x 3)
@@ -315,8 +231,6 @@ python tests/stress_concurrent.py --size 2048x2048 --concurrency 4
 # 跨进程模式 (spawn N 个子进程, 模拟多 Claude Code 窗口)
 python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
 
-# Grok 并发
-python tests/stress_concurrent.py --model grok-imagine-image-lite --concurrency 5
 ```
 
 报告关键派生指标：

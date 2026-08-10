@@ -10,6 +10,9 @@ import asyncio
 import base64
 import io
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import httpx
 import pytest
@@ -18,6 +21,9 @@ from PIL import Image
 import server
 from micu_image_mcp import http_client, routing, save
 from micu_image_mcp.save import ImageSaveError
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _png_bytes(w: int = 32, h: int = 32) -> bytes:
@@ -85,6 +91,61 @@ def test_image_generate_happy_path(fake_http):
     assert r["ok"] is True, r
     assert r["used_fallback"] is False
     assert r["saved"], r
+
+
+@pytest.mark.parametrize(
+    ("tool", "kwargs"),
+    [
+        (server.image_generate, {"prompt": "test"}),
+        (server.image_edit, {"prompt": "test", "image_path": "/does/not/exist.png"}),
+        (server.image_batch_edit, {"prompt": "test", "image_paths": ["/does/not/exist.png"]}),
+        (
+            server.image_multi_reference,
+            {"prompt": "test", "image_paths": ["/does/not/exist-a.png", "/does/not/exist-b.png"]},
+        ),
+    ],
+)
+def test_image_tools_reject_grok_before_io_or_network(tool, kwargs):
+    r = asyncio.run(tool(model="grok-imagine-image", api_key="sk-test", **kwargs))
+
+    assert r["ok"] is False
+    assert "Grok" in r["error"]
+    assert "暂时关闭" in r["error"]
+
+
+@pytest.mark.parametrize("model", ["dall-e-3", " gpt-image-2 "])
+def test_image_generate_rejects_every_other_model(model):
+    r = asyncio.run(server.image_generate(prompt="test", model=model, api_key="sk-test"))
+
+    assert r["ok"] is False
+    assert "gpt-image-2 / gpt-image-2-pro" in r["error"]
+    assert "Grok 生图渠道暂时关闭" in r["error"]
+
+
+def test_server_info_reports_only_image2_models():
+    r = server.server_info()
+
+    assert r["available_models"] == ["gpt-image-2", "gpt-image-2-pro"]
+    assert r["grok_channel_enabled"] is False
+    assert r["grok_available_models"] == []
+    assert "grok_api_key_configured" in r
+    assert "暂时关闭" in r["recommended_sizes"]["grok_tip"]
+    assert "暂时关闭" in r["capability_matrix"]["grok_image_generate"]["1k"]
+    assert "暂时关闭" in r["response_handling"]["grok_extract_paths"]
+
+
+@pytest.mark.parametrize("script", ["perf_bench.py", "stress_concurrent.py"])
+def test_benchmark_cli_does_not_offer_grok(script):
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "tests" / script), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "grok" not in result.stdout.lower()
+    assert "gpt-image-2-pro" in result.stdout
 
 
 def test_image_generate_uses_url_first_response_format(monkeypatch):

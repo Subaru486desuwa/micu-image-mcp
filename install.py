@@ -8,7 +8,7 @@
 - 同步设置 MICU_SAVE_DIR_ROOT 沙箱根，避免自定义目录被沙箱拒
 - 自检 server 能不能起来 + 给出脱敏摘要
 - 检测 Claude Code / Codex 进程并提示先关再启
-- 可选顺带配置米醋 Grok 图像通道 token
+- 当前仅配置 gpt-image-2 / gpt-image-2-pro；Grok 渠道暂时关闭
 
 用法：
     python install.py
@@ -18,7 +18,7 @@
     python install.py --no-claude                  # 不写 Claude 配置
     python install.py --yes                        # 非交互, 全用环境变量
         MICU_API_KEY=... MICU_SAVE_DIR=... python install.py --yes
-        MICU_GROK_API_KEY=... python install.py --yes
+        MICU_API_KEY=... python install.py --yes
 """
 from __future__ import annotations
 
@@ -411,7 +411,7 @@ def collect_config(non_interactive: bool, baseurl: str) -> tuple[dict[str, str],
         print("\n=== 配置米醋 MCP ===")
         info(f"baseurl: {baseurl}")
         info("Image2 key 在米醋后台获取，必须能看到 gpt-image-2 / gpt-image-2-pro。")
-        info("不要在这里粘 Grok 专用分组 key；Grok 会在下一步单独配置。")
+        info("当前仅支持 gpt-image-2 / gpt-image-2-pro；Grok 生图渠道暂时关闭。")
         while True:
             api_key = ask("米醋 Image2 分组 API key (用于 gpt-image-2, sk-...)", secret=True)
             if not api_key:
@@ -453,7 +453,8 @@ def collect_config(non_interactive: bool, baseurl: str) -> tuple[dict[str, str],
     }
     if baseurl != DEFAULT_BASEURL:
         env["MICU_BASEURL"] = baseurl
-    env.update(collect_grok_config(non_interactive, baseurl, api_key))
+    if any(os.environ.get(name, "").strip() for name in ("MICU_GROK_API_KEY", "XAI_API_KEY", "GROK_API_KEY")):
+        warn("检测到 Grok key，但 Grok 生图渠道暂时关闭，本次安装不会写入 Grok 配置。")
     return env, str(save_path), save_root
 
 
@@ -726,7 +727,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-codex", action="store_true", help="不写 Codex CLI 配置")
     p.add_argument("--no-smoke", action="store_true", help="跳过自检")
     p.add_argument("--yes", action="store_true",
-                   help="非交互模式 (从环境变量读 MICU_API_KEY / MICU_SAVE_DIR；可选 MICU_GROK_API_KEY)")
+                   help="非交互模式 (从环境变量读 MICU_API_KEY / MICU_SAVE_DIR)")
     p.add_argument("--mirror", choices=list(PIP_MIRRORS.keys()), default="default",
                    help=f"pip 镜像 (默认: 官方源). 可选: {', '.join(k for k in PIP_MIRRORS if k != 'default')}")
     p.add_argument("--pypi-index", default=None, help="自定义 pip index URL (覆盖 --mirror)")

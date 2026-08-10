@@ -16,7 +16,7 @@
 
 生成的图片会**自动保存到本地磁盘**，返回结果中包含文件的绝对路径，方便你在 IDE 或文件管理器中打开。
 
-默认主通道模型为 `gpt-image-2` / `gpt-image-2-pro`。可选配置 Grok 图像通道（`grok-imagine-image-*` 系列）。
+当前仅支持 `gpt-image-2` / `gpt-image-2-pro`。Grok 生图渠道暂时关闭，待服务器支持后再启用。
 
 ---
 
@@ -69,14 +69,11 @@ python install.py --yes
 | `MICU_API_KEY` | 空 | 米醋 **Image2 分组** token，必须能访问 `gpt-image-2` / `gpt-image-2-pro` |
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 API 地址 |
 | `MICU_MODEL` | `gpt-image-2` | 默认模型 |
-| `MICU_GROK_API_KEY` | 空 | 可选，米醋 **Grok 图像分组** token |
-| `XAI_MODEL` | `grok-imagine-image-lite` | Grok 默认模型 |
-| `MICU_GROK_SIZE_MODE` | `contain` | Grok 输出尺寸归一化策略：`contain` / `cover` / `stretch` / `backend` |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同 `MICU_SAVE_DIR` | 安全根目录，所有输出必须在其下 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取系统 shell 代理 |
 
-> **重要**：Image2 分组和 Grok 分组通常是两把不同的 Key。把 Grok Key 填进 `MICU_API_KEY` 会出现「分组 grok 下模型 gpt-image-2 无可用渠道」错误。
+> **重要**：`MICU_API_KEY` 必须是能访问 `gpt-image-2` / `gpt-image-2-pro` 的 Image2 分组 Key。
 
 ---
 
@@ -183,7 +180,8 @@ flowchart TD
 
 **返回要点**：
 
-- `api_key_configured` / `grok_api_key_configured`：密钥是否配置
+- `api_key_configured`：Image2 密钥是否配置
+- `grok_channel_enabled`：当前固定为 `false`
 - `recommended_sizes`：各档位推荐尺寸
 - `capability_matrix`：各工具 × 各尺寸档的可用性
 - `retry_policy`：重试与并发策略
@@ -462,35 +460,9 @@ image_generate(
 
 ---
 
-## 六、Grok 通道（可选）
+## 六、Grok 通道状态
 
-配置 `MICU_GROK_API_KEY` 后，可在 `model` 参数中指定 Grok 模型：
-
-| 模型 | 用途 |
-|------|------|
-| `grok-imagine-image-lite` | 快速文生图（默认） |
-| `grok-imagine-image` | 标准质量 |
-| `grok-imagine-image-pro` | 高质量 |
-| `grok-imagine-image-edit` | 单图参考/编辑 |
-
-**与 image2 的主要差异**：
-
-| 能力 | image2 | Grok |
-|------|--------|------|
-| 文生图 4K | ✅ | ❌（映射到 2K） |
-| 局部 mask | ✅ | ❌（忽略） |
-| 批量编辑 | ✅ | ❌ |
-| 尺寸约束 | 8 倍数、4096 边长 | 仅校验 WxH 格式 |
-| 实际输出尺寸 | 2K/4K 文生图可精确 | 不保证等于请求尺寸 |
-
-Grok 尺寸归一化由 `MICU_GROK_SIZE_MODE` 控制：
-
-| 值 | 行为 |
-|----|------|
-| `contain` | 等比缩放，补边（默认） |
-| `cover` | 等比缩放，居中裁切铺满 |
-| `stretch` | 拉伸（可能变形） |
-| `backend` | 保留后端原始像素 |
+Grok 生图渠道暂时关闭。工具只接受 `gpt-image-2` / `gpt-image-2-pro`；传入 Grok 模型会在读取本地图片或发出网络请求前被拒绝。内部兼容实现暂时保留，待服务器支持恢复后再启用。
 
 ---
 
@@ -541,7 +513,8 @@ MCP 内置多项安全限制：
 | 错误信息 | 原因 | 解决方案 |
 |----------|------|----------|
 | `未配置 API key` | 环境变量未设置 | 在 mcp.json 的 `env` 中配置 `MICU_API_KEY` |
-| `分组 grok 下模型 gpt-image-2 无可用渠道` | Key 分组填错 | Image2 Key 填 `MICU_API_KEY`，Grok Key 填 `MICU_GROK_API_KEY` |
+| `分组 grok 下模型 gpt-image-2 无可用渠道` | Key 分组填错 | 将可访问两个 Image2 模型的 Key 填入 `MICU_API_KEY` |
+| `Grok 生图渠道暂时关闭` | 当前版本主动禁用 Grok | 改用 `gpt-image-2` / `gpt-image-2-pro`，等待服务器支持恢复 |
 | `size W/H 必须是 8 的倍数` | 尺寸不符合约束 | 改为如 `1024x1024`、`2048x1152` |
 | `HTTP 524: timeout` | 上游超时 | 改小尺寸或稍后重试；2K/4K 高负载时偶发 |
 | `SSRF 防护` + `198.18.x.x` | 旧版或 `MICU_ALLOW_FAKE_IP_DOWNLOAD=0` | 升级 MCP 或设 `MICU_ALLOW_FAKE_IP_DOWNLOAD=1`；`auto` 模式下 URL 失败会自动重试 `b64_json` |
