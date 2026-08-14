@@ -72,10 +72,11 @@ from micu_image_mcp.extract import (
 )
 from micu_image_mcp.http_client import (
     Endpoint,
+    _json_request_bytes,
     _get_http_client,
     _call_endpoint, _call_endpoint_stream,
-    _parse_retry_after, _retry_delay, _append_retry_note,
-    _call_with_retry,
+    _parse_retry_after, _effective_retry_status,
+    _retry_delay, _append_retry_note, _call_with_retry,
 )
 from micu_image_mcp.save import (
     ImageSaveError,
@@ -147,7 +148,7 @@ async def _call_and_save_with_format_fallback(
         )
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
-            continue
+            break
         saved_info, save_err = await _save_first_payload_from_response(
             text,
             out_dir,
@@ -337,7 +338,7 @@ async def image_generate(
             )
             if not (200 <= status < 300):
                 last_grok_err = f"HTTP {status}: {_error_detail(text)}"
-                continue
+                break
 
             resp = _parse_response(text)
             payloads = _extract_image_payloads(resp)
@@ -433,7 +434,7 @@ async def image_generate(
             )
             if not (200 <= status < 300):
                 last_err = f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
-                continue
+                break
             resp = _parse_response(text)
             b64, url = _extract_image_payload(resp)
             try:
@@ -702,7 +703,7 @@ async def image_edit(
         )
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
-            continue
+            break
         saved_info, save_err = await _save_first_payload_from_response(
             text, out_dir, stem, notes, size,
         )
@@ -1114,7 +1115,7 @@ async def image_multi_reference(
         )
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
-            continue
+            break
         saved_info, save_err = await _save_first_payload_from_response(
             text, out_dir, stem, notes, size,
         )
@@ -1191,7 +1192,7 @@ def server_info() -> dict[str, Any]:
                 f"单输入图 ≤{MAX_INPUT_FILE_BYTES//1024//1024}MB；"
                 f"image_multi_reference 总和 ≤{MAX_TOTAL_INPUT_BYTES//1024//1024}MB"
             ),
-            "input_image_validation": "所有输入图按 magic bytes 校验为 PNG/JPEG/WebP/GIF；非图片立即拒（防本地任意文件外传）",
+            "input_image_validation": "所有输入图先按 magic bytes 识别，再用 Pillow verify() 完整解码；仅允许 PNG/JPEG/WebP，截断、损坏、伪装格式会在请求前拒绝",
             "response_size_limit": f"远端响应 ≤{MAX_RESPONSE_BYTES//1024//1024}MB；超过中断不落盘",
             "base_url_locked": "base_url 锁在启动期 MICU_BASEURL env，运行期 tool 不接受参数（防 key 外泄到攻击者 host）",
         },

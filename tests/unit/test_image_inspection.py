@@ -5,6 +5,7 @@ import struct
 import zlib
 
 import pytest
+from PIL import Image
 
 import server as S
 
@@ -94,6 +95,42 @@ class TestValidateImageBytes:
     def test_label_in_error(self):
         msg = S._validate_image_bytes(b"", label="mask_path")
         assert msg is not None and "mask_path" in msg
+
+
+# ---------- _validate_image_path：完整解码 + MIME ----------
+
+class TestValidateImagePath:
+    @pytest.mark.parametrize(
+        ("fmt", "suffix", "expected_mime"),
+        [("PNG", ".png", "image/png"), ("JPEG", ".jpg", "image/jpeg"), ("WEBP", ".webp", "image/webp")],
+    )
+    def test_real_decodable_images(self, tmp_path, fmt, suffix, expected_mime):
+        path = tmp_path / ("valid" + suffix)
+        Image.new("RGB", (64, 48), (30, 90, 180)).save(path, format=fmt)
+        _, _, mime, err = S._validate_image_path(str(path))
+        assert err is None
+        assert mime == expected_mime
+
+    def test_extension_and_declared_type_do_not_override_magic(self, tmp_path):
+        path = tmp_path / "actually-jpeg.png"
+        Image.new("RGB", (64, 48), (30, 90, 180)).save(path, format="JPEG")
+        _, _, mime, err = S._validate_image_path(str(path))
+        assert err is None
+        assert mime == "image/jpeg"
+
+    def test_header_only_truncated_jpeg_rejected_before_upload(self, tmp_path):
+        path = tmp_path / "truncated.jpg"
+        path.write_bytes(_make_jpeg(64, 64))
+        # 旧校验只读 SOF 宽高，会把这个没有像素码流的伪 JPEG 放到上游。
+        assert S._detect_actual_size(path.read_bytes()) == (64, 64)
+        _, _, _, err = S._validate_image_path(str(path))
+        assert err is not None and "完整解码" in err
+
+    def test_gif_rejected_locally_instead_of_upstream_invalid_file(self, tmp_path):
+        path = tmp_path / "animated.gif"
+        Image.new("RGB", (64, 48), (30, 90, 180)).save(path, format="GIF")
+        _, _, _, err = S._validate_image_path(str(path))
+        assert err is not None and "PNG、JPEG 或 WebP" in err
 
 
 # ---------- _detect_actual_size ----------

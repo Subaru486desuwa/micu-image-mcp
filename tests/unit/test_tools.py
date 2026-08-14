@@ -257,6 +257,27 @@ def test_call_endpoint_normal(monkeypatch):
     asyncio.run(client.aclose())
 
 
+def test_call_endpoint_sends_literal_utf8_json(monkeypatch):
+    prompt = "一只可爱的小猫正在跳伞"
+
+    def handler(request):
+        assert request.headers["content-type"] == "application/json; charset=utf-8"
+        assert prompt.encode("utf-8") in request.content
+        assert b"\\u4e00" not in request.content
+        assert json.loads(request.content.decode("utf-8"))["prompt"] == prompt
+        return httpx.Response(200, json={"data": [{"b64_json": "abc"}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(http_client, "_HTTP_CLIENT", client)
+    ep = http_client.Endpoint(
+        url="https://x.test/v1/images/generations",
+        json_body={"prompt": prompt},
+    )
+    status, _, _ = asyncio.run(http_client._call_endpoint(ep, "k"))
+    assert status == 200
+    asyncio.run(client.aclose())
+
+
 def test_call_endpoint_rejects_oversized_body(monkeypatch):
     monkeypatch.setattr(http_client, "MAX_RESPONSE_BYTES", 10)
 

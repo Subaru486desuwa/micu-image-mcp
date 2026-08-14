@@ -104,6 +104,22 @@ class TestRetryDelay:
         assert delay is not None
 
 
+class TestEffectiveRetryStatus:
+    @pytest.mark.parametrize("message", [
+        "Too Many Requests",
+        "rate limit exceeded",
+        "rate_limit_exceeded",
+    ])
+    def test_proxy_400_rate_limit_is_normalized(self, message):
+        import json
+        text = json.dumps({"error": {"message": message}})
+        assert S._effective_retry_status(400, text) == 429
+
+    def test_regular_400_remains_non_retryable(self):
+        text = '{"error":{"message":"invalid size"}}'
+        assert S._effective_retry_status(400, text) == 400
+
+
 # ---------- _parse_response ----------
 
 class TestParseResponse:
@@ -167,6 +183,11 @@ class TestExtractImagePayload:
         assert b64 is None
         assert url == "https://x.com/y.png"
 
+    def test_data_url_in_data_is_unwrapped(self):
+        b64, url = S._extract_image_payload({"data": [{"url": "data:image/png;base64,AAAABBBB"}]})
+        assert b64 == "AAAABBBB"
+        assert url is None
+
     def test_chat_markdown_url(self):
         resp = {
             "choices": [{"message": {"content": "Here you go ![img](https://x.com/y.png)"}}]
@@ -208,6 +229,10 @@ class TestExtractImagePayloads:
         assert payloads[0] == ("A", None)
         assert payloads[1] == ("B", None)
         assert payloads[2] == (None, "u.png")
+
+    def test_multi_data_url_is_unwrapped(self):
+        payloads = S._extract_image_payloads({"data": [{"url": "data:image/webp;base64,CCCC"}]})
+        assert payloads == [("CCCC", None)]
 
     def test_single_chat_fallback(self):
         # 没 data，走 chat fallback → 返回单元素 list

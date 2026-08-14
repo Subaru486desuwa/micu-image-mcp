@@ -38,7 +38,11 @@ def _extract_image_payload(resp: dict | str) -> tuple[str | None, str | None]:
             if item.get("b64_json"):
                 return item["b64_json"], None
             if item.get("url"):
-                return None, item["url"]
+                url = str(item["url"])
+                m = re.fullmatch(r"data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)", url)
+                if m:
+                    return m.group(1).strip(), None
+                return None, url
     # /v1/chat/completions fallback：图嵌在 markdown ![](url) 或 base64
     choices = resp.get("choices") if isinstance(resp, dict) else None
     if isinstance(choices, list) and choices:
@@ -70,7 +74,9 @@ def _extract_image_payloads(resp: dict | str) -> list[tuple[str | None, str | No
             if item.get("b64_json"):
                 payloads.append((str(item["b64_json"]), None))
             elif item.get("url"):
-                payloads.append((None, str(item["url"])))
+                url = str(item["url"])
+                m = re.fullmatch(r"data:image/[^;]+;base64,([A-Za-z0-9+/=\s]+)", url)
+                payloads.append((m.group(1).strip(), None) if m else (None, url))
         if payloads:
             return payloads
     b64, url = _extract_image_payload(resp)
