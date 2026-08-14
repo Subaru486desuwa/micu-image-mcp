@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="MICU IMAGE — 米醋 gpt-image-2 MCP server" width="820">
+  <img src="assets/banner.svg" alt="MICU IMAGE — GPT Image 2 MCP server" width="820">
 </p>
 
 # 米醋画图 MCP
@@ -16,9 +16,9 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 | Tool | 说明 |
 |---|---|
 | `image_generate` | 文生图。米醋 image2 支持 1K / 2K / 4K |
-| `image_edit` | 单图参考/编辑。走 `/v1/images/edits`（1K/2K 已验证） |
-| `image_batch_edit` | 多张图逐张同指令处理 |
-| `image_multi_reference` | 2-10 张参考图融合成 1 张新图 |
+| `image_edit` | 单图参考/编辑。走 `/v1/images/edits`，支持 1K / 2K / 4K |
+| `image_batch_edit` | 多张图逐张同指令处理；1K 并发，2K / 4K 串行 |
+| `image_multi_reference` | 2-10 张参考图融合成 1 张新图，支持 1K / 2K / 4K |
 | `server_info` | 查看 base URL、模型、size 规则、重试策略、安全约束 |
 
 第一次使用前，让 LLM 调一次 `server_info`，可以看到当前运行时配置和可用能力。
@@ -38,7 +38,7 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 ---
 
-> **2026-07 线路兼容更新**：支持将限流包装为 `HTTP 400 + Too Many Requests` 的新线路行为，并按 429 语义自动重试；同时兼容 `response_format=url` 返回 `data:image/...;base64,...`。实测 `https://www.micuapi.ai` 经 Cloudflare LAX + Caddy 正常，1K 可用；4K/pro 队列仍可能受上游限流，因此仅保留纯文生图 4K，参考图 4K 暂不放开。
+> **2026-08-14 当前线路更新**：`gpt-image-2` / `gpt-image-2-openai` 的生成与编辑统一走当前 Images API；参考图 4K 的旧线路硬阻断已经移除。2K / 4K 会自动切到 `gpt-image-2-openai` 并串行进入高质量队列，不再需要先做 1K/2K、再文生图升 4K 的绕行步骤。同时保留对 `HTTP 400 + Too Many Requests` 与 `data:image/...;base64,...` 返回的兼容处理。
 
 > **Windows 中文提示词**：MCP 会以原生 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，不要把含中文的 here-string 直接通过管道喂给 `python -`；Windows PowerShell 的 `$OutputEncoding` 可能是 ASCII，导致中文在进入 MCP 前已变成 `?`。请将脚本保存为 UTF-8 文件后执行，或先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`。
 
@@ -156,20 +156,21 @@ image2 路径：
 
 ## 尺寸能力矩阵 / Size capability
 
-2026-08-14 实测确认：两条当前 Image2 线路均可生成与编辑；高质量线路在 1536×1024、2048×1152、3840×2160 精确返回，标准线路的部分自定义尺寸会被后端重映射。
+2026-08-14 实测确认：两条当前 Image2 线路均可生成与编辑；高质量线路在 1536×1024、2048×1152、3840×2160 精确返回，标准线路的部分自定义尺寸会被后端重映射。当前 MCP 已同步开放参考图 4K，不再执行旧线路的本地拒绝。
 
 | 场景 | 可靠性 | 实际输出 |
 |---|---|---|
 | 1K 纯文生图/编辑 | 可用 | 两模型 1024² 均已实测；实际像素见 `saved.actual_size` |
-| 2K/4K 纯文生图（`image_generate`，无参考图） | 可用 | 自动切 `gpt-image-2-openai`；实测 2048×1152 / 3840×2160 精确返回 |
-| 带参考图 2K（`image_edit`） | 可用 | 自动切 `gpt-image-2-openai`；实测 2048×1152 精确返回 |
-| 带参考图 4K | 已禁用 | 入口拒绝（origin > 120s 撞 CF 524） |
+| 2K/4K 纯文生图（`image_generate`） | 可用 | 自动切 `gpt-image-2-openai`；实测 2048×1152 / 3840×2160 精确返回 |
+| 单张参考图 2K/4K（`image_edit`） | 可用 | 统一走 `/v1/images/edits`；实测 2048×1152 / 3840×2160 精确返回 |
+| 多图参考 1K/2K/4K（`image_multi_reference`） | 可用 | 走 `/v1/images/edits` + `image[]`；≥2K 自动切高质量线路，核对 `saved.actual_size` |
+| 批量编辑 1K/2K/4K（`image_batch_edit`） | 可用 | 标准 1K 最多 5 并发；高质量线路逐张串行，避免队列拥塞 |
 
 说明：
 
-- `/v1/images/edits` 是米醋真正消费输入图的端点。当前两模型的 1024² edits 与 `gpt-image-2-openai` 的 2048×1152 edits 已通过实测。
-- 旧的 `generations + reference_image`（单图 2K）和 `generations + image_urls`（多图）路径要么 524 断流、要么参考图被静默忽略，已废弃。
-- 带参考图想要 4K 用**两步法**：先出一张 1K/2K 的综合/编辑图 → 再用 `image_generate` 描述同场景升 4K（自动切 `gpt-image-2-openai`）。
+- `/v1/images/edits` 是米醋真正消费输入图的端点。当前单图参考的 1024²、2048×1152、3840×2160 edits 已通过实测。
+- 旧的 `generations + reference_image` 和 `generations + image_urls` 路径已经废弃；所有 Image2 参考图请求都不会再转回旧路径或 `/v1/chat/completions`。
+- 参考图 4K 可直接请求；2K/4K 自动切 `gpt-image-2-openai`，并使用进程内 + 跨进程双层锁串行访问高质量队列。
 
 ---
 

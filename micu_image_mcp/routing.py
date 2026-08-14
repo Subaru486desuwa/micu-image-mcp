@@ -37,20 +37,9 @@ def _is_quality_model(model: str | None) -> bool:
     return model == QUALITY_MODEL
 
 
-def _reject_4k_with_reference(size: str, tool: str) -> str | None:
-    """≥4K image_edit / image_multi_reference 在米醋后端稳定 > 120s，撞 CF Proxy Read Timeout (524)；入口直接拒。
-
-    image_generate 4K 是无参考的纯文生图，~50-80s 能过，不在此拦截范围。
-    """
-    if _size_tier(size) != "4k":
-        return None
-    return (
-        f"size={size} (4K) 在 {tool} 已禁用：origin 处理 4K + 参考图稳定 > 120s，"
-        f"撞 Cloudflare Proxy Read Timeout 物理上限。请改用 2K："
-        f'横屏 "2048x1152" / 竖屏 "1152x2048" / 方形 "2048x2048"。'
-        f'若必须 4K，可两步法：先 1K/2K 出综合图 → 再用 image_generate(size="3840x2160") '
-        f"描述同场景升 4K（人物 ID 不保证一致）。"
-    )
+def _reject_4k_with_reference(size: str, tool: str) -> None:
+    """Compatibility hook: the current edits route no longer rejects 4K references."""
+    return None
 
 
 def _resolve_model(requested_model: str | None, size: str) -> tuple[str, list[str]]:

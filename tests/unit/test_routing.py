@@ -94,25 +94,15 @@ class TestBypassEdits:
         assert S._bypass_edits("gpt-image-2-openai", "1599x1599") is False
 
 
-# ---------- _reject_4k_with_reference ----------
+# ---------- 参考图 4K 兼容 hook ----------
 
-class TestReject4kWithReference:
-    def test_1k_ok(self):
-        assert S._reject_4k_with_reference("1024x1024", "image_edit") is None
+class TestReference4kCompatibility:
+    @pytest.mark.parametrize("tool", ["image_edit", "image_multi_reference"])
+    def test_4k_is_not_rejected(self, tool):
+        assert S._reject_4k_with_reference("3840x2160", tool) is None
 
-    def test_2k_ok(self):
-        assert S._reject_4k_with_reference("2048x2048", "image_edit") is None
-
-    def test_4k_rejected(self):
-        msg = S._reject_4k_with_reference("3840x2160", "image_edit")
-        assert msg is not None
-        assert "image_edit" in msg
-        assert "4K" in msg
-
-    def test_includes_alternate_suggestion(self):
-        msg = S._reject_4k_with_reference("3840x2160", "image_multi_reference")
-        assert msg is not None
-        assert "2048x1152" in msg or "1152x2048" in msg or "2048x2048" in msg
+    def test_legacy_edits_max_edge_matches_current_limit(self):
+        assert S.EDITS_MAX_EDGE == S.MAX_SIZE_EDGE == 3840
 
 
 # ---------- _grok_aspect_ratio ----------

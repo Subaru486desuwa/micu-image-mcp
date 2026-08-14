@@ -7,3 +7,5 @@ mcp = FastMCP("...") 注册 + 5 个 @mcp.tool() 函数 + main()。
 所有符号沿用原 server.py 命名（含 `_` 私有前缀），保证 tests/_common 通过
 `import server` 找到的符号集合不变。
 """
+
+__version__ = "0.2.0"

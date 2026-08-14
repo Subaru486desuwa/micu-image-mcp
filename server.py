@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 # ---------- 从 internal package re-export (语义零漂移) ----------
+from micu_image_mcp import __version__
 from micu_image_mcp.config import (
     _LOCK_BACKEND, _FILE_LOCK_AVAILABLE,
     DEFAULT_BASEURL, API_KEY, DEFAULT_MODEL,
@@ -507,7 +508,7 @@ async def image_edit(
     basename: str | None = None,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """图像编辑（image-to-image，单张输入）。1K/2K 可用；4K 参考图编辑仍禁用。
+    """图像编辑（image-to-image，单张输入）。当前线路支持 1K/2K/4K。
 
     [WHAT] 接受 1 张本地图片 + 修改指令，输出修改后的图。
 
@@ -517,15 +518,15 @@ async def image_edit(
       - 如果用户提供了多张图想"批量改"（每张做同样操作）→ 改用 image_batch_edit。
       - 如果用户用多张图作风格参考想画一张新的 → 用 image_multi_reference。
 
-    [尺寸能力]（2026-08-14 实测）
+    [尺寸能力]（2026-08-14 当前线路实测）
       - 1K：gpt-image-2 与 gpt-image-2-openai 的 1024×1024 edits 均成功并精确返回。
       - 2K：自动切 gpt-image-2-openai；2048×1152 edits 成功并精确返回。
-      - 4K 仍禁用（origin 处理 4K + 参考图稳定 > 120s 撞 CF 524）。要真 4K 走两步法：
-        先 image_edit 出 1K/2K → image_generate(size="3840x..."，描述同场景) 升分辨率。
+      - 4K：自动切 gpt-image-2-openai；3840×2160 edits 成功并精确返回。
 
-    [4K 已禁用]
-      入口直接拒 4K size，不发请求（origin 处理 4K + 参考图稳定 > 120s 撞 CF 524）。
-      请改 2K（"2048x1152" / "1152x2048" / "2048x2048"），2K 带参考图为 best-effort 真 2K。
+    [当前线路]
+      - 参考图 4K 的旧线路硬阻断已移除；1K/2K/4K 均统一走 /v1/images/edits。
+      - 2K/4K 自动使用 gpt-image-2-openai，并通过跨进程锁串行请求高质量队列。
+      - 始终通过 saved.actual_size 核对后端实际返回像素。
 
     [路由实现]（实测确定）
       - 所有尺寸统一走 /v1/images/edits multipart（米醋唯一真正消费输入图的端点）。
@@ -545,7 +546,7 @@ async def image_edit(
         size: 输出 size。W/H 必须是 16 的倍数；总像素和长宽比规则见 server_info。
               "1024x1024" "1280x720" "1024x1536" "1536x1024" "720x1280"  ← 1K 档
               "2048x2048" "2048x1152" "1152x2048"                        ← 2K 档（自动高质量线路）
-              "3840x2160" / "2160x3840"  ← 4K 已禁用（撞 CF 524 物理上限），传入直接拒
+              "3840x2160" / "2160x3840"  ← 4K 档（自动高质量线路）
               默认 "1024x1024"。
         model: "gpt-image-2"（默认）/ "gpt-image-2-openai"（高质量线路，≥2K 自动切）。
         save_dir: 输出目录（必须在安全根目录之下）。默认 ~/Pictures/micu-out 或 MICU_SAVE_DIR。
@@ -570,10 +571,12 @@ async def image_edit(
         # 升细节（2K 自动使用高质量线路）
         image_edit(prompt="enhance to cinematic detail, preserve composition", image_path="/p/draft.png", size="2048x2048")
 
+        # 4K 参考图编辑（自动使用高质量线路）
+        image_edit(prompt="preserve composition and refine every detail", image_path="/p/draft.png", size="3840x2160")
+
     Common errors:
         "image_path 不存在" → 检查路径，建议用绝对路径。
-        "size=3840x2160 (4K) 在 image_edit 已禁用" → 4K image_edit 物理撞 CF 524 上限，请改 2K 或两步法。
-        "HTTP 524" → 2K 单图正常 ~50s，撞了说明 origin 那阵特别忙；自动重试仍失败请稍后再试。
+        "HTTP 524" → 当前高质量队列繁忙；自动策略仍失败时请稍后再试。
     """
     # === 入口校验 ===
     if not isinstance(prompt, str) or not prompt.strip():
@@ -588,8 +591,6 @@ async def image_edit(
     if size_err:
         return {"ok": False, "error": size_err, "errors": [size_err]}
     size = cleaned_size  # type: ignore[assignment]
-    if not use_grok_request and (rej := _reject_4k_with_reference(size, "image_edit")):
-        return {"ok": False, "error": rej, "errors": [rej]}
     safe_stem = _safe_basename(basename) if basename is not None else None
     if basename is not None and safe_stem is None:
         msg = f"basename {basename!r} 含非法字符或路径分量"
@@ -756,13 +757,13 @@ async def image_batch_edit(
       - 任意一张失败不影响其他张；返回 results 里逐张标 ok/error。
 
     [LIMITS]
-      - 同 image_edit：size 仅 1K 档（≤1536 边长），≥2K 拒绝。
-      - image_paths 长度建议 2-20 张；过多请分批调用避免超时。
+      - 与 image_edit 一致支持 1K/2K/4K；2K/4K 自动切高质量线路并逐张串行。
+      - image_paths 长度建议 2-20 张；高分辨率批次成本与耗时按图片数量线性增加。
 
     Args:
         prompt: 应用到每张图的修改指令。例："add a subtle watermark in bottom-right".
         image_paths: 输入图路径列表（绝对或相对）。
-        size: 输出 size，仅 1K 档。默认 "1024x1024"。
+        size: 输出 size，支持 1K/2K/4K；≥2K 自动使用高质量线路。默认 "1024x1024"。
         model: "gpt-image-2" / "gpt-image-2-openai"。留空按 size 自动选。
         save_dir: 输出目录（必须在安全根目录之下）。文件名 batch_<ts>_<idx>.png。
         api_key: 覆盖 MICU_API_KEY；base_url 已锁在启动期 env，运行期不接受。
@@ -810,16 +811,8 @@ async def image_batch_edit(
         msg = "Grok 模型当前不支持 image_batch_edit 批量逐张编辑；请改用 image_edit 单图、image_multi_reference 多图参考，或改用 gpt-image-2 / gpt-image-2-openai。"
         return {"ok": False, "error": msg, "errors": [msg], "total": len(image_paths)}
     is_quality = _is_quality_model(eff_model)
-    edge = _max_edge(size)
-    if edge >= HIGH_RES_EDGE:
-        msg = (
-            f"图生图代理后端 ≥2K 不稳定（503/524）；批处理只支持 1K（边长 ≤{EDITS_MAX_EDGE}）。"
-            f"请改 size 到 1K，或改用 image_edit 单图处理 2K。"
-        )
-        return {"ok": False, "error": msg, "errors": [msg], "total": len(image_paths)}
-
     out_dir.mkdir(parents=True, exist_ok=True)
-    # ≥2K 已在前面提前拒绝，这里 bypass 必然 False；高质量线路保持串行。
+    # 高质量线路保持串行；每个 ≥2K 调用内部还会取得跨进程锁。
     concurrency = 1 if is_quality else 5
     inter_gap = 1.5 if concurrency == 1 else 0.0
 
@@ -880,7 +873,7 @@ async def image_multi_reference(
     basename: str | None = None,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """多图融合参考 → 输出 1 张新图（1K 稳定 + 2K best-effort 真 2K；4K 已禁用）。
+    """多图融合参考 → 输出 1 张新图；当前线路支持 1K/2K/4K。
 
     [WHAT] 输入 2-10 张参考图 + prompt，模型综合所有图的视觉信息后画 1 张全新的图。
     与 image_batch_edit 的本质区别：batch 是 N 进 N 出（每张独立改），此 tool 是 N 进 1 出（综合参考）。
@@ -893,9 +886,9 @@ async def image_multi_reference(
       - 如果用户只有 1 张图 → 改用 image_edit。
       - 如果用户没提供任何参考图 → 改用 image_generate。
 
-    [4K 已禁用]
-      origin 处理 4K 多图融合稳定 > 120s 撞 CF 524；入口直接拒。
-      想要真 4K 多图融合：两步法 — 此 tool 出 1K/2K 综合图 → image_generate(size="3840x2160") 描述同场景升 4K。
+    [当前线路]
+      - 参考图 4K 的旧线路硬阻断已移除；所有尺寸统一走 /v1/images/edits + image[]。
+      - 2K/4K 自动使用 gpt-image-2-openai，并通过跨进程锁串行请求高质量队列。
 
     [路由实现]
       - 固定走 /v1/images/edits + 多个 image[] 字段。**米醋唯一真正消费输入图的端点**
@@ -907,20 +900,16 @@ async def image_multi_reference(
     [LIMITS]（当前真实状态，会变化）
       - image_paths 长度 2-10 张。
       - 1K 档：多图 N=2..10 历史实测成功，参考图真消费；实际像素以 saved.actual_size 为准。
-      - 2K 档：**best-effort 真 2K**（自动切 gpt-image-2-openai + edits/image[]，历史实测约 2/3 成功真返回 2048×2048，
-        size_honored=true；失败时直接返回上游错误）。较慢（单次 2-4 分钟，并发更久）。
-      - 4K 已禁用（撞 CF 524）。要真 4K：两步法 —— 本 tool 出 1K/2K 综合图 →
-        image_generate(size="3840x2160") 描述同场景升分辨率（4K 升分辨率本身也常 524，best-effort）。
-      - 主路径 ~30-100s（2K 更慢）；米醋多图间歇拒/断流时会按重试策略处理，仍失败则报错。
+      - 2K/4K：自动切 gpt-image-2-openai + edits/image[]；不再有本地尺寸硬阻断。
+        高分辨率多图融合的耗时会随参考图数量增加，成功后以 saved.actual_size / size_honored 核对真实像素。
+      - 米醋多图间歇拒绝时会按重试策略处理，仍失败则直接返回 Images API 错误。
       - 单张参考图建议 ≤2MB；总输入 ≤8MB（米醋代理上限实测约 10MB）。
 
     Args:
         prompt: 综合指令。例："combine the colors from img1 and the composition from img2 into a sunset cityscape".
         image_paths: 2-10 张参考图路径（绝对或相对）。
-        size: 输出 size。1K 档可用；2K 档（"2048x2048" 等）为 best-effort 真 2K（历史约 2/3 成功，
-              成功时以 saved.actual_size 和 size_honored 核对真实像素）。真 4K 用两步法（见 [LIMITS]）。
-              "3840x2160" / "2160x3840" 已禁用（撞 CF 524 物理上限），传入直接拒。
-              默认 "1024x1024"。
+        size: 输出 size。支持 1K/2K/4K；≥2K 自动切高质量线路。
+              成功时以 saved.actual_size 和 size_honored 核对真实像素。默认 "1024x1024"。
         model: "gpt-image-2"（默认）/ "gpt-image-2-openai"（高质量线路，≥2K 自动切换）。
         save_dir: 输出目录（必须在安全根目录之下）。
         basename: 文件名前缀（仅 [A-Za-z0-9_-.]，含 / .. 会被拒）。默认 "multiref_<ns_ts>"。
@@ -947,11 +936,17 @@ async def image_multi_reference(
             size="2048x2048",
         )
 
+        # 4K 综合参考（自动使用高质量线路）
+        image_multi_reference(
+            prompt="combine the product references into one 4K campaign visual",
+            image_paths=["/p/front.jpg", "/p/side.jpg"],
+            size="3840x2160",
+        )
+
     Common errors:
         "至少需要 2 张参考图" → 1 张请用 image_edit。
         "请求体超 X MB" → 减少图片数量或先压缩。
-        "size=3840x2160 (4K) 在 image_multi_reference 已禁用" → 4K 多图融合物理撞 CF 524；
-            两步法：先 1K/2K 出综合图 → image_generate(size="3840x2160") 升 4K。
+        "HTTP 524" → 当前高质量队列繁忙；自动策略仍失败时请稍后再试。
     """
     # === 入口校验 ===
     if not isinstance(prompt, str) or not prompt.strip():
@@ -972,8 +967,6 @@ async def image_multi_reference(
     if size_err:
         return {"ok": False, "error": size_err, "errors": [size_err]}
     size = cleaned_size  # type: ignore[assignment]
-    if not use_grok_request and (rej := _reject_4k_with_reference(size, "image_multi_reference")):
-        return {"ok": False, "error": rej, "errors": [rej]}
     safe_stem = _safe_basename(basename) if basename is not None else None
     if basename is not None and safe_stem is None:
         msg = f"basename {basename!r} 含非法字符或路径分量"
@@ -1152,6 +1145,7 @@ async def image_multi_reference(
 def server_info() -> dict[str, Any]:
     """返回当前 Image2 模型、参数约束、路由和安全边界。"""
     return {
+        "version": __version__,
         "base_url": DEFAULT_BASEURL,
         "grok_base_url": GROK_BASEURL,
         "default_model": DEFAULT_MODEL,
@@ -1177,7 +1171,7 @@ def server_info() -> dict[str, Any]:
             "quality_values": sorted(VALID_IMAGE_QUALITIES),
             "auto_quality_route": f"max edge ≥ {HIGH_RES_EDGE} → 自动切 {QUALITY_MODEL}",
             "live_observation_2026_08_14": (
-                "gpt-image-2-openai 的 1536×1024、2048×1152、3840×2160 按请求像素返回；"
+                "gpt-image-2-openai 的生成与编辑线路在 1536×1024、2048×1152、3840×2160 按请求像素返回；"
                 "gpt-image-2 的自定义尺寸可能被后端重映射，调用方应核对 saved.actual_size。"
             ),
         },
@@ -1205,8 +1199,7 @@ def server_info() -> dict[str, Any]:
                 "服务端仍可能调整实际像素，始终核对 saved.actual_size。"
             ),
             "two_step_tip": (
-                "带参考图的 4K 编辑仍禁用：先用 image_edit/image_multi_reference 出 1K/2K，"
-                "再用 image_generate(size=\"3840x2160\") 生成高分辨率版本。"
+                "当前线路已支持参考图 4K，无需两步绕行；image_edit/image_multi_reference 可直接请求 3840x2160。"
             ),
             "grok_tip": "Grok 生图渠道暂时关闭，待服务器支持后再启用。",
             "grok_actual_size_tip": "Grok 生图渠道暂时关闭，当前不会生成 Grok 输出。",
@@ -1225,18 +1218,18 @@ def server_info() -> dict[str, Any]:
             "image_edit": {
                 "1k": "两条当前 Image2 线路均已通过 edits 实测；支持可选 alpha mask",
                 "2k_quality": "自动切 gpt-image-2-openai；实测 2048×1152 精确返回",
-                "4k": "已禁用：历史上 origin 处理 4K + 参考图稳定 >120s 撞 CF",
+                "4k": "可用：自动切 gpt-image-2-openai；实测 3840×2160 精确返回",
             },
             "image_batch_edit": {
                 "1k_standard": "5 并发",
                 "1k_quality": "串行 + 1.5s gap",
-                ">=2k": "拒绝",
+                ">=2k": "可用：自动切高质量线路，逐张串行 + 1.5s gap",
                 "grok": "暂时关闭，待服务器支持后再启用",
             },
             "image_multi_reference": {
                 "1k": "2-10 张参考图融合输出 1 张，走 edits + image[]",
                 "2k_quality": "自动切 gpt-image-2-openai；失败时直接返回 Images API 错误",
-                "4k": "已禁用：历史上 origin 处理 4K 多图融合稳定 >120s 撞 CF",
+                "4k": "可用：自动切 gpt-image-2-openai，走 edits + image[]；核对 saved.actual_size",
             },
         },
         "retry_policy": {
@@ -1244,7 +1237,7 @@ def server_info() -> dict[str, Any]:
             "fallback_status": list(FALLBACK_STATUS),
             "route_fallback": "当前 GPT Image 2 模型只走 Images API，不 fallback 到 chat/completions",
             "schedule_1k": "上游 5xx → 4s+jitter → 重试 → 8s+jitter → 重试（退避重试最多 2 次，共 ≤3 次尝试）；网络层异常（status=0）另有 1 次免费重试不计入此预算（故最坏 ≤4 次）。注：带 Retry-After 的 408/429/5xx 会按头部值 sleep（上限 120s），此时单次等待可能远大于 4s/8s",
-            "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。单次 attempt 无字节挂起最长 600s，故 2K 最坏 ≈ 两次 600s attempt + 一次 60s 退避；其间整机所有 ≥2K 请求经跨进程锁串行等待。锁等待 >2s 时 notes 会提示在排队",
+            "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。单次 attempt 无字节挂起最长 600s，故 2K/4K 最坏 ≈ 两次 600s attempt + 一次 60s 退避；其间整机所有 ≥2K 请求经跨进程锁串行等待。锁等待 >2s 时 notes 会提示在排队",
             "trigger": f"model == {QUALITY_MODEL!r} 或 size tier ∈ {{2k, 4k}}",
             "concurrency_2k_4k": (
                 "双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; "

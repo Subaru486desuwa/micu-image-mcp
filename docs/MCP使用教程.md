@@ -79,13 +79,14 @@ python install.py --yes
 
 ## 三、连通性验证
 
-### 3.1 本次实测结果
+### 3.1 当前线路实测结果（2026-08-14）
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
-| Cursor MCP 配置 | ✅ 正常 | `micu-image-mcp` 已写入 `~/.cursor/mcp.json` |
-| `server_info` 调用 | ✅ 正常 | API Key 已配置，输出目录为 `/home/wcx/Pictures/micu-out` |
-| `image_generate` 调用 | ⚠️ 部分成功 | API 请求可达，但图片落盘在当前环境受阻（见下方） |
+| `/v1/models` | ✅ 正常 | 当前 Key 可见 `gpt-image-2` / `gpt-image-2-openai` |
+| MCP 握手 | ✅ 正常 | `initialize` + `tools/list` 返回 5 个工具 |
+| `image_generate` | ✅ 已验证 | 高质量线路 1536×1024、2048×1152、3840×2160 精确返回 |
+| `image_edit` | ✅ 已验证 | 单图参考 1024²、2048×1152、3840×2160 可用 |
 
 ### 3.2 如何自行验证
 
@@ -123,9 +124,9 @@ python install.py --yes
 }
 ```
 
-### 3.3 当前环境已知问题与解决
+### 3.3 常见线路问题与解决
 
-本次测试遇到两类错误：
+高负载或特殊代理环境中可能遇到两类错误：
 
 **① HTTP 524 超时**
 
@@ -191,7 +192,7 @@ flowchart TD
 
 - 首次使用前确认配置是否正确
 - 不确定该用哪个尺寸时查阅 `recommended_sizes`
-- 排查「为什么 4K 编辑被拒绝」等问题
+- 确认 2K/4K 是否已自动使用高质量线路
 
 **示例对话**：
 
@@ -297,7 +298,7 @@ image_generate(
 |------|--------|------|
 | 1K | ✅ 已验证 | 两模型 1024×1024 edits 均成功并精确返回 |
 | 2K | ✅ 已验证 | `gpt-image-2-openai` 的 2048×1152 edits 成功并精确返回 |
-| 4K | ❌ 已禁用 | 入口直接拒绝；请用两步法（见下文） |
+| 4K | ✅ 已验证 | `gpt-image-2-openai` 的 3840×2160 edits 成功并精确返回 |
 
 **示例对话**：
 
@@ -341,7 +342,7 @@ image_edit(
 |------|------|------|------|
 | `prompt` | string | ✅ | 应用到每张图的指令 |
 | `image_paths` | string[] | ✅ | 输入图路径列表，建议 2–20 张 |
-| `size` | string | | 仅支持 1K 档，默认 `1024x1024` |
+| `size` | string | | 支持 1K/2K/4K，≥2K 自动使用高质量线路；默认 `1024x1024` |
 | `model` | string \| null | | 模型 |
 | `save_dir` | string \| null | | 输出目录；文件名为 `batch_<时间戳>_<序号>.png` |
 | `api_key` | string \| null | | 临时覆盖 Key |
@@ -349,7 +350,7 @@ image_edit(
 **并发策略**：
 
 - `gpt-image-2`：5 并发
-- `gpt-image-2-openai`：串行 + 1.5s 间隔
+- `gpt-image-2-openai`：串行 + 1.5s 间隔；2K/4K 批次也采用这一策略
 - 单张失败不影响其他张
 
 **示例对话**：
@@ -403,7 +404,7 @@ image_batch_edit(
 **限制**：
 
 - 单张参考图建议 ≤2MB，总输入 ≤8MB
-- 1K 可用；2K 自动使用高质量线路但仍建议核对 `saved.actual_size`；4K 已禁用
+- 1K/2K/4K 均可用；≥2K 自动使用高质量线路，并建议核对 `saved.actual_size`
 
 **示例对话**：
 
@@ -439,22 +440,19 @@ image_multi_reference(
 | 1K 文生图 | `image_generate` | ✅ 已验证 | 两模型 1024² 精确返回 |
 | 2K/4K 文生图 | `image_generate` | ✅ 已验证 | 高质量线路 2048×1152 / 3840×2160 精确返回 |
 | 1K 单图编辑 | `image_edit` | ✅ 已验证 | 两模型 1024² 精确返回 |
-| 2K 带参考图编辑 | `image_edit` | ✅ 已验证 | 高质量线路 2048×1152 精确返回 |
+| 2K/4K 带参考图编辑 | `image_edit` | ✅ 已验证 | 高质量线路 2048×1152 / 3840×2160 精确返回 |
 | 1K 多图融合 | `image_multi_reference` | ✅ 历史验证 | 核对 `saved.actual_size` |
-| 2K 多图融合 | `image_multi_reference` | ⚠️ best-effort | 失败时直接返回 Images API 错误 |
-| 4K 带参考图 | `image_edit` / `image_multi_reference` | ❌ 禁用 | 入口拒绝 |
-| 批量编辑 ≥2K | `image_batch_edit` | ❌ 禁用 | 仅 1K |
+| 2K/4K 多图融合 | `image_multi_reference` | ✅ 已开放 | 高质量线路串行；失败时直接返回 Images API 错误 |
+| 批量编辑 ≥2K | `image_batch_edit` | ✅ 已开放 | 高质量线路逐张串行 + 1.5s 间隔 |
 
-### 5.3 两步法：带参考图想要 4K
+### 5.3 带参考图直接输出 4K
 
-由于 4K + 参考图会触发 Cloudflare 524 超时，官方推荐：
-
-1. 先用 `image_edit` 或 `image_multi_reference` 出 1K/2K 综合图
-2. 再用 `image_generate` 描述同一场景升分辨率：
+当前线路不再需要旧的两步绕行。单图参考直接调用：
 
 ```
-image_generate(
-  prompt="同一场景的高清 4K 版本，保持构图与风格一致：...",
+image_edit(
+  prompt="保持主体与构图，补充高清材质和细节",
+  image_path="/path/to/reference.png",
   size="3840x2160"
 )
 ```
@@ -520,7 +518,6 @@ MCP 内置多项安全限制：
 | `HTTP 524: timeout` | 上游超时 | 改小尺寸或稍后重试；2K/4K 高负载时偶发 |
 | `SSRF 防护` + `198.18.x.x` | 旧版或 `MICU_ALLOW_FAKE_IP_DOWNLOAD=0` | 升级 MCP 或设 `MICU_ALLOW_FAKE_IP_DOWNLOAD=1`；`auto` 模式下 URL 失败会自动重试 `b64_json` |
 | `image_path 不存在` | 路径错误 | 使用绝对路径 |
-| `size=3840x2160 (4K) 在 image_edit 已禁用` | 4K 编辑不可用 | 改用 2K 或两步法 |
 | `basename 含非法字符` | 文件名不规范 | 仅用字母数字下划线连字符 |
 | `save_dir 必须在 MICU_SAVE_DIR_ROOT 之下` | 输出目录越界 | 使用配置的默认目录或其子目录 |
 

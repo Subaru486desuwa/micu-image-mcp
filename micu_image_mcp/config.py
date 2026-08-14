@@ -124,8 +124,8 @@ GROK_SIZE_MODES = {"backend", "contain", "cover", "stretch"}
 
 # max edge ≥1600 视为 2K/4K，并切到高质量 OpenAI 线路。
 HIGH_RES_EDGE = 1600
-# 批量图生图保留的可靠性边界；单图 edit 的 2K 已单独验证可用。
-EDITS_MAX_EDGE = 1536
+# 兼容旧导入名；当前 edits 线路与通用 size 上限一致，不再限制在 1K。
+EDITS_MAX_EDGE = 3840
 
 VALID_SIZES_1K = {"1024x1024", "1280x720", "720x1280", "1024x1536", "1536x1024"}
 # 1920×1080 不满足 16 像素对齐；推荐 2048×1152。

@@ -58,7 +58,16 @@ def test_call_endpoint_expands_image_array(monkeypatch):
     assert cap["url"].endswith("/v1/images/edits")
 
 
-def test_multi_reference_routes_to_edits_with_image_array(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("size", "expected_model"),
+    [
+        ("1024x1024", "gpt-image-2"),
+        ("3840x2160", "gpt-image-2-openai"),
+    ],
+)
+def test_multi_reference_routes_to_edits_with_image_array(
+    monkeypatch, tmp_path, size, expected_model,
+):
     posted = {}
     png = _png()
 
@@ -82,7 +91,7 @@ def test_multi_reference_routes_to_edits_with_image_array(monkeypatch, tmp_path)
     r = asyncio.run(server.image_multi_reference(
         prompt="把这两张合成一张新图",
         image_paths=[str(p1), str(p2)],
-        size="1024x1024",
+        size=size,
         save_dir=str(save_dir),
         api_key="testkey",
     ))
@@ -93,9 +102,11 @@ def test_multi_reference_routes_to_edits_with_image_array(monkeypatch, tmp_path)
     assert posted["count"] == 2                          # 两张参考图都作为 image[] 发出
     assert posted["has_image_urls"] is False             # 旧的被忽略字段已弃用
     assert r["n_references"] == 2
+    assert r["model"] == expected_model
 
 
-def test_image_edit_high_res_routes_to_edits(monkeypatch, tmp_path):
+@pytest.mark.parametrize("size", ["2048x2048", "3840x2160"])
+def test_image_edit_high_res_routes_to_edits(monkeypatch, tmp_path, size):
     """≥2K image_edit 改走 /v1/images/edits（旧坏路径 generations + reference_image 已废弃）。"""
     posted = {}
     png = _png()
@@ -118,12 +129,13 @@ def test_image_edit_high_res_routes_to_edits(monkeypatch, tmp_path):
     r = asyncio.run(server.image_edit(
         prompt="把背景改成星空",
         image_path=str(src),
-        size="2048x2048",
+        size=size,
         save_dir=str(save_dir),
         api_key="testkey",
     ))
     asyncio.run(client.aclose())
 
     assert r["ok"] is True, r
+    assert r["model"] == "gpt-image-2-openai"
     assert posted["url"].endswith("/v1/images/edits")   # 不再是 /v1/images/generations
     assert posted["has_image"] is True                  # 输入图作为 image part 发出

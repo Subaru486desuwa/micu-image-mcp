@@ -3,7 +3,7 @@
 验证三件事：
   1. spawn server.py 子进程 + MCP stdio initialize + tools/list（协议层）
   2. in-process call 5 个 tool 入口校验链路（错误信息无回归）
-  3. 边界拒绝：4K reference / N>10 / prompt 空 / image_path 不存在 / size 不合法
+  3. 边界与路由：4K reference 开放 / N>10 / prompt 空 / image_path 不存在 / size 不合法
 
 跑法:
   python tests/smoke_local.py            # 全跑
@@ -28,7 +28,8 @@ _SANDBOX.mkdir(parents=True, exist_ok=True)
 os.environ["MICU_SAVE_DIR_ROOT"] = str(_SANDBOX)
 os.environ["MICU_SAVE_DIR"] = str(_SANDBOX)
 
-# 故意不设 MICU_API_KEY，触发 "未配置 API key" 错误（验证错误链路）
+# 强制移除继承的 key，保证 smoke 永远离线并触发“未配置 API key”错误链路。
+os.environ.pop("MICU_API_KEY", None)
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -150,10 +151,10 @@ async def test_entries() -> None:
     else:
         fail(f"n=99 没被拒: {r}")
 
-    # 2.3 size 非 8 倍数
+    # 2.3 size 非 16 倍数
     r = await S.image_generate(prompt="hi", size="1500x1500")
-    if not r["ok"] and "8" in r.get("error", ""):
-        ok(f"image_generate size='1500x1500' → 8 倍数拒")
+    if not r["ok"] and "16" in r.get("error", ""):
+        ok("image_generate size='1500x1500' → 16 倍数拒")
     else:
         fail(f"size 1500 没被拒: {r}")
 
@@ -171,15 +172,14 @@ async def test_entries() -> None:
     else:
         fail(f"save_dir 越界没拒: {r}")
 
-    # 2.6 image_edit 4K rejected
-    # 构造一个本地 1024x1024 PNG 给 image_path（让 4K 拒在 size 校验前先 OK 走到 4K 拒）
+    # 2.6 4K reference 已开放并自动走高质量线路
     img_path = _SANDBOX / "test.png"
     img_path.write_bytes(_minimal_png(1024, 1024))
-    r = await S.image_edit(prompt="hi", image_path=str(img_path), size="3840x2160")
-    if not r["ok"] and "4K" in r.get("error", ""):
-        ok("image_edit size=4K → 已禁用拒")
+    eff_model, route_notes = S._resolve_model("gpt-image-2", "3840x2160")
+    if eff_model == "gpt-image-2-openai" and route_notes and not S._bypass_edits(eff_model, "3840x2160"):
+        ok("image_edit size=4K → 高质量 edits 线路已开放")
     else:
-        fail(f"image_edit 4K 没被拒: {r}")
+        fail(f"image_edit 4K 路由不正确: model={eff_model}, notes={route_notes}")
 
     # 2.7 image_edit image_path 不存在
     r = await S.image_edit(prompt="hi", image_path="/nonexistent/xyz.png", size="1024x1024")
@@ -188,16 +188,11 @@ async def test_entries() -> None:
     else:
         fail(f"image_path 不存在没拒: {r}")
 
-    # 2.8 image_multi_reference 4K rejected
-    r = await S.image_multi_reference(
-        prompt="hi",
-        image_paths=[str(img_path), str(img_path)],
-        size="3840x2160",
-    )
-    if not r["ok"] and "4K" in r.get("error", ""):
-        ok("image_multi_reference size=4K → 已禁用拒")
+    # 2.8 兼容 hook 不再拒绝多图 4K
+    if S._reject_4k_with_reference("3840x2160", "image_multi_reference") is None:
+        ok("image_multi_reference size=4K → 无旧线路硬阻断")
     else:
-        fail(f"image_multi_reference 4K 没被拒: {r}")
+        fail("image_multi_reference 仍被旧的 4K 兼容 hook 拒绝")
 
     # 2.9 走到 API key 缺失 → 原设计抛 RuntimeError 让 FastMCP 转 MCP error response
     try:

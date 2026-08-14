@@ -1,28 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="240" viewBox="0 0 880 240" role="img" aria-label="MICU IMAGE — 米醋 gpt-image-2 MCP server">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="240" viewBox="0 0 880 240" role="img" aria-label="MICU IMAGE — GPT Image 2 MCP server">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#11161d"/>
-      <stop offset="1" stop-color="#0a0d12"/>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07131f"/>
+      <stop offset="0.52" stop-color="#09111b"/>
+      <stop offset="1" stop-color="#0b1422"/>
     </linearGradient>
-    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#FF4D3D"/>
-      <stop offset="0.5" stop-color="#FF7A1A"/>
-      <stop offset="1" stop-color="#FFB020"/>
+    <linearGradient id="wordmark" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#02a6ff"/>
+      <stop offset="0.5" stop-color="#1fb6f5"/>
+      <stop offset="1" stop-color="#5f8eff"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-25%" width="140%" height="170%">
-      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#000000" flood-opacity="0.55"/>
+    <linearGradient id="border" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0876b5" stop-opacity="0.82"/>
+      <stop offset="0.5" stop-color="#263b50" stop-opacity="0.68"/>
+      <stop offset="1" stop-color="#185d8b" stop-opacity="0.72"/>
+    </linearGradient>
+    <radialGradient id="leftGlow">
+      <stop offset="0" stop-color="#02a6ff" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#02a6ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="rightGlow">
+      <stop offset="0" stop-color="#357cff" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#357cff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M28 0H0V28" fill="none" stroke="#7f9bb5" stroke-width="0.5" opacity="0.055"/>
+    </pattern>
+    <filter id="chipGlow" x="-45%" y="-45%" width="190%" height="190%">
+      <feGaussianBlur stdDeviation="3.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#000000" flood-opacity="0.5"/>
     </filter>
   </defs>
 
-  <rect x="1" y="1" width="878" height="238" rx="22" fill="url(#bg)" stroke="#222b36" stroke-width="1"/>
+  <rect x="1" y="1" width="878" height="238" rx="24" fill="url(#background)"/>
+  <rect x="1" y="1" width="878" height="238" rx="24" fill="url(#grid)"/>
+  <ellipse cx="110" cy="110" rx="170" ry="155" fill="url(#leftGlow)"/>
+  <ellipse cx="760" cy="88" rx="230" ry="155" fill="url(#rightGlow)"/>
+  <rect x="1.5" y="1.5" width="877" height="237" rx="23.5" fill="none" stroke="url(#border)" stroke-width="1.5"/>
 
-  <g filter="url(#shadow)" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
-    <text x="440" y="120" text-anchor="middle" font-size="92" font-weight="800" letter-spacing="3" fill="url(#brand)">MICU IMAGE</text>
+  <g filter="url(#shadow)">
+    <rect x="42" y="38" width="152" height="164" rx="34" fill="#071521" fill-opacity="0.8" stroke="#24465e"/>
+    <rect x="53" y="49" width="130" height="142" rx="27" fill="none" stroke="#61bdf0" stroke-opacity="0.14"/>
   </g>
 
-  <rect x="306" y="140" width="268" height="3" rx="1.5" fill="url(#brand)" opacity="0.9"/>
+  <!-- 蓝色芯片 M 标识，按原始几何重绘为原生 SVG。 -->
+  <g transform="translate(64 66) scale(.108)" filter="url(#chipGlow)">
+    <g fill="#068cde">
+      <rect x="242" y="0" width="105" height="184" rx="52"/>
+      <rect x="451" y="0" width="105" height="184" rx="52"/>
+      <rect x="659" y="0" width="105" height="184" rx="52"/>
+      <rect x="242" y="816" width="105" height="184" rx="52"/>
+      <rect x="451" y="816" width="105" height="184" rx="52"/>
+      <rect x="659" y="816" width="105" height="184" rx="52"/>
+      <rect x="0" y="242" width="184" height="105" rx="52"/>
+      <rect x="0" y="451" width="184" height="105" rx="52"/>
+      <rect x="0" y="659" width="184" height="105" rx="52"/>
+      <rect x="816" y="242" width="184" height="105" rx="52"/>
+      <rect x="816" y="451" width="184" height="105" rx="52"/>
+      <rect x="816" y="659" width="184" height="105" rx="52"/>
+      <rect x="110" y="109" width="788" height="785" rx="72"/>
+    </g>
+    <rect x="203" y="201" width="600" height="600" rx="44" fill="#02a6ff"/>
+    <path d="M323 313H438Q449 313 453 327L498 481Q504 503 511 481L557 327Q561 313 574 313H683Q701 313 701 331V671Q701 690 682 690H623Q606 690 606 672V448Q606 440 601 449L549 621H457L405 449Q399 440 399 450V672Q399 690 381 690H324Q306 690 306 672V331Q306 313 323 313Z" fill="#fff"/>
+  </g>
 
-  <text x="440" y="178" text-anchor="middle" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="#c8d2dc">米醋 · gpt-image-2 / gpt-image-2-openai · MCP server</text>
+  <g font-family="Inter, 'SF Pro Display', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif">
+    <text x="226" y="94" font-size="61" font-weight="820" letter-spacing="1.5" filter="url(#shadow)">
+      <tspan fill="url(#wordmark)">MICU</tspan><tspan fill="#f1f5fb"> IMAGE</tspan>
+    </text>
+    <text x="228" y="126" font-size="14" font-weight="600" fill="#8298ab" letter-spacing="1.2">GPT IMAGE 2 · MCP IMAGE TOOLKIT</text>
+  </g>
 
-  <text x="440" y="210" text-anchor="middle" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="14" fill="#6b7785" letter-spacing="0.5">v0.1.0  ·  github.com/Subaru486desuwa/micu-image-mcp</text>
+  <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="600">
+    <rect x="226" y="148" width="132" height="30" rx="9" fill="#09283a" stroke="#0877b3" stroke-opacity="0.78"/>
+    <circle cx="243" cy="163" r="4" fill="#02a6ff"/>
+    <text x="254" y="168" fill="#c3eafd">gpt-image-2</text>
+
+    <rect x="368" y="148" width="192" height="30" rx="9" fill="#101f39" stroke="#3166a9" stroke-opacity="0.8"/>
+    <circle cx="385" cy="163" r="4" fill="#5f8eff"/>
+    <text x="396" y="168" fill="#d1dcff">gpt-image-2-openai</text>
+
+    <rect x="570" y="148" width="112" height="30" rx="9" fill="#131d29" stroke="#35495d"/>
+    <path d="M587 158L592 163L587 168" fill="none" stroke="#91a9bd" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="600" y="168" fill="#bac8d5">MCP SERVER</text>
+  </g>
+
+  <line x1="226" y1="198" x2="816" y2="198" stroke="#62819a" stroke-opacity="0.25"/>
+  <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="12.5" fill="#758da1">
+    <text x="226" y="218">v0.2.0</text>
+    <circle cx="287" cy="214" r="2" fill="#4f6d84"/>
+    <text x="300" y="218">github.com/Subaru486desuwa/micu-image-mcp</text>
+    <text x="816" y="218" text-anchor="end" fill="#91a6b8">GENERATE · EDIT · COMPOSE</text>
+  </g>
 </svg>

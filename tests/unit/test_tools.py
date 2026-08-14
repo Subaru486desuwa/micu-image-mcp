@@ -78,6 +78,20 @@ def test_image_batch_edit_forwards_no_crash_single(fake_http, two_input_pngs):
     assert r["succeeded"] == 1
 
 
+def test_image_batch_edit_supports_4k_via_quality_route(fake_http, two_input_pngs):
+    r = asyncio.run(server.image_batch_edit(
+        prompt="enhance",
+        image_paths=two_input_pngs[:1],
+        size="3840x2160",
+        api_key="sk-test",
+    ))
+
+    assert r["ok"] is True, r
+    assert r["model"] == "gpt-image-2-openai"
+    assert r["size"] == "3840x2160"
+    assert r["concurrency"] == 1
+
+
 # ---------- image_edit / image_generate happy path（之前零覆盖）----------
 
 def test_image_edit_happy_path(fake_http, two_input_pngs):
@@ -125,6 +139,7 @@ def test_image_generate_rejects_every_other_model(model):
 def test_server_info_reports_only_image2_models():
     r = server.server_info()
 
+    assert r["version"] == "0.2.0"
     assert r["available_models"] == ["gpt-image-2", "gpt-image-2-openai"]
     assert r["grok_channel_enabled"] is False
     assert r["grok_available_models"] == []
@@ -132,6 +147,23 @@ def test_server_info_reports_only_image2_models():
     assert "暂时关闭" in r["recommended_sizes"]["grok_tip"]
     assert "暂时关闭" in r["capability_matrix"]["grok_image_generate"]["1k"]
     assert "暂时关闭" in r["response_handling"]["grok_extract_paths"]
+    assert "可用" in r["capability_matrix"]["image_edit"]["4k"]
+    assert "可用" in r["capability_matrix"]["image_multi_reference"]["4k"]
+    assert "串行" in r["capability_matrix"]["image_batch_edit"][">=2k"]
+    assert "无需两步" in r["recommended_sizes"]["two_step_tip"]
+
+
+def test_version_surfaces_stay_in_sync():
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    banner = (REPO_ROOT / "assets" / "banner.svg").read_text(encoding="utf-8")
+    project_version = next(
+        line.split('"', 2)[1]
+        for line in pyproject.splitlines()
+        if line.startswith("version = ")
+    )
+
+    assert server.__version__ == project_version
+    assert f"v{project_version}" in banner
 
 
 @pytest.mark.parametrize("script", ["perf_bench.py", "stress_concurrent.py"])
