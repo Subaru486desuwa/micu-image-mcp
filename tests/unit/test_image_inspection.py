@@ -176,19 +176,15 @@ class TestSizeNote:
     def test_no_actual_no_note(self):
         assert S._size_note("1024x1024", None) is None
 
-    def test_compressed_to_157mp(self):
-        # 1920x1080 (2.07MP) 被压到 1671x939 (1.57MP)
-        # 1920x1080 是 2.07MP ≤ 2.25MP，actual 1.57MP → 走"压到 1.57MP"分支
+    def test_smaller_actual_reports_generic_remap(self):
         msg = S._size_note("1920x1080", (1671, 939))
         assert msg is not None
-        assert "1.57" in msg or "福利档" in msg
+        assert "重映射" in msg
 
-    def test_upscaled_to_157mp(self):
-        # 1024x1024 (1.05MP) 被放大到 ~1.57MP
+    def test_larger_actual_reports_generic_remap(self):
         msg = S._size_note("1024x1024", (1254, 1254))
         assert msg is not None
-        # 1.05MP < 1.57MP 触发"放大"提示
-        assert "放大" in msg or "ℹ" in msg
+        assert "重映射" in msg
 
     def test_generic_mismatch(self):
         # 高 MP 请求 + 实际不匹配 → 一般提示

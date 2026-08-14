@@ -6,6 +6,8 @@ import re
 from .config import (
     GROK_SIZE_MODE, GROK_SIZE_MODES,
     MAX_N, MIN_SIZE_EDGE, MAX_SIZE_EDGE, SIZE_ALIGNMENT,
+    MIN_IMAGE_PIXELS, MAX_IMAGE_PIXELS, MAX_IMAGE_ASPECT_RATIO,
+    VALID_IMAGE_QUALITIES,
 )
 
 
@@ -47,8 +49,10 @@ def _validate_size(size: str | None, *, allow_none: bool = True) -> tuple[str | 
     规则：
       - None 允许（image_generate 走 prompt 推断兜底）
       - 必须形如 "WxH"，W/H 都为正整数
-      - W/H 都在 [256, 4096]
-      - W/H 必须是 8 的倍数（米醋实测约束）
+      - W/H 都在 [256, 3840]
+      - W/H 必须是 16 的倍数
+      - 长宽比不超过 3:1
+      - 总像素在 [655,360, 8,294,400]
     """
     if size is None:
         if allow_none:
@@ -68,12 +72,35 @@ def _validate_size(size: str | None, *, allow_none: bool = True) -> tuple[str | 
     if w > MAX_SIZE_EDGE or h > MAX_SIZE_EDGE:
         return None, f"size 边长太大（最大 {MAX_SIZE_EDGE}），收到 {size}"
     if w % SIZE_ALIGNMENT != 0 or h % SIZE_ALIGNMENT != 0:
-        return None, f"size W/H 必须是 {SIZE_ALIGNMENT} 的倍数（米醋代理约束），收到 {size}"
+        return None, f"size W/H 必须是 {SIZE_ALIGNMENT} 的倍数，收到 {size}"
+    ratio = max(w, h) / min(w, h)
+    if ratio > MAX_IMAGE_ASPECT_RATIO:
+        return None, f"size 长宽比不能超过 {MAX_IMAGE_ASPECT_RATIO:g}:1，收到 {size}"
+    pixels = w * h
+    if pixels < MIN_IMAGE_PIXELS:
+        return None, f"size 总像素太少（最小 {MIN_IMAGE_PIXELS:,}），收到 {size}"
+    if pixels > MAX_IMAGE_PIXELS:
+        return None, f"size 总像素太多（最大 {MAX_IMAGE_PIXELS:,}），收到 {size}"
     return f"{w}x{h}", None
 
 
+def _validate_quality(quality: str | None) -> tuple[str | None, str | None]:
+    """Validate the GPT Image 2 quality enum without silently dropping bad types."""
+    if quality is None:
+        return None, None
+    if not isinstance(quality, str):
+        return None, f"quality 必须是字符串，收到 {type(quality).__name__}"
+    cleaned = quality.strip().lower()
+    if not cleaned:
+        return None, None
+    if cleaned not in VALID_IMAGE_QUALITIES:
+        choices = " / ".join(sorted(VALID_IMAGE_QUALITIES))
+        return None, f"quality 不支持 {quality!r}；可选 {choices}"
+    return cleaned, None
+
+
 def _validate_grok_size(size: str | None, *, allow_none: bool = True) -> tuple[str | None, str | None]:
-    """Grok 路径只做格式校验，不套用 MICU 的 8 倍数和 4K 约束。"""
+    """Grok 路径只做格式校验，不套用 Image2 的对齐、像素数和长宽比约束。"""
     if size is None:
         if allow_none:
             return None, None
@@ -102,12 +129,8 @@ def _validate_n(n: int) -> str | None:
 
 
 def _round_to_alignment(n: int) -> int:
-    """米醋代理实测 W/H 接受 8 的倍数（1080/720 等通过）。
-
-    OpenAI 官方文档说 16 倍数，但米醋代理更宽容；用 8 对齐既兼容常见视频尺寸（1920x1080 / 720）
-    又不会过度修正用户意图（不会把 1080 改成 1088）。
-    """
-    return max(16, round(n / 8) * 8)
+    """Round an inferred edge to the current 16-pixel API alignment."""
+    return max(SIZE_ALIGNMENT, round(n / SIZE_ALIGNMENT) * SIZE_ALIGNMENT)
 
 
 def _parse_actual(s: str | None) -> tuple[int, int] | None:
@@ -119,6 +142,6 @@ def _parse_actual(s: str | None) -> tuple[int, int] | None:
 
 __all__ = [
     "_parse_size", "_max_edge", "_size_tier", "_grok_size_mode",
-    "_validate_size", "_validate_grok_size", "_validate_n",
+    "_validate_size", "_validate_grok_size", "_validate_n", "_validate_quality",
     "_round_to_alignment", "_parse_actual",
 ]

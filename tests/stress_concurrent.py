@@ -4,7 +4,7 @@
   1. 1K 多张并发 (n>1 → server 内 5 并发) → 吞吐线性 ≈ 5x
   2. ≥2K 多请求并发 → 进程内 Semaphore(1) + 跨进程 flock 强串行
   3. ≥4K 撞 CF 524 → fail-fast 不重试 (锁视角)
-  4. 仅允许 gpt-image-2 / gpt-image-2-pro；Grok 渠道暂时关闭
+  4. 仅允许 gpt-image-2 / gpt-image-2-openai；Grok 渠道暂时关闭
 
 模式:
   inprocess (默认): asyncio.gather N 个 image_generate 调用。
@@ -272,13 +272,13 @@ def derived_metrics(trials: list[Trial], total_wall_ms: float) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="米醋 MCP 并发压力测试（仅 gpt-image-2 / gpt-image-2-pro）"
+        description="米醋 MCP 并发压力测试（仅 gpt-image-2 / gpt-image-2-openai）"
     )
     p.add_argument("--mode", choices=["inprocess", "multiprocess"], default="inprocess")
     p.add_argument("--concurrency", type=int, default=3)
     p.add_argument(
         "--model",
-        choices=["gpt-image-2", "gpt-image-2-pro"],
+        choices=["gpt-image-2", "gpt-image-2-openai"],
         default="gpt-image-2",
     )
     p.add_argument("--size", default="1024x1024")

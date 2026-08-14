@@ -16,7 +16,7 @@
 
 生成的图片会**自动保存到本地磁盘**，返回结果中包含文件的绝对路径，方便你在 IDE 或文件管理器中打开。
 
-当前仅支持 `gpt-image-2` / `gpt-image-2-pro`。Grok 生图渠道暂时关闭，待服务器支持后再启用。
+当前仅支持 `gpt-image-2` / `gpt-image-2-openai`。Grok 生图渠道暂时关闭，待服务器支持后再启用。
 
 ---
 
@@ -66,14 +66,14 @@ python install.py --yes
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MICU_API_KEY` | 空 | 米醋 **Image2 分组** token，必须能访问 `gpt-image-2` / `gpt-image-2-pro` |
+| `MICU_API_KEY` | 空 | 米醋 **Image2 分组** token，必须能访问 `gpt-image-2` / `gpt-image-2-openai` |
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 API 地址 |
 | `MICU_MODEL` | `gpt-image-2` | 默认模型 |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同 `MICU_SAVE_DIR` | 安全根目录，所有输出必须在其下 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取系统 shell 代理 |
 
-> **重要**：`MICU_API_KEY` 必须是能访问 `gpt-image-2` / `gpt-image-2-pro` 的 Image2 分组 Key。
+> **重要**：`MICU_API_KEY` 必须是能访问 `gpt-image-2` / `gpt-image-2-openai` 的 Image2 分组 Key。
 
 ---
 
@@ -114,8 +114,8 @@ python install.py --yes
     {
       "path": "/home/wcx/Pictures/micu-out/test_apple.png",
       "size_bytes": 123456,
-      "actual_size": "1254x1254",
-      "actual_megapixels": 1.57
+      "actual_size": "1024x1024",
+      "actual_megapixels": 1.05
     }
   ],
   "errors": [],
@@ -142,7 +142,7 @@ HTTP 524: A timeout occurred
 保存失败: 下载 URL host 'oss.filenest.top' 指向受限地址 198.18.1.23（私网/环回/链路本地/保留），已拒绝（SSRF 防护）
 ```
 
-原因：chat stream fallback 等路径仍返回 CDN URL，需二次下载。若系统 DNS 将 `oss.filenest.top` 解析到 `198.18.1.x`（Clash / Surge **fake-ip**），且 `MICU_ALLOW_FAKE_IP_DOWNLOAD=0` 时会被拒绝。
+原因：Images API 的 URL 响应需二次下载。若系统 DNS 将 `oss.filenest.top` 解析到 `198.18.1.x`（Clash / Surge **fake-ip**），且 `MICU_ALLOW_FAKE_IP_DOWNLOAD=0` 时会被拒绝。
 
 **当前版本默认已双层修复，通常无需改代理：**
 
@@ -215,7 +215,8 @@ flowchart TD
 | `prompt` | string | ✅ | 图像描述，1–2000 字符 |
 | `size` | string \| null | | `"WxH"` 格式，如 `"1024x1024"`；留空则从 prompt 关键字自动推断 |
 | `n` | int | | 生成张数 1–10；1K 可多张并发，≥2K 强制 n=1 |
-| `model` | string \| null | | `gpt-image-2` 或 `gpt-image-2-pro`；留空按尺寸自动选择 |
+| `model` | string \| null | | `gpt-image-2` 或 `gpt-image-2-openai`；留空按尺寸自动选择 |
+| `quality` | string \| null | | `auto` / `low` / `medium` / `high`；留空使用后端默认值 |
 | `save_dir` | string \| null | | 输出目录，必须在 `MICU_SAVE_DIR_ROOT` 下 |
 | `basename` | string \| null | | 文件名前缀，仅允许 `[A-Za-z0-9_\-.]` |
 | `api_key` | string \| null | | 临时覆盖环境变量中的 Key |
@@ -224,11 +225,11 @@ flowchart TD
 
 | 档位 | 推荐尺寸 | 实际输出 | 速度 |
 |------|----------|----------|------|
-| 1K | `1024x1024`, `1536x1024`, `1024x1536` | ~1.57MP（福利档） | 快，~30s |
-| 2K | `2048x2048`, `2048x1152`, `1152x2048` | 真 2K | ~80s，自动 pro |
-| 4K | `3840x2160`, `2160x3840` | 真 4K | ~80s，自动 pro |
+| 1K | `1024x1024`, `1536x1024`, `1024x1536` | 标准/高质量线路均可用 | 实际像素见 `saved.actual_size` |
+| 2K | `2048x2048`, `2048x1152`, `1152x2048` | 高质量线路 | 自动 `gpt-image-2-openai` |
+| 4K | `3840x2160`, `2160x3840` | 高质量线路 | 自动 `gpt-image-2-openai` |
 
-> W 和 H 必须是 **8 的倍数**。`1920x1080` 等 ≤2.25MP 的尺寸会被压到 ~1.57MP。
+> W 和 H 必须是 **16 的倍数**；最长边 ≤3840，长宽比 ≤3:1，总像素为 655,360–8,294,400。`1920x1080` 不对齐，请改用 `1920x1088` 或推荐的 `2048x1152`。
 
 **Prompt 写法建议**：
 
@@ -278,7 +279,7 @@ image_generate(
 | `image_path` | string | ✅ | 输入图路径（绝对或相对），支持 PNG/JPG/WebP |
 | `mask_path` | string \| null | | 可选 alpha mask PNG；透明区域 = 编辑区，不透明 = 保留 |
 | `size` | string | | 输出尺寸，默认 `1024x1024` |
-| `model` | string \| null | | 模型，≥2K 自动切 pro |
+| `model` | string \| null | | 模型，≥2K 自动切 `gpt-image-2-openai` |
 | `save_dir` | string \| null | | 输出目录 |
 | `basename` | string \| null | | 文件名前缀 |
 | `api_key` | string \| null | | 临时覆盖 Key |
@@ -294,8 +295,8 @@ image_generate(
 
 | 档位 | 可用性 | 说明 |
 |------|--------|------|
-| 1K | ✅ 稳定 | ~1.57MP，~10s |
-| 2K | ⚠️ best-effort | 约 2/3 成功真 2K；失败时 fallback ~1.57MP，2–4 分钟 |
+| 1K | ✅ 已验证 | 两模型 1024×1024 edits 均成功并精确返回 |
+| 2K | ✅ 已验证 | `gpt-image-2-openai` 的 2048×1152 edits 成功并精确返回 |
 | 4K | ❌ 已禁用 | 入口直接拒绝；请用两步法（见下文） |
 
 **示例对话**：
@@ -347,8 +348,8 @@ image_edit(
 
 **并发策略**：
 
-- non-pro 模型：5 并发
-- pro 模型：串行 + 1.5s 间隔
+- `gpt-image-2`：5 并发
+- `gpt-image-2-openai`：串行 + 1.5s 间隔
 - 单张失败不影响其他张
 
 **示例对话**：
@@ -402,7 +403,7 @@ image_batch_edit(
 **限制**：
 
 - 单张参考图建议 ≤2MB，总输入 ≤8MB
-- 1K 稳定 ~1.57MP；2K best-effort；4K 已禁用
+- 1K 可用；2K 自动使用高质量线路但仍建议核对 `saved.actual_size`；4K 已禁用
 
 **示例对话**：
 
@@ -425,22 +426,22 @@ image_multi_reference(
 
 ### 5.1 核心规则
 
-1. **W/H 必须是 8 的倍数**（image2 路径）
-2. **W/H 范围 256–4096**
-3. **≤2.25MP**（如 1024²、1920×1080）→ 被代理压到 **~1.57MP** 福利档
-4. **≥2K 自动切 `gpt-image-2-pro`**，且 **n 强制为 1**
+1. **W/H 必须是 16 的倍数**（Image2 路径）
+2. **最长边 ≤3840，长宽比 ≤3:1**
+3. **总像素 655,360–8,294,400**
+4. **≥2K 自动切 `gpt-image-2-openai`**，且 **n 强制为 1**
 5. **2K/4K 有跨进程锁**：多窗口同时请求会串行排队
 
 ### 5.2 各场景能力
 
 | 场景 | 工具 | 可靠性 | 实际输出 |
 |------|------|--------|----------|
-| 1K 文生图 | `image_generate` | ✅ 可靠 | ~1.57MP |
-| 2K/4K 文生图 | `image_generate` | ✅ 真分辨率 | 2048² / 3840×2160 |
-| 1K 单图编辑 | `image_edit` | ✅ 可靠 | ~1.57MP |
-| 2K 带参考图编辑 | `image_edit` | ⚠️ best-effort | 约 2/3 真 2K |
-| 1K 多图融合 | `image_multi_reference` | ✅ 可靠 | ~1.57MP |
-| 2K 多图融合 | `image_multi_reference` | ⚠️ best-effort | 约 2/3 真 2K |
+| 1K 文生图 | `image_generate` | ✅ 已验证 | 两模型 1024² 精确返回 |
+| 2K/4K 文生图 | `image_generate` | ✅ 已验证 | 高质量线路 2048×1152 / 3840×2160 精确返回 |
+| 1K 单图编辑 | `image_edit` | ✅ 已验证 | 两模型 1024² 精确返回 |
+| 2K 带参考图编辑 | `image_edit` | ✅ 已验证 | 高质量线路 2048×1152 精确返回 |
+| 1K 多图融合 | `image_multi_reference` | ✅ 历史验证 | 核对 `saved.actual_size` |
+| 2K 多图融合 | `image_multi_reference` | ⚠️ best-effort | 失败时直接返回 Images API 错误 |
 | 4K 带参考图 | `image_edit` / `image_multi_reference` | ❌ 禁用 | 入口拒绝 |
 | 批量编辑 ≥2K | `image_batch_edit` | ❌ 禁用 | 仅 1K |
 
@@ -462,7 +463,7 @@ image_generate(
 
 ## 六、Grok 通道状态
 
-Grok 生图渠道暂时关闭。工具只接受 `gpt-image-2` / `gpt-image-2-pro`；传入 Grok 模型会在读取本地图片或发出网络请求前被拒绝。内部兼容实现暂时保留，待服务器支持恢复后再启用。
+Grok 生图渠道暂时关闭。工具只接受 `gpt-image-2` / `gpt-image-2-openai`；传入 Grok 模型会在读取本地图片或发出网络请求前被拒绝。内部兼容实现暂时保留，待服务器支持恢复后再启用。
 
 ---
 
@@ -485,10 +486,10 @@ Grok 生图渠道暂时关闭。工具只接受 `gpt-image-2` / `gpt-image-2-pro
 |------|------|
 | `path` | 文件绝对路径 |
 | `size_bytes` | 文件字节数 |
-| `actual_size` | 从图片 header 读出的真实像素（如 `"1254x1254"`） |
+| `actual_size` | 从图片 header 读出的真实像素（如 `"1024x1024"`） |
 | `actual_megapixels` | 实际百万像素 |
 
-> **注意**：1K 档请求 `1024x1024` 时，`actual_size` 常为 `1254x1254`（~1.57MP 福利档），属正常现象。
+> **注意**：米醋后端可能重映射自定义尺寸；始终以 `saved.actual_size` 为准。需要精确像素时优先用 `gpt-image-2-openai`。
 
 ---
 
@@ -514,8 +515,8 @@ MCP 内置多项安全限制：
 |----------|------|----------|
 | `未配置 API key` | 环境变量未设置 | 在 mcp.json 的 `env` 中配置 `MICU_API_KEY` |
 | `分组 grok 下模型 gpt-image-2 无可用渠道` | Key 分组填错 | 将可访问两个 Image2 模型的 Key 填入 `MICU_API_KEY` |
-| `Grok 生图渠道暂时关闭` | 当前版本主动禁用 Grok | 改用 `gpt-image-2` / `gpt-image-2-pro`，等待服务器支持恢复 |
-| `size W/H 必须是 8 的倍数` | 尺寸不符合约束 | 改为如 `1024x1024`、`2048x1152` |
+| `Grok 生图渠道暂时关闭` | 当前版本主动禁用 Grok | 改用 `gpt-image-2` / `gpt-image-2-openai`，等待服务器支持恢复 |
+| `size W/H 必须是 16 的倍数` | 尺寸不符合约束 | 改为如 `1024x1024`、`2048x1152` |
 | `HTTP 524: timeout` | 上游超时 | 改小尺寸或稍后重试；2K/4K 高负载时偶发 |
 | `SSRF 防护` + `198.18.x.x` | 旧版或 `MICU_ALLOW_FAKE_IP_DOWNLOAD=0` | 升级 MCP 或设 `MICU_ALLOW_FAKE_IP_DOWNLOAD=1`；`auto` 模式下 URL 失败会自动重试 `b64_json` |
 | `image_path 不存在` | 路径错误 | 使用绝对路径 |

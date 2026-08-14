@@ -28,12 +28,14 @@ from micu_image_mcp.config import (
     RESPONSE_FORMATS_TO_TRY,
     GROK_BASEURL, GROK_API_KEY, XAI_MODEL, GROK_SIZE_MODE,
     _TRUST_ENV, _SAVE_ROOT, DEFAULT_SAVE_DIR,
-    PRO_MODEL, NONPRO_MODEL, SUPPORTED_IMAGE_MODELS,
+    STANDARD_MODEL, QUALITY_MODEL, PRO_MODEL, NONPRO_MODEL, SUPPORTED_IMAGE_MODELS,
+    VALID_IMAGE_QUALITIES,
     GROK_MODEL_ALIASES, GROK_AVAILABLE_MODELS,
     GROK_ASPECT_RATIO_CHOICES, GROK_SIZE_MODES,
     HIGH_RES_EDGE, EDITS_MAX_EDGE,
     VALID_SIZES_1K, VALID_SIZES_2K, VALID_SIZES_4K,
     MAX_N, MIN_SIZE_EDGE, MAX_SIZE_EDGE, SIZE_ALIGNMENT,
+    MIN_IMAGE_PIXELS, MAX_IMAGE_PIXELS, MAX_IMAGE_ASPECT_RATIO,
     MAX_INPUT_FILE_BYTES, MAX_TOTAL_INPUT_BYTES, MAX_RESPONSE_BYTES,
     _SAFE_BASENAME_RE,
     RETRYABLE_STATUS, FALLBACK_STATUS, RETRY_AFTER_STATUSES, BIG_SIZE_FAIL_FAST_STATUS,
@@ -42,11 +44,11 @@ from micu_image_mcp.config import (
 )
 from micu_image_mcp.sizes import (
     _parse_size, _max_edge, _size_tier, _grok_size_mode,
-    _validate_size, _validate_grok_size, _validate_n,
+    _validate_size, _validate_grok_size, _validate_n, _validate_quality,
     _round_to_alignment, _parse_actual,
 )
 from micu_image_mcp.routing import (
-    _is_grok_model, _model_error, _reject_4k_with_reference,
+    _is_grok_model, _model_error, _is_quality_model, _reject_4k_with_reference,
     _resolve_model, _bypass_edits,
     _size_note, _grok_aspect_ratio, _grok_resolution,
     _infer_size_from_prompt,
@@ -126,18 +128,15 @@ async def _call_and_save_with_format_fallback(
     out_dir: Path,
     stem: str,
     requested_size: str,
-    on_http_fallback: "Callable[[], Awaitable[tuple[int, str]]] | None" = None,
     normalize_size: str | None = None,
     normalize_mode: str | None = None,
     normalize_label: str = "图片",
-) -> tuple[dict[str, Any] | None, str | None, bool]:
+) -> tuple[dict[str, Any] | None, str | None]:
     """按 RESPONSE_FORMATS_TO_TRY 顺序调 API 并落盘；默认先 url，保存失败再 b64_json。
 
-    返回 (saved_info, error, used_http_fallback)。
-  on_http_fallback 仅在第一种 format 的 HTTP 失败时触发（如 edits→chat stream）。
+    返回 (saved_info, error)。HTTP 错误不会切换 API 路由。
     """
     last_err: str | None = None
-    used_http_fallback = False
     for fmt_i, fmt in enumerate(RESPONSE_FORMATS_TO_TRY):
         if fmt_i > 0:
             notes.append(f"URL 落盘失败（{last_err}）→ 重试 API response_format={fmt}")
@@ -146,9 +145,6 @@ async def _call_and_save_with_format_fallback(
             ep, key, retry_pro=retry_pro, stream=stream,
             big_size_lock=big_size_lock, notes_out=notes,
         )
-        if not (200 <= status < 300) and fmt_i == 0 and on_http_fallback is not None:
-            status, text = await on_http_fallback()
-            used_http_fallback = True
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
             continue
@@ -165,9 +161,9 @@ async def _call_and_save_with_format_fallback(
         if saved_info:
             if fmt_i > 0:
                 notes.append(f"已通过 response_format={fmt} 成功落盘")
-            return saved_info, None, used_http_fallback
+            return saved_info, None
         last_err = save_err or "保存失败"
-    return None, last_err, used_http_fallback
+    return None, last_err
 
 
 @mcp.tool()
@@ -196,13 +192,12 @@ async def image_generate(
         正方形/logo/头像 → 1024x1024；竖屏/9:16 → 1024x1536；横屏/16:9 → 1536x1024 等）。
         推断不出来 fallback 1024x1024。
       - 强烈推荐：如果你（LLM）已经从用户消息读出确定的 size 偏好，**直接显式传 size**，比关键字推断准。
-      - 用户提到"高清/4K/海报/壁纸" → "3840x2160"（横）或 "2160x3840"（竖），自动用 pro。
-      - 用户提到"FullHD/1080p/横屏视频封面" → "2048x1152"（横）或 "1152x2048"（竖），跨过 2.25MP 阈值。
-      - **pro 与非 pro 价格一致** —— 想要真分辨率请直接拉高 size，1920×1080 这种 ≤2.25MP 的会被压成 ~1.57MP。
-      - W 与 H 必须都是 8 的倍数（米醋实测约束；OpenAI 官方要 16，米醋更宽容）。
-      - ≤2.25MP（含 1K 档与名义 2K 的 1920×1080）被代理压到 ~1.57MP 福利档，可靠输出 ~1.57MP。
-      - **2K/4K 真分辨率可用**：≥2K 自动切 pro，MCP 内置重试吃掉瞬时 524，实测 2048² 真返回 2K、
-        3840×2160 真返回 4K，约 80s/张（高负载下可能更慢或偶发失败）。想要真分辨率直接拉高 size。
+      - 用户提到"高清/4K/海报/壁纸" → "3840x2160"（横）或 "2160x3840"（竖），自动用 gpt-image-2-openai。
+      - 用户提到"FullHD/1080p/横屏视频封面" → "2048x1152"（横）或 "1152x2048"（竖）；
+        这两个尺寸均满足当前 16 像素对齐和总像素约束。
+      - W 与 H 必须都是 16 的倍数；最长边 ≤3840；长宽比 ≤3:1；总像素 655,360-8,294,400。
+      - **2K/4K 自动走高质量线路**：≥2K 自动切 gpt-image-2-openai。2026-08-14 实测其 1536×1024、
+        2048×1152、3840×2160 均按请求像素返回；gpt-image-2 的自定义宽高可能被后端重映射。
 
     [PROMPT 写法建议]
       - 中英文混合可。gpt-image-2 文本渲染近完美，可大段嵌字（中英标点都行）。
@@ -211,16 +206,15 @@ async def image_generate(
     Args:
         prompt: 图像描述。1-2000 字符。例："A minimalist sushi mascot logo, soft pastel palette".
         size: "WxH" 字符串或 None。**留 None 让 MCP 从 prompt 推**（弱 LLM 兜底用）；
-              强 LLM 已知偏好时**直接显式传**更准。W 和 H 都必须是 8 的倍数（米醋约束）。常用：
-              "1024x1024" "1280x720" "1024x1536" "1536x1024" "720x1280"        ← 1K 档（被压到 1.57MP，可靠）
-              "1920x1080" "1080x1920"                                          ← 名义 2K 但 ≤2.25MP，被压到 1.57MP
-              "2048x2048" "2048x1152" "1152x2048"                              ← 真 2K 档（自动 pro，重试吸收瞬时 524，~80s/张）
-              "3840x2160" "2160x3840"                                          ← 4K 档（自动 pro，重试吸收瞬时 524，~80s/张）
+              强 LLM 已知偏好时**直接显式传**更准。W 和 H 都必须是 16 的倍数。常用：
+              "1024x1024" "1280x720" "1024x1536" "1536x1024" "720x1280"        ← 1K 档
+              "2048x2048" "2048x1152" "1152x2048"                              ← 2K 档（自动 gpt-image-2-openai）
+              "3840x2160" "2160x3840"                                          ← 4K 档（自动 gpt-image-2-openai）
               默认 None（推断后兜底 1024x1024）。
         n: 张数 1-10。1K 时 N>1 自动 5 并发；≥2K 强制 N=1（代理限流）。默认 1。
-        model: 显式指定模型。留空时按 size 自动选（max edge ≥1600 用 pro，否则 non-pro）。
-              可选值："gpt-image-2"（快、便宜）/ "gpt-image-2-pro"（高细节、≥2K 必需）。
-        quality: 可选质量参数。非空时原样透传给米醋后端；留空则不发送该字段，保持后端默认质量。
+        model: 显式指定模型。留空时按 size 自动选（max edge ≥1600 用 gpt-image-2-openai，否则 gpt-image-2）。
+              可选值："gpt-image-2"（标准线路）/ "gpt-image-2-openai"（高质量线路）。
+        quality: 可选质量参数："auto" / "low" / "medium" / "high"；留空则使用后端默认值。
         save_dir: 输出目录。**必须在安全根目录 MICU_SAVE_DIR_ROOT 之下**（默认 ~/Pictures/micu-out）；
                   传 root 之外路径会被拒。留空使用默认。
         basename: 文件名前缀（不带扩展名），仅允许 [A-Za-z0-9_\\-.]。
@@ -248,7 +242,7 @@ async def image_generate(
         image_generate(prompt="cute sticker of a cat", size="1024x1024", n=4)
 
     Common errors and what to do:
-        "size W/H 必须是 8 的倍数" → 客户端入口拒，改 size 即可（OpenAI 端有时返回"divisible by 16" 提示，米醋 8 倍数已能过）。
+        "size W/H 必须是 16 的倍数" → 客户端入口拒；例如 1920×1080 应改为 1920×1088 或推荐的 2048×1152。
         "HTTP 524: timeout" → 已自动重试 3 次仍失败，建议改小 size 或稍后再试。
         "未配置 API key" → 设置 MICU_API_KEY 环境变量或传 api_key 参数。
     """
@@ -258,15 +252,15 @@ async def image_generate(
     err_n = _validate_n(n)
     if err_n:
         return {"ok": False, "error": err_n, "errors": [err_n]}
-    if model_err := _model_error(model):
+    if model_err := _model_error(DEFAULT_MODEL if model is None else model):
         return {"ok": False, "error": model_err, "errors": [model_err]}
     safe_stem = _safe_basename(basename) if basename is not None else None
     if basename is not None and safe_stem is None:
         msg = f"basename {basename!r} 含非法字符或路径分量；仅允许 [A-Za-z0-9_-.]，禁含 / 与 .."
         return {"ok": False, "error": msg, "errors": [msg]}
-    cleaned_quality = quality.strip() if isinstance(quality, str) else None
-    if cleaned_quality == "":
-        cleaned_quality = None
+    cleaned_quality, quality_err = _validate_quality(quality)
+    if quality_err:
+        return {"ok": False, "error": quality_err, "errors": [quality_err]}
     out_dir, dir_err = _resolve_save_dir(save_dir)
     if dir_err:
         return {"ok": False, "error": dir_err, "errors": [dir_err]}
@@ -306,7 +300,7 @@ async def image_generate(
     if not use_grok and tier in ("2k", "4k") and n > 1:
         notes.append(f"{tier.upper()} 强制 N=1，已忽略请求的 n={n}")
         n = 1
-    is_pro = "pro" in eff_model.lower()
+    is_quality = _is_quality_model(eff_model)
     stem = safe_stem or _default_basename("gen")
 
     if use_grok:
@@ -402,27 +396,22 @@ async def image_generate(
             "notes": notes,
         }
 
-    # 实测：generations 端点对所有 size 都尊重宽高比；
-    #   - ≤2.25MP 请求被代理统一处理到 ~1.57MP（≤1.57MP 是等比放大福利；1.57~2.25MP 是压缩降级，如 1920×1080→1672×941）
-    #   - ≥~4MP 请求严格 1:1 输出（pro 2048² → 真 2048²，4K 也是真 4K）
-    # ≥2K 失败兜底：chat stream（size 不生效，输出 ~1.57MP），见下方 _do_one。
-    # 1K 不需要兜底（generations 1K 路径稳定）。
-    # CF 524 = origin 处理 >120s，60s 退避大概率仍 524（origin 持续慢），fail fast 直走 fallback。
+    # 当前实测：高质量线路的常用 1K/2K/4K 尺寸精确输出；标准线路的部分自定义尺寸会被重映射。
+    # 当前 GPT Image 2 模型只走 Images API；不再把图像模型错误发送到 chat/completions。
     saved: list[dict] = []
     errors: list[str] = []
     # 客户端循环 N 次单图请求（米醋 image_generation tool 不接受 n 字段）。
-    # ≥2K 一律给 retry_pro=True 让 524/超时被重试（不仅 pro，size tier 也触发）
-    aggressive_retry = is_pro or tier in ("2k", "4k")
+    # ≥2K 一律给 retry_pro=True 让 524/超时被重试（内部参数名为历史兼容名）
+    aggressive_retry = is_quality or tier in ("2k", "4k")
     # 并发策略（与 image_batch_edit 对齐）：
-    #   - 1K + non-pro + n>1 → 5 并发（HTML 网页同款）
-    #   - 1K + pro / ≥2K → 串行（pro 代理瞬时限流多；≥2K 已强制 N=1）
-    can_concurrent = n > 1 and tier in ("small", "1k") and not is_pro
+    #   - 1K + 标准线路 + n>1 → 5 并发（HTML 网页同款）
+    #   - 1K + 高质量线路 / ≥2K → 串行（高质量线路瞬时限流多；≥2K 已强制 N=1）
+    can_concurrent = n > 1 and tier in ("small", "1k") and not is_quality
     concurrency = 5 if can_concurrent else 1
     big_size_lock = tier in ("2k", "4k")
-    used_fallback = False  # ≥2K generations 失败切到 chat stream 时置 True（size 不生效）
+    used_fallback = False  # 兼容既有返回结构；当前模型不会跨到 chat/completions。
 
     async def _do_one(idx: int) -> tuple[int, dict | None, str | None]:
-        nonlocal used_fallback
         last_err: str | None = None
         for fmt_i, fmt in enumerate(RESPONSE_FORMATS_TO_TRY):
             if fmt_i > 0:
@@ -442,35 +431,6 @@ async def image_generate(
                 ep, key, retry_pro=aggressive_retry, stream=False,
                 big_size_lock=big_size_lock, notes_out=notes,
             )
-            # ≥2K 撞 524 → chat stream fallback（仅第一种 format 的 HTTP 失败时）。
-            if (
-                not (200 <= status < 300)
-                and big_size_lock
-                and status in FALLBACK_STATUS
-                and fmt_i == 0
-            ):
-                chat_ep = Endpoint(
-                    url=f"{baseurl}/v1/chat/completions",
-                    json_body={
-                        "model": eff_model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "size": size,
-                        **({"quality": cleaned_quality} if cleaned_quality is not None else {}),
-                    },
-                )
-                chat_status, chat_text = await _call_with_retry(
-                    chat_ep, key, retry_pro=is_pro, stream=True,
-                    big_size_lock=big_size_lock, notes_out=notes,
-                )
-                if 200 <= chat_status < 300:
-                    used_fallback = True
-                    fb_note = (
-                        f"generations 主路径 HTTP {status}（origin {size} 路径今晚拥塞）"
-                        "→ fallback chat stream（size 不生效，实际输出 ~1.57MP）"
-                    )
-                    if fb_note not in notes:
-                        notes.append(fb_note)
-                    status, text = chat_status, chat_text
             if not (200 <= status < 300):
                 last_err = f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
                 continue
@@ -504,7 +464,7 @@ async def image_generate(
                 return await _do_one(idx)
 
         results = await asyncio.gather(*(_wrap(i) for i in range(n)))
-        notes.append(f"1K + non-pro + N={n} 已 {concurrency} 并发")
+        notes.append(f"1K + 标准线路 + N={n} 已 {concurrency} 并发")
     else:
         results = []
         for i in range(n):
@@ -526,7 +486,9 @@ async def image_generate(
         "size": size,
         "requested_n": n,
         "used_fallback": used_fallback,
-        "size_honored": not used_fallback,
+        "size_honored": bool(saved) and all(
+            _parse_actual(entry.get("actual_size")) == _parse_size(size) for entry in saved
+        ),
         "saved": saved,
         "errors": errors,
         "notes": notes,
@@ -544,7 +506,7 @@ async def image_edit(
     basename: str | None = None,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """图像编辑（image-to-image，单张输入）。1K 档稳定 ~1.57MP，2K best-effort 真 2K；4K 已禁用见下。
+    """图像编辑（image-to-image，单张输入）。1K/2K 可用；4K 参考图编辑仍禁用。
 
     [WHAT] 接受 1 张本地图片 + 修改指令，输出修改后的图。
 
@@ -554,13 +516,11 @@ async def image_edit(
       - 如果用户提供了多张图想"批量改"（每张做同样操作）→ 改用 image_batch_edit。
       - 如果用户用多张图作风格参考想画一张新的 → 用 image_multi_reference。
 
-    [尺寸能力]（实测确定）
-      - 1K 档：稳定输出 ~1.57MP（1254×1254 福利档上采样）。
-      - 2K 档：**best-effort 真 2K**（自动切 pro + /v1/images/edits，实测约 2/3 成功真返回 2048×2048；
-        524 时 fallback chat stream → ~1.57MP）。较慢（单次 2-4 分钟）。
+    [尺寸能力]（2026-08-14 实测）
+      - 1K：gpt-image-2 与 gpt-image-2-openai 的 1024×1024 edits 均成功并精确返回。
+      - 2K：自动切 gpt-image-2-openai；2048×1152 edits 成功并精确返回。
       - 4K 仍禁用（origin 处理 4K + 参考图稳定 > 120s 撞 CF 524）。要真 4K 走两步法：
-        先 image_edit 出 ~1.57MP/2K → image_generate(size="3840x..."，描述同场景) 升分辨率
-        （升分辨率本身在 4K 也常 524，best-effort）。
+        先 image_edit 出 1K/2K → image_generate(size="3840x..."，描述同场景) 升分辨率。
 
     [4K 已禁用]
       入口直接拒 4K size，不发请求（origin 处理 4K + 参考图稳定 > 120s 撞 CF 524）。
@@ -568,7 +528,7 @@ async def image_edit(
 
     [路由实现]（实测确定）
       - 所有尺寸统一走 /v1/images/edits multipart（米醋唯一真正消费输入图的端点）。
-        失败 fallback 到 /v1/chat/completions stream。
+        Images API 返回错误时直接报错，不把图像模型转发到不兼容的 /v1/chat/completions。
       - mask 现已在所有尺寸支持（不再区分 1K/2K）。
 
     [MASK 工作原理]
@@ -581,13 +541,12 @@ async def image_edit(
         prompt: 修改指令，越具体越好。例："change the background to deep navy with stars, keep the subject pixel-identical".
         image_path: 输入图的绝对或相对路径。PNG / JPG / WebP 都支持。
         mask_path: 可选 alpha mask PNG 路径，透明区即编辑区。所有尺寸均生效。
-        size: 输出 size。1K 档稳定 ~1.57MP；2K 档带参考图为 best-effort 真 2K（约 2/3 成功，524 时 fallback → ~1.57MP）。
-              "1024x1024" "1280x720" "1024x1536" "1536x1024" "720x1280"  ← 1K 档（~1.57MP）
-              "1920x1080" "1080x1920"                                    ← 名义 2K（≤2.25MP，被压到 ~1.57MP）
-              "2048x2048" "2048x1152" "1152x2048"                        ← 真 2K 档（best-effort 真 2K，524 时 fallback ~1.57MP）
+        size: 输出 size。W/H 必须是 16 的倍数；总像素和长宽比规则见 server_info。
+              "1024x1024" "1280x720" "1024x1536" "1536x1024" "720x1280"  ← 1K 档
+              "2048x2048" "2048x1152" "1152x2048"                        ← 2K 档（自动高质量线路）
               "3840x2160" / "2160x3840"  ← 4K 已禁用（撞 CF 524 物理上限），传入直接拒
               默认 "1024x1024"。
-        model: "gpt-image-2"（默认）/ "gpt-image-2-pro"（≥2K 自动切）。
+        model: "gpt-image-2"（默认）/ "gpt-image-2-openai"（高质量线路，≥2K 自动切）。
         save_dir: 输出目录（必须在安全根目录之下）。默认 ~/Pictures/micu-out 或 MICU_SAVE_DIR。
         basename: 文件名前缀（仅 [A-Za-z0-9_-.]）。默认 "edit_<ns_ts>"。
         api_key: 覆盖 MICU_API_KEY；base_url 已锁在启动期 env，运行期不接受。
@@ -596,7 +555,7 @@ async def image_edit(
         ok (bool): 是否成功。
         model (str): 实际用的模型。
         size (str): 请求 size。
-        used_fallback (bool): True 表示 edits 主端点失败已切换到 chat/completions stream。
+        used_fallback (bool): 为兼容既有返回结构保留；当前 Image2 模型固定为 False。
         saved (dict): { path, size_bytes, actual_size, actual_megapixels }。
         notes (list[str]): 决策与提示。
 
@@ -607,7 +566,7 @@ async def image_edit(
         # 局部修改（mask 生效）
         image_edit(prompt="change hair color to silver", image_path="/p/x.png", mask_path="/p/x_mask.png")
 
-        # 升细节（2K best-effort 真 2K，约 2/3 成功；524 时 fallback ~1.57MP）
+        # 升细节（2K 自动使用高质量线路）
         image_edit(prompt="enhance to cinematic detail, preserve composition", image_path="/p/draft.png", size="2048x2048")
 
     Common errors:
@@ -618,7 +577,7 @@ async def image_edit(
     # === 入口校验 ===
     if not isinstance(prompt, str) or not prompt.strip():
         return {"ok": False, "error": "prompt 不能为空", "errors": ["prompt 不能为空"]}
-    if model_err := _model_error(model):
+    if model_err := _model_error(DEFAULT_MODEL if model is None else model):
         return {"ok": False, "error": model_err, "errors": [model_err]}
     use_grok_request = _is_grok_model(model or DEFAULT_MODEL)
     if use_grok_request:
@@ -663,7 +622,7 @@ async def image_edit(
             notes.append("Grok reference_image 路径当前不支持 mask，已忽略 mask_path。")
         img_b64 = await asyncio.to_thread(lambda: base64.b64encode(img_bytes).decode())
         img_data_url = f"data:{img_mime};base64,{img_b64}"
-        saved_info, save_err, _ = await _call_and_save_with_format_fallback(
+        saved_info, save_err = await _call_and_save_with_format_fallback(
             build_ep=lambda fmt: Endpoint(
                 url=f"{baseurl}/v1/images/generations",
                 json_body={
@@ -717,44 +676,9 @@ async def image_edit(
         mask_bytes = mask_raw
 
     stem = safe_stem or _default_basename("edit")
-    is_pro = "pro" in eff_model.lower()
+    is_quality = _is_quality_model(eff_model)
 
-    # 大图 base64 编码（4K 12MB → 16MB）走 to_thread，避免 30-50ms 事件循环阻塞
-    img_b64 = await asyncio.to_thread(lambda: base64.b64encode(img_bytes).decode())
-    img_data_url = f"data:{img_mime};base64,{img_b64}"
-    used_fallback = False
-
-    used_fallback = False
-
-    # chat fallback：把图嵌成 data URL
-    size_directive = (
-        f"Output the full edited image at exactly {size} pixels."
-        if _parse_size(size)
-        else "Output the full edited image, same dimensions as the input."
-    )
-    header = "Edit the attached image as described. " + size_directive + "\n\nInstruction:\n" + prompt
-    chat_content: list[dict] = [
-        {"type": "text", "text": header},
-        {"type": "image_url", "image_url": {"url": img_data_url}},
-    ]
-    if mask_bytes:
-        mask_b64 = await asyncio.to_thread(lambda: base64.b64encode(mask_bytes).decode())
-        mask_data_url = f"data:image/png;base64,{mask_b64}"
-        chat_content.insert(0, {
-            "type": "text",
-            "text": (
-                "You are given two images: the FIRST is the original; the SECOND is the alpha mask "
-                "where transparent (alpha=0) pixels mark the ONLY region to modify. Pixels outside "
-                "the mask region must remain pixel-identical to the original."
-            ),
-        })
-        chat_content.append({"type": "image_url", "image_url": {"url": mask_data_url}})
-    chat_ep = Endpoint(
-        url=f"{baseurl}/v1/chat/completions",
-        json_body={"model": eff_model, "messages": [{"role": "user", "content": chat_content}]},
-    )
-
-    aggressive_retry = is_pro or _size_tier(size) in ("2k", "4k")
+    aggressive_retry = is_quality or _size_tier(size) in ("2k", "4k")
     big_size_lock = _size_tier(size) in ("2k", "4k")
     last_err: str | None = None
     saved_info: dict[str, Any] | None = None
@@ -776,13 +700,6 @@ async def image_edit(
             edits_ep, key, retry_pro=aggressive_retry, stream=False,
             big_size_lock=big_size_lock, notes_out=notes,
         )
-        if not (200 <= status < 300) and status in FALLBACK_STATUS and fmt_i == 0:
-            used_fallback = True
-            notes.append(f"edits 端点 HTTP {status}，已切到 /v1/chat/completions stream")
-            status, text = await _call_with_retry(
-                chat_ep, key, retry_pro=aggressive_retry, stream=True,
-                big_size_lock=big_size_lock, notes_out=notes,
-            )
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
             continue
@@ -808,7 +725,7 @@ async def image_edit(
         "ok": True,
         "model": eff_model,
         "size": size,
-        "used_fallback": used_fallback,
+        "used_fallback": False,
         "saved": saved_info,
         "notes": notes,
     }
@@ -833,8 +750,8 @@ async def image_batch_edit(
       - 如果只有 1 张图 → 用 image_edit。
 
     [并发策略]
-      - non-pro 模型：5 并发（HTML 网页同款）。
-      - pro 模型：串行 + 1.5s gap（代理对 pro 并发会拒）。
+      - gpt-image-2：5 并发（HTML 网页同款）。
+      - gpt-image-2-openai：串行 + 1.5s gap（高质量线路并发更容易被限流）。
       - 任意一张失败不影响其他张；返回 results 里逐张标 ok/error。
 
     [LIMITS]
@@ -845,7 +762,7 @@ async def image_batch_edit(
         prompt: 应用到每张图的修改指令。例："add a subtle watermark in bottom-right".
         image_paths: 输入图路径列表（绝对或相对）。
         size: 输出 size，仅 1K 档。默认 "1024x1024"。
-        model: "gpt-image-2" / "gpt-image-2-pro"。留空按 size 自动选。
+        model: "gpt-image-2" / "gpt-image-2-openai"。留空按 size 自动选。
         save_dir: 输出目录（必须在安全根目录之下）。文件名 batch_<ts>_<idx>.png。
         api_key: 覆盖 MICU_API_KEY；base_url 已锁在启动期 env，运行期不接受。
 
@@ -873,7 +790,7 @@ async def image_batch_edit(
     if len(image_paths) > 20:
         msg = f"image_paths 最多 20 张，收到 {len(image_paths)} 张（防止意外 burn quota）"
         return {"ok": False, "error": msg, "errors": [msg], "total": len(image_paths)}
-    if model_err := _model_error(model):
+    if model_err := _model_error(DEFAULT_MODEL if model is None else model):
         return {"ok": False, "error": model_err, "errors": [model_err], "total": len(image_paths)}
     use_grok_request = _is_grok_model(model or DEFAULT_MODEL)
     if use_grok_request:
@@ -889,20 +806,20 @@ async def image_batch_edit(
 
     eff_model, notes = _resolve_model(model, size)
     if _is_grok_model(eff_model):
-        msg = "Grok 模型当前不支持 image_batch_edit 批量逐张编辑；请改用 image_edit 单图、image_multi_reference 多图参考，或改用 gpt-image-2 / gpt-image-2-pro。"
+        msg = "Grok 模型当前不支持 image_batch_edit 批量逐张编辑；请改用 image_edit 单图、image_multi_reference 多图参考，或改用 gpt-image-2 / gpt-image-2-openai。"
         return {"ok": False, "error": msg, "errors": [msg], "total": len(image_paths)}
-    is_pro = "pro" in eff_model.lower()
+    is_quality = _is_quality_model(eff_model)
     edge = _max_edge(size)
     if edge >= HIGH_RES_EDGE:
         msg = (
             f"图生图代理后端 ≥2K 不稳定（503/524）；批处理只支持 1K（边长 ≤{EDITS_MAX_EDGE}）。"
-            f"请改 size 到 1K，或改用 image_edit 单图（1K ~1.57MP，2K best-effort 真 2K）。"
+            f"请改 size 到 1K，或改用 image_edit 单图处理 2K。"
         )
         return {"ok": False, "error": msg, "errors": [msg], "total": len(image_paths)}
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # ≥2K 已在前面提前拒绝，这里 bypass 必然 False；只看 is_pro
-    concurrency = 1 if is_pro else 5
+    # ≥2K 已在前面提前拒绝，这里 bypass 必然 False；高质量线路保持串行。
+    concurrency = 1 if is_quality else 5
     inter_gap = 1.5 if concurrency == 1 else 0.0
 
     async def _run_one(idx: int, path_str: str) -> dict:
@@ -979,33 +896,31 @@ async def image_multi_reference(
       origin 处理 4K 多图融合稳定 > 120s 撞 CF 524；入口直接拒。
       想要真 4K 多图融合：两步法 — 此 tool 出 1K/2K 综合图 → image_generate(size="3840x2160") 描述同场景升 4K。
 
-    [路由实现]（双路径 + 自动 fallback）
-      - 主路径：/v1/images/edits + 多个 image[] 字段。**米醋唯一真正消费输入图的端点**
+    [路由实现]
+      - 固定走 /v1/images/edits + 多个 image[] 字段。**米醋唯一真正消费输入图的端点**
         （实测 image_tokens 线性 = 560×N）。旧的 generations + image_urls 被米醋静默忽略
         （image_tokens=0，等于纯文生图，参考图不起作用），已弃用。
-      - 兜底：/v1/chat/completions + 顶层 image_urls + stream:true SSE（永不撞 CF 524，size 不生效 → ~1.57MP）
-      - 自动锁 pro：max edge ≥1600 → gpt-image-2-pro
-      - 主路径 5xx/524/断流 失败 → 自动 fallback chat stream，notes 标注降级原因
-      - 返回的 used_fallback 字段说明走的哪条路径
+      - 自动切高质量线路：max edge ≥1600 → gpt-image-2-openai
+      - Images API 返回错误时直接报错，不把图像模型转发到不兼容的 /v1/chat/completions。
 
     [LIMITS]（当前真实状态，会变化）
       - image_paths 长度 2-10 张。
-      - 1K 档：稳定输出 ~1.57MP（1254×1254 福利档）。多图 N=2..10 @1K 实测 100% 成功，参考图真消费。
-      - 2K 档：**best-effort 真 2K**（自动切 pro + edits/image[]，实测约 2/3 成功真返回 2048×2048，
-        size_honored=true；524 时 fallback chat → ~1.57MP，size_honored=false）。较慢（单次 2-4 分钟，并发更久）。
-      - 4K 已禁用（撞 CF 524）。要真 4K：两步法 —— 本 tool 出 ~1.57MP/2K 综合图 →
+      - 1K 档：多图 N=2..10 历史实测成功，参考图真消费；实际像素以 saved.actual_size 为准。
+      - 2K 档：**best-effort 真 2K**（自动切 gpt-image-2-openai + edits/image[]，历史实测约 2/3 成功真返回 2048×2048，
+        size_honored=true；失败时直接返回上游错误）。较慢（单次 2-4 分钟，并发更久）。
+      - 4K 已禁用（撞 CF 524）。要真 4K：两步法 —— 本 tool 出 1K/2K 综合图 →
         image_generate(size="3840x2160") 描述同场景升分辨率（4K 升分辨率本身也常 524，best-effort）。
-      - 主路径 ~30-100s（2K 更慢）；米醋多图间歇拒/断流时自动 fallback chat stream。
+      - 主路径 ~30-100s（2K 更慢）；米醋多图间歇拒/断流时会按重试策略处理，仍失败则报错。
       - 单张参考图建议 ≤2MB；总输入 ≤8MB（米醋代理上限实测约 10MB）。
 
     Args:
         prompt: 综合指令。例："combine the colors from img1 and the composition from img2 into a sunset cityscape".
         image_paths: 2-10 张参考图路径（绝对或相对）。
-        size: 输出 size。1K 档稳定 ~1.57MP；2K 档（"2048x2048" 等）为 best-effort 真 2K（约 2/3 成功，
-              524 时 fallback → ~1.57MP，size_honored=false，真实像素见 saved.actual_size）。真 4K 用两步法（见 [LIMITS]）。
+        size: 输出 size。1K 档可用；2K 档（"2048x2048" 等）为 best-effort 真 2K（历史约 2/3 成功，
+              成功时以 saved.actual_size 和 size_honored 核对真实像素）。真 4K 用两步法（见 [LIMITS]）。
               "3840x2160" / "2160x3840" 已禁用（撞 CF 524 物理上限），传入直接拒。
               默认 "1024x1024"。
-        model: "gpt-image-2"（默认）/ "gpt-image-2-pro"（≥2K 必需，自动切换）。
+        model: "gpt-image-2"（默认）/ "gpt-image-2-openai"（高质量线路，≥2K 自动切换）。
         save_dir: 输出目录（必须在安全根目录之下）。
         basename: 文件名前缀（仅 [A-Za-z0-9_-.]，含 / .. 会被拒）。默认 "multiref_<ns_ts>"。
         api_key: 覆盖 MICU_API_KEY；base_url 已锁在启动期 env，运行期不接受。
@@ -1024,7 +939,7 @@ async def image_multi_reference(
             image_paths=["/p/sketch.png", "/p/character.png", "/p/background.png"],
         )
 
-        # 2K 综合参考（best-effort 真 2K，约 2/3 成功；524 时 fallback 到 ~1.57MP）
+        # 2K 综合参考（高质量线路）
         image_multi_reference(
             prompt="merge the architecture style from img1 with the lighting from img2",
             image_paths=["/p/img1.jpg", "/p/img2.jpg"],
@@ -1046,7 +961,7 @@ async def image_multi_reference(
     if len(image_paths) > 10:
         msg = f"参考图最多 10 张，当前 {len(image_paths)} 张。请减少或分批。"
         return {"ok": False, "error": msg, "errors": [msg]}
-    if model_err := _model_error(model):
+    if model_err := _model_error(DEFAULT_MODEL if model is None else model):
         return {"ok": False, "error": model_err, "errors": [model_err]}
     use_grok_request = _is_grok_model(model or DEFAULT_MODEL)
     if use_grok_request:
@@ -1102,7 +1017,7 @@ async def image_multi_reference(
             "Do NOT collage, tile, or montage the references side-by-side unless explicitly asked.\n\n"
             f"Instruction:\n{prompt}"
         )
-        saved_info, save_err, _ = await _call_and_save_with_format_fallback(
+        saved_info, save_err = await _call_and_save_with_format_fallback(
             build_ep=lambda fmt: Endpoint(
                 url=f"{baseurl}/v1/images/generations",
                 json_body={
@@ -1148,12 +1063,10 @@ async def image_multi_reference(
         }
     key = _get_key(api_key)
     baseurl = _get_baseurl()
-    is_pro = "pro" in eff_model.lower()
+    is_quality = _is_quality_model(eff_model)
     stem = safe_stem or _default_basename("multiref")
 
-    # 加载所有图：每张大小 + magic 校验，再算总字节
-    # 主路径走 edits multipart 需原始字节（image[]）；chat fallback 需 data url。两者同循环一次性备齐。
-    image_urls: list[str] = []
+    # 加载所有图：每张大小 + magic 校验，再算总字节；edits multipart 使用原始字节（image[]）。
     ref_files: list[tuple[str, bytes, str]] = []
     total_bytes = 0
     for idx, p_str in enumerate(image_paths):
@@ -1164,43 +1077,21 @@ async def image_multi_reference(
         if total_bytes > MAX_TOTAL_INPUT_BYTES:
             msg = (
                 f"参考图累计 {total_bytes/1024/1024:.1f}MB 超过总量上限 "
-                f"{MAX_TOTAL_INPUT_BYTES/1024/1024:.0f}MB（base64 后会膨胀 33%）。请压缩或减少。"
+                f"{MAX_TOTAL_INPUT_BYTES/1024/1024:.0f}MB。请压缩或减少。"
             )
             return {"ok": False, "error": msg, "errors": [msg]}
         ref_files.append((ip.name, raw, mime))
-        # 大图 base64 编码走 to_thread，避免多图累加时长时间阻塞事件循环（仅 fallback 用）
-        ref_b64 = await asyncio.to_thread(lambda r=raw: base64.b64encode(r).decode())
-        image_urls.append(f"data:{mime};base64,{ref_b64}")
 
-    # base64 inflates ~33%
-    inflated_mb = total_bytes * 1.33 / 1024 / 1024
-    if inflated_mb > 4:
-        notes.append(f"参考图体积估 {inflated_mb:.1f}MB，部分 serverless 代理可能拒收（一般 4MB 上限）")
-
-    # 双路径 + fallback：
-    #   主路径：/v1/images/edits + 多个 image[]。米醋唯一真正消费输入图的端点/字段
-    #           （实测 image_tokens 线性 = 560×N；旧 generations+image_urls 被静默忽略 image_tokens=0）。
-    #           1K 档稳定 ~1.57MP；2K 档 best-effort 真 2K（pro + edits，约 2/3 成功，524 时 fallback → ~1.57MP）。
-    #   兜底：/v1/chat/completions + 顶层 image_urls + stream（永不撞 CF 524，size 同样不生效，~1.57MP）。
+    # 固定走 /v1/images/edits + 多个 image[]：该字段会真正消费参考图。
+    # 旧 generations+image_urls 会被静默忽略（image_tokens=0），chat/completions 也不是当前图像模型端点。
     full_prompt = (
         f"Reference images are provided. Synthesize their visual elements (style, palette, "
         f"composition, subjects) into ONE single new image per the instruction below. "
         f"Do NOT collage, tile, or montage the references side-by-side unless explicitly asked.\n\n"
         f"Instruction:\n{prompt}"
     )
-    chat_ep = Endpoint(
-        url=f"{baseurl}/v1/chat/completions",
-        json_body={
-            "model": eff_model,
-            "messages": [{"role": "user", "content": full_prompt}],
-            "image_urls": image_urls,
-            "size": size,
-        },
-    )
-
-    aggressive_retry = is_pro or _size_tier(size) in ("2k", "4k")
+    aggressive_retry = is_quality or _size_tier(size) in ("2k", "4k")
     big_size_lock = _size_tier(size) in ("2k", "4k")
-    used_fallback = False
     last_err: str | None = None
     saved_info: dict[str, Any] | None = None
 
@@ -1221,16 +1112,6 @@ async def image_multi_reference(
             edits_ep, key, retry_pro=aggressive_retry, stream=False,
             big_size_lock=big_size_lock, notes_out=notes,
         )
-        if not (200 <= status < 300) and status in FALLBACK_STATUS and fmt_i == 0:
-            notes.append(
-                f"edits 主路径 HTTP {status}（米醋多图间歇拒/断流），"
-                "已 fallback chat stream（size 不生效，输出 ~1.57MP）"
-            )
-            used_fallback = True
-            status, text = await _call_with_retry(
-                chat_ep, key, retry_pro=is_pro, stream=True,
-                big_size_lock=big_size_lock, notes_out=notes,
-            )
         if not (200 <= status < 300):
             last_err = f"HTTP {status}: {_error_detail(text)}"
             continue
@@ -1248,7 +1129,7 @@ async def image_multi_reference(
             "ok": False,
             "model": eff_model,
             "n_references": len(image_paths),
-            "used_fallback": used_fallback,
+            "used_fallback": False,
             "error": last_err or "保存失败",
             "notes": notes,
         }
@@ -1258,7 +1139,7 @@ async def image_multi_reference(
         "ok": True,
         "model": eff_model,
         "size": size,
-        "used_fallback": used_fallback,
+        "used_fallback": False,
         "size_honored": bool(actual and _parse_size(size) and actual == _parse_size(size)),
         "n_references": len(image_paths),
         "saved": saved_info,
@@ -1268,15 +1149,7 @@ async def image_multi_reference(
 
 @mcp.tool()
 def server_info() -> dict[str, Any]:
-    """诊断 / 能力查询：在调任何生图 tool 之前，先调一次此 tool 拿到完整路由规则与 size 约束矩阵。
-
-    Returns:
-        base_url, default_model, default_save_dir, api_key_configured: 当前配置。
-        size_rules: size 字段的硬约束 + 代理实际行为（已通过实测确定）。
-        recommended_sizes: 各 tier 推荐 size（保证 W/H 都是 8 的倍数，米醋约束）。
-        capability_matrix: 各 tool × 各 size tier 的可用性。
-        retry_policy: 重试与并发策略。
-    """
+    """返回当前 Image2 模型、参数约束、路由和安全边界。"""
     return {
         "base_url": DEFAULT_BASEURL,
         "grok_base_url": GROK_BASEURL,
@@ -1296,23 +1169,15 @@ def server_info() -> dict[str, Any]:
         "allow_fake_ip_download": ALLOW_FAKE_IP_DOWNLOAD,
         "size_rules": {
             "format": "WxH 字符串（如 '1024x1024'）",
-            "alignment": f"W 与 H 都必须是 {SIZE_ALIGNMENT} 的整数倍（米醋实测约束，OpenAI 官方要 16）",
+            "alignment": f"W 与 H 都必须是 {SIZE_ALIGNMENT} 的整数倍",
             "edge_range": f"W/H 必须在 [{MIN_SIZE_EDGE}, {MAX_SIZE_EDGE}] 范围内",
-            "compress_below_2_25mp": (
-                "请求总像素 ≤ 2.25MP（如 1024² / 1280×720 / 1500² / 1920×1080）会被代理"
-                "等比放大或压缩到 ~1.57MP（福利档），实际输出 ≠ 请求 size。"
-            ),
-            "above_4mp_real_resolution": (
-                "纯文生图 image_generate 请求总像素 ≥ 4MP（如 2048² / 3840×2160）真分辨率可用："
-                "自动切 pro，MCP 重试吃掉瞬时 524，实测 2048²→真 2K、3840×2160→真 4K，~80s/张"
-                "（高负载下可能更慢或偶发失败）。带参考图路径另见 reference_2k_best_effort。"
-            ),
-            "reference_2k_best_effort": (
-                "带参考图的 tool（image_edit / image_multi_reference）走 /v1/images/edits：1K 档稳定 ~1.57MP；"
-                "2K 档为 best-effort 真 2K（自动切 pro，实测约 2/3 成功真返回 2048²，524 时 fallback chat → ~1.57MP，较慢 2-4 分钟/单次）。4K 已禁用（撞 CF 524）。"
-            ),
-            "auto_pro_threshold": (
-                f"max edge ≥ {HIGH_RES_EDGE} → 自动锁 {PRO_MODEL}（{NONPRO_MODEL} 在该档代理会拒）。"
+            "pixel_range": f"总像素必须在 [{MIN_IMAGE_PIXELS:,}, {MAX_IMAGE_PIXELS:,}] 范围内",
+            "max_aspect_ratio": f"最长边/最短边 ≤ {MAX_IMAGE_ASPECT_RATIO:g}",
+            "quality_values": sorted(VALID_IMAGE_QUALITIES),
+            "auto_quality_route": f"max edge ≥ {HIGH_RES_EDGE} → 自动切 {QUALITY_MODEL}",
+            "live_observation_2026_08_14": (
+                "gpt-image-2-openai 的 1536×1024、2048×1152、3840×2160 按请求像素返回；"
+                "gpt-image-2 的自定义尺寸可能被后端重映射，调用方应核对 saved.actual_size。"
             ),
         },
         "safety_constraints": {
@@ -1331,19 +1196,25 @@ def server_info() -> dict[str, Any]:
             "base_url_locked": "base_url 锁在启动期 MICU_BASEURL env，运行期 tool 不接受参数（防 key 外泄到攻击者 host）",
         },
         "recommended_sizes": {
-            "1k_福利档_约1.57MP": sorted(VALID_SIZES_1K),
-            "2k_pro_real_resolution": sorted(VALID_SIZES_2K),
-            "4k_pro_real_resolution": sorted(VALID_SIZES_4K),
-            "tip": "纯文生图（image_generate）：1K 可靠 ~1.57MP，2K/4K 真分辨率可用（自动切 pro + MCP 重试吸收瞬时 524，~80s/张，高负载偶慢/偶失败）。带参考图（edit/multi_reference）：1K 稳定 ~1.57MP，2K best-effort 真 2K（约 2/3 成功，524 时 fallback ~1.57MP），4K 禁用。",
-            "two_step_tip": "带参考图想拼真 4K：先出 ~1.57MP/2K 综合/编辑图 → 再 image_generate(size=\"3840x...\") 描述同场景升 4K（image_generate 4K 真分辨率可用，重试吸收瞬时 524）。",
+            "1k_standard": sorted(VALID_SIZES_1K),
+            "2k_quality": sorted(VALID_SIZES_2K),
+            "4k_quality": sorted(VALID_SIZES_4K),
+            "tip": (
+                "1K 默认走 gpt-image-2；2K/4K 自动走 gpt-image-2-openai。"
+                "服务端仍可能调整实际像素，始终核对 saved.actual_size。"
+            ),
+            "two_step_tip": (
+                "带参考图的 4K 编辑仍禁用：先用 image_edit/image_multi_reference 出 1K/2K，"
+                "再用 image_generate(size=\"3840x2160\") 生成高分辨率版本。"
+            ),
             "grok_tip": "Grok 生图渠道暂时关闭，待服务器支持后再启用。",
             "grok_actual_size_tip": "Grok 生图渠道暂时关闭，当前不会生成 Grok 输出。",
         },
         "capability_matrix": {
             "image_generate": {
-                "1k": "可靠，single 30s，N>1 自动 5 并发，输出 ~1.57MP",
-                "2k_pro": "真 2K 可用，N=1 强制；自动切 pro，MCP 重试吃掉瞬时 524，实测真返回 2048²，~80s/张（高负载偶慢/偶失败）",
-                "4k_pro": "真 4K 可用，N=1 强制；自动切 pro，MCP 重试吃掉瞬时 524，实测真返回 3840×2160，~80s/张（高负载偶慢/偶失败）",
+                "1k": "gpt-image-2；N>1 最多 5 并发",
+                "2k_quality": "自动切 gpt-image-2-openai；N 强制为 1；实测 2048×1152 精确返回",
+                "4k_quality": "自动切 gpt-image-2-openai；N 强制为 1；实测 3840×2160 精确返回",
             },
             "grok_image_generate": {
                 "1k": "暂时关闭，待服务器支持后再启用",
@@ -1351,28 +1222,29 @@ def server_info() -> dict[str, Any]:
                 "4k": "暂时关闭，待服务器支持后再启用",
             },
             "image_edit": {
-                "1k": "gpt-image-2 可靠，~10s，edits multipart + 可选 alpha mask，输出 ~1.57MP",
-                "2k_pro": "gpt-image-2 统一走 edits（+ mask），自动切 pro；带参考图 best-effort 真 2K（约 2/3 成功真返回 2048²，524 时 fallback chat stream → ~1.57MP，较慢 2-4 分钟）",
-                "4k_pro": "已禁用：origin 处理 4K + 参考图稳定 > 120s 撞 CF",
+                "1k": "两条当前 Image2 线路均已通过 edits 实测；支持可选 alpha mask",
+                "2k_quality": "自动切 gpt-image-2-openai；实测 2048×1152 精确返回",
+                "4k": "已禁用：历史上 origin 处理 4K + 参考图稳定 >120s 撞 CF",
             },
             "image_batch_edit": {
-                "1k_non_pro": "5 并发",
-                "1k_pro": "串行 + 1.5s gap",
+                "1k_standard": "5 并发",
+                "1k_quality": "串行 + 1.5s gap",
                 ">=2k": "拒绝",
                 "grok": "暂时关闭，待服务器支持后再启用",
             },
             "image_multi_reference": {
-                "1k": "gpt-image-2 稳定可用，2-10 张参考图融合输出 1 张，走 edits + image[]（米醋唯一真消费参考图的端点），N=2..10 实测 100% 成功，输出 ~1.57MP",
-                "2k_pro": "gpt-image-2 走 edits + image[]，自动切 pro；带参考图 best-effort 真 2K（约 2/3 成功真返回 2048²，524 时 fallback chat stream → ~1.57MP，较慢）",
-                "4k_pro": "已禁用：origin 处理 4K 多图融合稳定 > 120s 撞 CF",
+                "1k": "2-10 张参考图融合输出 1 张，走 edits + image[]",
+                "2k_quality": "自动切 gpt-image-2-openai；失败时直接返回 Images API 错误",
+                "4k": "已禁用：历史上 origin 处理 4K 多图融合稳定 >120s 撞 CF",
             },
         },
         "retry_policy": {
             "retryable_status": list(RETRYABLE_STATUS),
             "fallback_status": list(FALLBACK_STATUS),
+            "route_fallback": "当前 GPT Image 2 模型只走 Images API，不 fallback 到 chat/completions",
             "schedule_1k": "上游 5xx → 4s+jitter → 重试 → 8s+jitter → 重试（退避重试最多 2 次，共 ≤3 次尝试）；网络层异常（status=0）另有 1 次免费重试不计入此预算（故最坏 ≤4 次）。注：带 Retry-After 的 408/429/5xx 会按头部值 sleep（上限 120s），此时单次等待可能远大于 4s/8s",
             "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。单次 attempt 无字节挂起最长 600s，故 2K 最坏 ≈ 两次 600s attempt + 一次 60s 退避；其间整机所有 ≥2K 请求经跨进程锁串行等待。锁等待 >2s 时 notes 会提示在排队",
-            "trigger": "model 含 'pro' 或 size tier ∈ {2k, 4k}",
+            "trigger": f"model == {QUALITY_MODEL!r} 或 size tier ∈ {{2k, 4k}}",
             "concurrency_2k_4k": (
                 "双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; "
                 "(2) 跨进程文件锁 @ ~/.cache/micu-image/bigsize.lock，POSIX 用 fcntl.flock，"

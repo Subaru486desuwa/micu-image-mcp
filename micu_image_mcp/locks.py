@@ -17,7 +17,7 @@ elif _LOCK_BACKEND == "windows":
     import msvcrt  # type: ignore[import-untyped]
 
 
-# ≥2K 在米醋 origin 走 pro 模型串行队列，单张渲染 ~50-80s。
+# ≥2K 在米醋 origin 走高质量线路串行队列，单张渲染可能持续数十秒。
 # 客户端并发 N 张时第 2 张就要排队等前一张，累积容易撞 CF 120s 硬上限 → 524 雪球。
 #
 # 双层锁：

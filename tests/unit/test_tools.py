@@ -118,14 +118,14 @@ def test_image_generate_rejects_every_other_model(model):
     r = asyncio.run(server.image_generate(prompt="test", model=model, api_key="sk-test"))
 
     assert r["ok"] is False
-    assert "gpt-image-2 / gpt-image-2-pro" in r["error"]
+    assert "gpt-image-2 / gpt-image-2-openai" in r["error"]
     assert "Grok 生图渠道暂时关闭" in r["error"]
 
 
 def test_server_info_reports_only_image2_models():
     r = server.server_info()
 
-    assert r["available_models"] == ["gpt-image-2", "gpt-image-2-pro"]
+    assert r["available_models"] == ["gpt-image-2", "gpt-image-2-openai"]
     assert r["grok_channel_enabled"] is False
     assert r["grok_available_models"] == []
     assert "grok_api_key_configured" in r
@@ -145,7 +145,7 @@ def test_benchmark_cli_does_not_offer_grok(script):
 
     assert result.returncode == 0, result.stderr
     assert "grok" not in result.stdout.lower()
-    assert "gpt-image-2-pro" in result.stdout
+    assert "gpt-image-2-openai" in result.stdout
 
 
 def test_image_generate_uses_url_first_response_format(monkeypatch):
@@ -216,9 +216,14 @@ def test_infer_size_below_min_returns_none(prompt):
     assert routing._infer_size_from_prompt(prompt) is None
 
 
+@pytest.mark.parametrize("prompt", ["render at 512x512", "render at 3840x1024"])
+def test_infer_size_outside_pixel_or_ratio_contract_returns_none(prompt):
+    assert routing._infer_size_from_prompt(prompt) is None
+
+
 def test_infer_size_in_range_still_works():
     out = routing._infer_size_from_prompt("render at 1920x1080 please")
-    assert out is not None and out[0] == "1920x1080"
+    assert out is not None and out[0] == "1920x1088"
 
 
 def test_image_generate_small_pixel_prompt_falls_back(fake_http):

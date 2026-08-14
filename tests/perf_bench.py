@@ -1,6 +1,6 @@
 """Image2 性能基线测试。
 
-串行跑 gpt-image-2 / gpt-image-2-pro 在不同 size 下的 image_generate，
+串行跑 gpt-image-2 / gpt-image-2-openai 在不同 size 下的 image_generate，
 收集延迟与 actual_size。Grok 渠道暂时关闭，不进入压测矩阵。
 
 用法：
@@ -36,15 +36,15 @@ from _common import (
 # (channel, model, size) 组合
 IMAGE2_SMOKE: list[tuple[str, str, str]] = [
     ("image2", "gpt-image-2", "1024x1024"),
-    ("image2", "gpt-image-2-pro", "2048x2048"),
+    ("image2", "gpt-image-2-openai", "2048x2048"),
 ]
 IMAGE2_FULL: list[tuple[str, str, str]] = [
     ("image2", "gpt-image-2", "1024x1024"),
     ("image2", "gpt-image-2", "1280x720"),
     ("image2", "gpt-image-2", "1024x1536"),
-    ("image2", "gpt-image-2-pro", "2048x2048"),
-    ("image2", "gpt-image-2-pro", "2048x1152"),
-    ("image2", "gpt-image-2-pro", "3840x2160"),
+    ("image2", "gpt-image-2-openai", "2048x2048"),
+    ("image2", "gpt-image-2-openai", "2048x1152"),
+    ("image2", "gpt-image-2-openai", "3840x2160"),
 ]
 
 PROMPT = (
@@ -166,7 +166,7 @@ async def main_async(args) -> int:
         out_dir=out_dir,
         meta={
             "mode": "full" if args.full else "smoke",
-            "models": ["gpt-image-2", "gpt-image-2-pro"],
+            "models": ["gpt-image-2", "gpt-image-2-openai"],
             "repeat": args.repeat,
             "dry_run": args.dry_run,
             "save_root": str(save_root),
@@ -186,7 +186,7 @@ async def main_async(args) -> int:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="米醋 MCP 性能基线测试（仅 gpt-image-2 / gpt-image-2-pro）"
+        description="米醋 MCP 性能基线测试（仅 gpt-image-2 / gpt-image-2-openai）"
     )
     p.add_argument("--full", action="store_true", help="跑完整 sweep（默认 smoke）")
     p.add_argument("--repeat", type=int, default=1, help="每组重复次数")

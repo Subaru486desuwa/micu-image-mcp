@@ -11,8 +11,8 @@ class TestExplicitPixels:
         result = S._infer_size_from_prompt("画一张 1920x1080 的图")
         assert result is not None
         size, _ = result
-        # 1920 / 1080 都是 8 倍数 → 不会改
-        assert size == "1920x1080"
+        # 1080 不是 16 的倍数 → 对齐到 1088
+        assert size == "1920x1088"
 
     def test_unicode_x(self):
         result = S._infer_size_from_prompt("3840×2160 高清")
@@ -20,13 +20,13 @@ class TestExplicitPixels:
         size, _ = result
         assert size == "3840x2160"
 
-    def test_align_to_8(self):
+    def test_align_to_16(self):
         # 1500 → 1504
         result = S._infer_size_from_prompt("make a 1500x1500 logo")
         assert result is not None
         size, reason = result
         assert size == "1504x1504"
-        assert "对齐 8" in reason
+        assert "对齐 16" in reason
 
 
 class TestKKeywords:
@@ -104,11 +104,10 @@ class TestNoMatch:
 
 
 class TestPriority:
-    def test_explicit_pixels_beat_kkw(self):
-        # 同时含 1024x512 和 4K，优先用明确像素
+    def test_invalid_explicit_pixels_do_not_fall_through_to_costly_4k(self):
+        # 1024x512 低于总像素下限；不要忽略明确像素后静默放大成昂贵 4K。
         result = S._infer_size_from_prompt("4K landscape 1024x512 layout")
-        assert result is not None
-        assert result[0] == "1024x512"
+        assert result is None
 
     def test_2k_beats_horizontal_default(self):
         # 2K 关键字优先于"horizontal-only 默认 1536x1024"

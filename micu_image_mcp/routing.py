@@ -4,11 +4,11 @@ from __future__ import annotations
 import re
 
 from .config import (
-    DEFAULT_MODEL, PRO_MODEL, SUPPORTED_IMAGE_MODELS,
+    DEFAULT_MODEL, QUALITY_MODEL, SUPPORTED_IMAGE_MODELS,
     GROK_MODEL_ALIASES, GROK_ASPECT_RATIO_CHOICES,
-    HIGH_RES_EDGE, MIN_SIZE_EDGE, MAX_SIZE_EDGE,
+    HIGH_RES_EDGE,
 )
-from .sizes import _parse_size, _max_edge, _size_tier, _round_to_alignment
+from .sizes import _parse_size, _max_edge, _size_tier, _round_to_alignment, _validate_size
 
 
 def _is_grok_model(model: str | None) -> bool:
@@ -30,6 +30,11 @@ def _model_error(model: str | None) -> str | None:
         f"不支持 model={requested!r}；当前仅支持 {supported}。"
         "Grok 生图渠道暂时关闭，待服务器支持后再启用。"
     )
+
+
+def _is_quality_model(model: str | None) -> bool:
+    """Return True only for the current high-quality Micu/OpenAI route."""
+    return model == QUALITY_MODEL
 
 
 def _reject_4k_with_reference(size: str, tool: str) -> str | None:
@@ -55,15 +60,15 @@ def _resolve_model(requested_model: str | None, size: str) -> tuple[str, list[st
     model = requested_model or DEFAULT_MODEL
     if _is_grok_model(model):
         return model, notes
-    if tier in ("2k", "4k") and "pro" not in model.lower():
-        notes.append(f"size={size} ({tier}) 仅 pro 支持，已自动切到 {PRO_MODEL}")
-        model = PRO_MODEL
+    if tier in ("2k", "4k") and not _is_quality_model(model):
+        notes.append(f"size={size} ({tier}) 已自动切到高质量线路 {QUALITY_MODEL}")
+        model = QUALITY_MODEL
     return model, notes
 
 
 def _bypass_edits(model: str, size: str) -> bool:
-    """pro + ≥1600 边长，图生图必须绕开 /v1/images/edits（代理会压回 1.57MP）."""
-    return "pro" in model.lower() and _max_edge(size) >= HIGH_RES_EDGE
+    """Compatibility hook: current Image2 routes use /v1/images/edits directly."""
+    return False
 
 
 def _size_note(requested: str, actual: tuple[int, int] | None) -> str | None:
@@ -78,18 +83,9 @@ def _size_note(requested: str, actual: tuple[int, int] | None) -> str | None:
         return None
     rmp = rw * rh / 1_000_000
     amp = aw * ah / 1_000_000
-    # origin 把所有 ≤2.25MP 的请求统一处理到 ~1.57MP（看请求大小是放大还是压缩）
-    if rmp <= 2.25 and 1.3 <= amp <= 1.8:
-        if rmp <= 1.57:
-            return (
-                f"ℹ 实际 {aw}×{ah} ({amp:.2f}MP) > 请求 {rw}×{rh} ({rmp:.2f}MP)：米醋对 ≤2.25MP 的请求等比放大到 ~1.57MP（福利档）。"
-            )
-        return (
-            f"⚠ 实际 {aw}×{ah} ({amp:.2f}MP) < 请求 {rw}×{rh} ({rmp:.2f}MP)：米醋对 ≤2.25MP 的请求统一压到 ~1.57MP（福利档降级）。"
-            f"想拿到真分辨率请改用 ≥4MP 的 size（如 2048×1152、1152×2048、2048×2048、3840×2160）。"
-        )
     return (
-        f"⚠ 实际 {aw}×{ah} ({amp:.2f}MP) ≠ 请求 {rw}×{rh} ({rmp:.2f}MP)；如非 chat 路径请检查模型与 size 是否匹配。"
+        f"⚠ 实际 {aw}×{ah} ({amp:.2f}MP) ≠ 请求 {rw}×{rh} ({rmp:.2f}MP)；"
+        "米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
     )
 
 
@@ -128,11 +124,13 @@ def _infer_size_from_prompt(prompt: str) -> tuple[str, str] | None:
         w16, h16 = _round_to_alignment(w), _round_to_alignment(h)
         # 对齐后若越界（如 prompt 写了 "128x128 icon"），不要返回一个会被 _validate_size 硬拒的 size，
         # 返回 None 让 image_generate 兜底默认 1024x1024，而非直接报错。
-        if not (MIN_SIZE_EDGE <= w16 <= MAX_SIZE_EDGE and MIN_SIZE_EDGE <= h16 <= MAX_SIZE_EDGE):
+        inferred_size = f"{w16}x{h16}"
+        _cleaned, validation_error = _validate_size(inferred_size, allow_none=False)
+        if validation_error:
             return None
         if w16 != w or h16 != h:
-            return f"{w16}x{h16}", f"prompt 含像素 {w}x{h}，对齐 8 倍数为 {w16}x{h16}"
-        return f"{w16}x{h16}", f"prompt 含明确像素 {w}x{h}"
+            return inferred_size, f"prompt 含像素 {w}x{h}，对齐 16 倍数为 {w16}x{h16}"
+        return inferred_size, f"prompt 含明确像素 {w}x{h}"
 
     # 2) aspect 与朝向
     vertical_kw = ("9:16", "竖屏", "竖版", "vertical", "portrait", "phone wallpaper",
@@ -150,14 +148,14 @@ def _infer_size_from_prompt(prompt: str) -> tuple[str, str] | None:
     is_poster = any(k in p for k in poster_kw)
     is_photo32 = any(k in p for k in photo32_kw)
 
-    # 3) K 缩写（这些是 ≥2K 档，pro 模型，严格 1:1）
+    # 3) K 缩写（这些是 ≥2K 档，会自动切到高质量线路）
     if re.search(r"\b4k\b|uhd|ultra[\s-]?hd|超高清", p):
         return ("2160x3840", "prompt 含 4K 关键字 + 竖屏") if is_vert else \
                ("3840x2160", "prompt 含 4K 关键字（默认横屏）")
     if re.search(r"\b2k\b|1080p|full[\s-]?hd|\bfhd\b", p):
-        # 不选 1920×1080 / 1080×1920：≤2.25MP 会被 origin 压到 ~1.57MP；2048×1152 跨 2.25MP 阈值拿到真分辨率
-        return ("1152x2048", "prompt 含 2K/1080p 关键字 + 竖屏（用 1152×2048 跨 2.25MP 阈值，避开福利档降级）") if is_vert else \
-               ("2048x1152", "prompt 含 2K/1080p 关键字（默认横屏；用 2048×1152 跨 2.25MP 阈值，避开福利档降级）")
+        # 1920×1080 不满足 16 像素对齐；选用官方约束内的 2048×1152。
+        return ("1152x2048", "prompt 含 2K/1080p 关键字 + 竖屏") if is_vert else \
+               ("2048x1152", "prompt 含 2K/1080p 关键字（默认横屏）")
     if re.search(r"720p|\bhd\b", p):
         return ("720x1280", "prompt 含 720p 关键字 + 竖屏") if is_vert else \
                ("1280x720", "prompt 含 720p 关键字")
@@ -178,7 +176,7 @@ def _infer_size_from_prompt(prompt: str) -> tuple[str, str] | None:
 
 
 __all__ = [
-    "_is_grok_model", "_model_error", "_reject_4k_with_reference",
+    "_is_grok_model", "_model_error", "_is_quality_model", "_reject_4k_with_reference",
     "_resolve_model", "_bypass_edits",
     "_size_note", "_grok_aspect_ratio", "_grok_resolution",
     "_infer_size_from_prompt",

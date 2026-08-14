@@ -6,7 +6,7 @@
 
 把 [米醋](https://www.micuapi.ai) 的图像接口包装成 MCP server，让 Claude Code / Codex / Cursor 等 MCP 客户端直接生图、改图、批处理、多图参考。
 
-当前仅支持 `gpt-image-2` / `gpt-image-2-pro`，`MICU_API_KEY` 必须能看到这两个模型。
+当前仅支持 `gpt-image-2` / `gpt-image-2-openai`，`MICU_API_KEY` 必须能看到这两个模型。
 Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧的 Grok 环境变量，安装器也不会写入，工具调用会在发出请求前拒绝 Grok 模型。
 
 ---
@@ -16,7 +16,7 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 | Tool | 说明 |
 |---|---|
 | `image_generate` | 文生图。米醋 image2 支持 1K / 2K / 4K |
-| `image_edit` | 单图参考/编辑。走 `/v1/images/edits`（1K ~1.57MP，2K best-effort 真 2K） |
+| `image_edit` | 单图参考/编辑。走 `/v1/images/edits`（1K/2K 已验证） |
 | `image_batch_edit` | 多张图逐张同指令处理 |
 | `image_multi_reference` | 2-10 张参考图融合成 1 张新图 |
 | `server_info` | 查看 base URL、模型、size 规则、重试策略、安全约束 |
@@ -34,7 +34,7 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 ## 当前模型范围
 
-所有工具与压测脚本仅接受 `gpt-image-2` 和 `gpt-image-2-pro`。2K/4K 会自动切换到 pro；Grok 相关实现暂时保留为休眠代码，服务器恢复支持后可重新开放。
+所有工具与压测脚本仅接受 `gpt-image-2` 和 `gpt-image-2-openai`。2K/4K 会自动切换到高质量线路 `gpt-image-2-openai`；Grok 相关实现暂时保留为休眠代码，服务器恢复支持后可重新开放。
 
 ---
 
@@ -82,7 +82,32 @@ MICU_SAVE_DIR=~/Pictures/micu-out \
 python install.py --yes
 ```
 
-`--yes` 模式下如果 `MICU_API_KEY` 看不到 `gpt-image-2` / `gpt-image-2-pro`，安装会直接失败，避免写入错误配置。
+`--yes` 模式下如果 `MICU_API_KEY` 看不到 `gpt-image-2` / `gpt-image-2-openai`，安装会直接失败，避免写入错误配置。
+
+macOS 上若不希望把长期 API key 明文写进 MCP 配置，可把它存入登录钥匙串，并让 Codex 的 STDIO MCP command 指向 `scripts/run-mcp-macos-keychain.sh`：
+
+```bash
+security add-generic-password \
+  -U -a "$USER" -s ai.micuapi.mcp \
+  -l "Micu Image MCP API Key" \
+  -T /usr/bin/security -w
+```
+
+命令会交互式读取 key，不会把 key 留在 shell history。MCP 配置只需保留非敏感变量：
+
+```toml
+[mcp_servers.micu-image]
+command = "/absolute/path/micu-image-mcp/scripts/run-mcp-macos-keychain.sh"
+args = []
+
+[mcp_servers.micu-image.env]
+MICU_BASEURL = "https://www.micuapi.ai"
+MICU_MODEL = "gpt-image-2"
+MICU_KEYCHAIN_SERVICE = "ai.micuapi.mcp"
+MICU_KEYCHAIN_ACCOUNT = "your-macos-account"
+```
+
+Codex 桌面、CLI 和 IDE 扩展共享 `~/.codex/config.toml`；保存后需重启客户端，使 MCP 子进程重新读取配置。
 
 常用选项：
 
@@ -111,11 +136,11 @@ python -m pip uninstall -y micu-image-mcp
 
 image2 路径：
 
-- W/H 必须是 8 的倍数
-- W/H 必须在 256 到 4096 范围内
-- 1K 福利档可能被代理处理到约 1.57MP
-- 2K/4K 自动切 `gpt-image-2-pro`
-- 2K/4K 强制 `n=1` 并加跨进程锁，避免多个 MCP 同时打爆 pro 队列
+- W/H 必须是 16 的倍数
+- 最长边不超过 3840；长宽比不超过 3:1
+- 总像素必须在 655,360 到 8,294,400 之间
+- 2K/4K 自动切 `gpt-image-2-openai`
+- 2K/4K 强制 `n=1` 并加跨进程锁，避免多个 MCP 同时打爆高质量队列
 
 推荐 size：
 
@@ -127,20 +152,20 @@ image2 路径：
 
 ## 尺寸能力矩阵 / Size capability
 
-实测确认的真实能力（image2 路径）。1K 档可靠输出 ~1.57MP；纯文生图 2K/4K 真分辨率可用（pro + 重试）；带参考图 2K 为 best-effort 真 2K。
+2026-08-14 实测确认：两条当前 Image2 线路均可生成与编辑；高质量线路在 1536×1024、2048×1152、3840×2160 精确返回，标准线路的部分自定义尺寸会被后端重映射。
 
 | 场景 | 可靠性 | 实际输出 |
 |---|---|---|
-| ≤1.57MP（1K 档，所有 tool） | 可靠、快 | ~1.57MP（福利档） |
-| 2K/4K 纯文生图（`image_generate`，无参考图） | 真 2K/4K 可用 | 自动切 pro + MCP 重试吸收瞬时 524，实测真返回 2048² / 3840×2160，~80s/张（高负载偶慢/偶失败） |
-| 带参考图 2K（`image_edit` / `image_multi_reference`） | best-effort 真 2K | 走 `/v1/images/edits`，约 2/3 成功真返回 2048²；524 时 fallback chat → ~1.57MP |
+| 1K 纯文生图/编辑 | 可用 | 两模型 1024² 均已实测；实际像素见 `saved.actual_size` |
+| 2K/4K 纯文生图（`image_generate`，无参考图） | 可用 | 自动切 `gpt-image-2-openai`；实测 2048×1152 / 3840×2160 精确返回 |
+| 带参考图 2K（`image_edit`） | 可用 | 自动切 `gpt-image-2-openai`；实测 2048×1152 精确返回 |
 | 带参考图 4K | 已禁用 | 入口拒绝（origin > 120s 撞 CF 524） |
 
 说明：
 
-- `/v1/images/edits` 是米醋唯一真正消费输入图的端点。1K 档稳定输出 ~1.57MP；2K 档自动切 pro 后 best-effort 真 2K（压测约 2/3 成功真返回 2048×2048，524 时 fallback chat stream → ~1.57MP，较慢 2-4 分钟/单次）。
+- `/v1/images/edits` 是米醋真正消费输入图的端点。当前两模型的 1024² edits 与 `gpt-image-2-openai` 的 2048×1152 edits 已通过实测。
 - 旧的 `generations + reference_image`（单图 2K）和 `generations + image_urls`（多图）路径要么 524 断流、要么参考图被静默忽略，已废弃。
-- 带参考图想要真 4K 用**两步法**：先出一张 ~1.57MP/2K 的综合/编辑图 → 再用 `image_generate` 描述同场景升 4K（`image_generate` 4K 真分辨率可用，自动切 pro + MCP 重试吸收瞬时 524）。
+- 带参考图想要 4K 用**两步法**：先出一张 1K/2K 的综合/编辑图 → 再用 `image_generate` 描述同场景升 4K（自动切 `gpt-image-2-openai`）。
 
 ---
 
@@ -198,7 +223,7 @@ MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 
 ### 性能基线 `tests/perf_bench.py`
 
-串行跑 `gpt-image-2` / `gpt-image-2-pro` 在不同 `size` 下的 `image_generate`，记录单次延迟、actual_size 偏差、保存后字节数。
+串行跑 `gpt-image-2` / `gpt-image-2-openai` 在不同 `size` 下的 `image_generate`，记录单次延迟、actual_size 偏差、保存后字节数。
 
 ```bash
 # smoke（默认）：两个 Image2 模型各 1 张
@@ -211,7 +236,7 @@ python tests/perf_bench.py --full --repeat 3
 python tests/perf_bench.py --dry-run
 ```
 
-报告 markdown 表头：`group | n | ok | fail | rate | p50_ms | p95_ms | mean_ms | actual_match`。`actual_match` 是 PNG header 读出的实际像素严格等于请求 size 的比例；1K 福利档预期会偏低（被代理压到 ~1.57MP），2K/4K 严格 1:1。
+报告 markdown 表头：`group | n | ok | fail | rate | p50_ms | p95_ms | mean_ms | actual_match`。`actual_match` 是图片 header 读出的实际像素严格等于请求 size 的比例；不要假定后端一定遵守自定义尺寸。
 
 ### 并发压力 `tests/stress_concurrent.py`
 
@@ -219,7 +244,7 @@ python tests/perf_bench.py --dry-run
 1. 1K 单进程多并发 → 进程内不卡，吞吐近似线性
 2. ≥2K 多进程并发 → 进程内 `asyncio.Semaphore(1)` + 跨进程 `flock` 双层锁串行
 3. CF 524 / 上游 5xx → 重试/fail-fast 策略
-4. `--model` 仅接受 `gpt-image-2` / `gpt-image-2-pro`
+4. `--model` 仅接受 `gpt-image-2` / `gpt-image-2-openai`
 
 ```bash
 # in-process 并发 (默认 smoke, image2 1K x 3)
@@ -242,4 +267,4 @@ python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 204
 | `concurrency_efficiency` | `total_wall_ms / serial_estimate_ms`。≈ 1 → 强串行（锁生效）；≈ 1/N → 强并发；中间 → 部分排队 |
 | `lock_wait_observed` | notes 里出现 “等待跨进程 ≥2K 锁” 的请求数（>2s 才记） |
 
-> 提醒：image2 真实并发会按米醋后台 pro 队列限流计费，跑 `--concurrency` ≥ 3 之前先确认账户额度。dry-run / 401 路径不计费。
+> 提醒：Image2 真实并发会按米醋后台线路限流计费，跑 `--concurrency` ≥ 3 之前先确认账户额度。dry-run / 401 路径不计费。

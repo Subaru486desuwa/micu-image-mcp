@@ -17,7 +17,7 @@ class TestIsGrokModel:
 
     def test_image2_models(self):
         assert S._is_grok_model("gpt-image-2") is False
-        assert S._is_grok_model("gpt-image-2-pro") is False
+        assert S._is_grok_model("gpt-image-2-openai") is False
         assert S._is_grok_model("GPT-Image-2") is False
 
     def test_grok_aliases(self):
@@ -39,25 +39,25 @@ class TestIsGrokModel:
 # ---------- _resolve_model ----------
 
 class TestResolveModel:
-    def test_default_1k_stays_nonpro(self):
+    def test_default_1k_stays_standard(self):
         # 1K 走默认 model
         model, notes = S._resolve_model(None, "1024x1024")
-        assert "pro" not in model.lower()
+        assert model == S.STANDARD_MODEL
         assert notes == []
 
-    def test_2k_auto_pro(self):
+    def test_2k_auto_quality_route(self):
         model, notes = S._resolve_model("gpt-image-2", "2048x2048")
         assert model == S.PRO_MODEL
-        assert any("pro" in n.lower() for n in notes)
+        assert any("高质量线路" in n for n in notes)
 
-    def test_4k_auto_pro(self):
+    def test_4k_auto_quality_route(self):
         model, notes = S._resolve_model("gpt-image-2", "3840x2160")
         assert model == S.PRO_MODEL
         assert any("4k" in n.lower() for n in notes)
 
-    def test_2k_explicit_pro_no_note(self):
-        model, notes = S._resolve_model("gpt-image-2-pro", "2048x2048")
-        assert model == "gpt-image-2-pro"
+    def test_2k_explicit_quality_route_no_note(self):
+        model, notes = S._resolve_model("gpt-image-2-openai", "2048x2048")
+        assert model == "gpt-image-2-openai"
         assert notes == []  # 没切换就没提示
 
     def test_grok_bypasses_pro_gate(self):
@@ -74,25 +74,24 @@ class TestResolveModel:
 # ---------- _bypass_edits ----------
 
 class TestBypassEdits:
-    def test_nonpro_1k_uses_edits(self):
-        # 非 pro + 小图 → 用 /v1/images/edits
+    def test_standard_1k_uses_edits(self):
+        # 标准线路 + 小图 → 用 /v1/images/edits
         assert S._bypass_edits("gpt-image-2", "1024x1024") is False
 
-    def test_pro_1k_uses_edits(self):
-        # pro + 1K（< HIGH_RES_EDGE 1600）→ 仍可走 edits
-        assert S._bypass_edits("gpt-image-2-pro", "1024x1024") is False
+    def test_quality_1k_uses_edits(self):
+        # 高质量线路 + 1K（< HIGH_RES_EDGE 1600）→ 仍可走 edits
+        assert S._bypass_edits("gpt-image-2-openai", "1024x1024") is False
 
-    def test_pro_2k_bypasses(self):
-        # pro + 2K → 必须绕开 edits
-        assert S._bypass_edits("gpt-image-2-pro", "2048x2048") is True
+    def test_quality_2k_uses_edits(self):
+        assert S._bypass_edits("gpt-image-2-openai", "2048x2048") is False
 
-    def test_pro_4k_bypasses(self):
-        assert S._bypass_edits("gpt-image-2-pro", "3840x2160") is True
+    def test_quality_4k_does_not_use_legacy_bypass(self):
+        assert S._bypass_edits("gpt-image-2-openai", "3840x2160") is False
 
     def test_boundary_at_HIGH_RES_EDGE(self):
         # max edge == 1600 已视为 ≥1600
-        assert S._bypass_edits("gpt-image-2-pro", "1600x1600") is True
-        assert S._bypass_edits("gpt-image-2-pro", "1599x1599") is False
+        assert S._bypass_edits("gpt-image-2-openai", "1600x1600") is False
+        assert S._bypass_edits("gpt-image-2-openai", "1599x1599") is False
 
 
 # ---------- _reject_4k_with_reference ----------

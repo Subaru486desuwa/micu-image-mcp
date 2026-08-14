@@ -24,7 +24,7 @@ from .config import (
     MAX_RESPONSE_BYTES,
 )
 
-# 响应体超过上限时返回的状态码（不在 RETRYABLE_STATUS / FALLBACK_STATUS 内，不会重试也不会降级）。
+# 响应体超过上限时返回的状态码（不在 RETRYABLE_STATUS 内，不会重试）。
 _RESPONSE_TOO_LARGE_STATUS = 413
 from .extract import _error_detail
 from .locks import _get_big_size_lock, _big_size_file_lock_async
@@ -264,14 +264,15 @@ async def _call_with_retry(
     big_size_lock: bool = False,
     notes_out: list[str] | None = None,
 ) -> tuple[int, str]:
-    """pro 模型代理端瞬时限流多；stream=True 时 chat 走 SSE。
+    """高质量线路代理端瞬时限流多；stream=True 时 chat 走 SSE。
 
     所有调用包在 try/except 里：httpx 网络层异常（ReadError/ConnectError 等）转成 status=0 让重试逻辑接住。
 
     重试分两层：
       - 网络层异常（status==0）：连接根本没建立，无条件给 1 次免费重试（与 retry_pro 无关），
         2s 退避覆盖瞬时 DNS/TLS 抖动。
-      - 上游 5xx / 429 / 408 / CF 5xx：仅在 retry_pro=True（pro 模型 或 size tier ∈ {2k, 4k}）
+      - 上游 5xx / 429 / 408 / CF 5xx：仅在 retry_pro=True（参数名为历史兼容名；
+        当前表示高质量线路或 size tier ∈ {2k, 4k}）
         时退避重试。优先尊重 Retry-After；否则 1K 用 4s / 8s + jitter 两次，≥2K 用 60s 单次。
 
     big_size_lock=True：整个调用（含网络层 + 上游重试）包在双层锁内：

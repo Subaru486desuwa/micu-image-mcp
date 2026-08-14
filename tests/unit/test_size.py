@@ -108,11 +108,11 @@ class TestValidateSize:
         assert cleaned is None
         assert err is not None and "太大" in err
 
-    def test_not_aligned_to_8(self):
-        # 1500 不是 8 的倍数
+    def test_not_aligned_to_16(self):
+        # 1500 不是 16 的倍数
         cleaned, err = S._validate_size("1500x1500")
         assert cleaned is None
-        assert err is not None and "8" in err
+        assert err is not None and "16" in err
 
     def test_valid_normalized(self):
         cleaned, err = S._validate_size("  1024X1024  ")
@@ -120,8 +120,8 @@ class TestValidateSize:
         assert err is None
 
     def test_boundary_valid(self):
-        # 256 / 4096 都在范围内
-        for size in ("256x256", "4096x4096", "256x4096"):
+        # 官方总像素下限与上限恰好可用。
+        for size in ("1024x640", "3840x2160"):
             cleaned, err = S._validate_size(size)
             assert err is None, f"{size}: {err}"
             assert cleaned == size
@@ -198,8 +198,8 @@ class TestValidateN:
 
 class TestRoundToAlignment:
     @pytest.mark.parametrize("inp,out", [
-        (1080, 1080),   # 已对齐 8
-        (1500, 1504),   # round(1500/8)=187.5 → 188 * 8 = 1504
+        (1080, 1088),   # 对齐到最近的 16 倍数
+        (1500, 1504),
         (720, 720),
         (1, 16),        # 下限 16
         (0, 16),

@@ -81,9 +81,14 @@ _INPUT_ROOT: Path | None = (
     Path(_INPUT_ROOT_RAW).expanduser().resolve() if _INPUT_ROOT_RAW else None
 )
 
-PRO_MODEL = "gpt-image-2-pro"
-NONPRO_MODEL = "gpt-image-2"
-SUPPORTED_IMAGE_MODELS = (NONPRO_MODEL, PRO_MODEL)
+STANDARD_MODEL = "gpt-image-2"
+QUALITY_MODEL = "gpt-image-2-openai"
+# Compatibility names for callers that imported the old constants.  Their values now
+# point at the two current routes; the removed gpt-image-2-pro ID is never accepted.
+NONPRO_MODEL = STANDARD_MODEL
+PRO_MODEL = QUALITY_MODEL
+SUPPORTED_IMAGE_MODELS = (STANDARD_MODEL, QUALITY_MODEL)
+VALID_IMAGE_QUALITIES = frozenset({"auto", "low", "medium", "high"})
 GROK_MODEL_ALIASES = {
     "grok-imagine-image",
     "grok-imagine-image-lite",
@@ -117,25 +122,27 @@ GROK_ASPECT_RATIO_CHOICES = {
 }
 GROK_SIZE_MODES = {"backend", "contain", "cover", "stretch"}
 
-# 网页里实测出的阈值：max edge ≥1600 视为 2K/4K，必须走 pro，且图生图绕开 /v1/images/edits
+# max edge ≥1600 视为 2K/4K，并切到高质量 OpenAI 线路。
 HIGH_RES_EDGE = 1600
-# 图生图代理后端实测：≥2K 全部 503/524，仅 1K 可用
+# 批量图生图保留的可靠性边界；单图 edit 的 2K 已单独验证可用。
 EDITS_MAX_EDGE = 1536
 
 VALID_SIZES_1K = {"1024x1024", "1280x720", "720x1280", "1024x1536", "1536x1024"}
-# 注意：1920×1080 / 1080×1920 (2.07MP) 名义上 2K，但 ≤2.25MP 会被 origin 压到 ~1.57MP，
-# 不列入"严格 1:1"推荐。想要真 2K 横屏请用 2048×1152。
+# 1920×1080 不满足 16 像素对齐；推荐 2048×1152。
 VALID_SIZES_2K = {"2048x2048", "2048x1152", "1152x2048"}
 VALID_SIZES_4K = {"3840x2160", "2160x3840"}
 
 # 大小限制
 MAX_N = 10
 MIN_SIZE_EDGE = 256
-MAX_SIZE_EDGE = 4096
-SIZE_ALIGNMENT = 8  # 米醋实测接受 8 倍数（1080/720 通过，1500 等非 8 倍 400）
+MAX_SIZE_EDGE = 3840
+SIZE_ALIGNMENT = 16
+MIN_IMAGE_PIXELS = 655_360
+MAX_IMAGE_PIXELS = 8_294_400
+MAX_IMAGE_ASPECT_RATIO = 3.0
 
 MAX_INPUT_FILE_BYTES = 4 * 1024 * 1024     # 单张输入图 4MB
-MAX_TOTAL_INPUT_BYTES = 8 * 1024 * 1024    # 多图总和 8MB（base64 后约 11MB，逼近代理上限）
+MAX_TOTAL_INPUT_BYTES = 8 * 1024 * 1024    # 多图原始字节总和 8MB，给代理请求体编码留余量
 MAX_RESPONSE_BYTES = 25 * 1024 * 1024      # 单张输出图最大 25MB（4K 实测最高 ~12MB）
 
 # 安全 basename 字符集（保留点号给扩展名等）
@@ -143,9 +150,8 @@ _SAFE_BASENAME_RE = re.compile(r"^[A-Za-z0-9_\-.]+$")
 
 # ---------- retry 策略常量（http_client.py 用，集中放这避免循环依赖）----------
 RETRYABLE_STATUS = (0, 408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 527)
-# chat-stream fallback 只在"换条路径可能有救"的服务端/网络错误上触发。
-# 刻意排除 409/425/429：限流/冲突/配额错误换 chat 路径多半同样被拒，反而可能静默产出错分辨率图（chat 路径 size 不生效）。
-FALLBACK_STATUS = frozenset({0, 408, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 527})
+# 兼容旧版 server_info / 外部 import；当前 Image2 模型不会跨 API 路由 fallback。
+FALLBACK_STATUS: frozenset[int] = frozenset()
 RETRY_AFTER_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
 BIG_SIZE_FAIL_FAST_STATUS = {524}
 MAX_RETRY_AFTER_SECONDS = 120.0
@@ -161,12 +167,14 @@ __all__ = [
     "_TRUST_ENV", "_SAVE_ROOT", "DEFAULT_SAVE_DIR", "_INPUT_ROOT",
     "API_RESPONSE_FORMAT", "RESPONSE_FORMATS_TO_TRY",
     "TRUSTED_DOWNLOAD_HOSTS", "ALLOW_FAKE_IP_DOWNLOAD", "FAKE_IP_NETWORK",
-    "PRO_MODEL", "NONPRO_MODEL", "SUPPORTED_IMAGE_MODELS",
+    "STANDARD_MODEL", "QUALITY_MODEL", "PRO_MODEL", "NONPRO_MODEL",
+    "SUPPORTED_IMAGE_MODELS", "VALID_IMAGE_QUALITIES",
     "GROK_MODEL_ALIASES", "GROK_AVAILABLE_MODELS",
     "GROK_ASPECT_RATIO_CHOICES", "GROK_SIZE_MODES",
     "HIGH_RES_EDGE", "EDITS_MAX_EDGE",
     "VALID_SIZES_1K", "VALID_SIZES_2K", "VALID_SIZES_4K",
     "MAX_N", "MIN_SIZE_EDGE", "MAX_SIZE_EDGE", "SIZE_ALIGNMENT",
+    "MIN_IMAGE_PIXELS", "MAX_IMAGE_PIXELS", "MAX_IMAGE_ASPECT_RATIO",
     "MAX_INPUT_FILE_BYTES", "MAX_TOTAL_INPUT_BYTES", "MAX_RESPONSE_BYTES",
     "_SAFE_BASENAME_RE",
     "RETRYABLE_STATUS", "FALLBACK_STATUS", "RETRY_AFTER_STATUSES", "BIG_SIZE_FAIL_FAST_STATUS",
