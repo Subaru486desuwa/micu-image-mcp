@@ -321,6 +321,25 @@ MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --mode multiprocess --co
 
 > 提醒：Image2 真实并发会按米醋后台线路限流计费，跑 `--concurrency` ≥ 3 之前先确认账户额度。dry-run / 401 路径不计费。
 
+### Rust 原生真实 2K/4K 压力矩阵
+
+`tests/contract/test_live_rust_highres_stress.py` 会同时启动 5 个独立 Rust MCP 进程，请求
+2K 横/竖/方图和 4K 横/竖图。测试要求它们共享同一把生产跨进程锁，并逐项验证自动切换
+`gpt-image-2-openai`、`n` 强制为 1、实际像素、stdout 和敏感日志。为避免误消费额度，必须同时
+启用三个 live gate：
+
+```bash
+MICU_RUN_LIVE_TESTS=1 \
+MICU_RUN_LIVE_STRESS=1 \
+MICU_RUN_LIVE_HIGHRES_STRESS=1 \
+MICU_LIVE_HIGHRES_STRESS_REPORT=/tmp/micu-rust-live-highres-stress.json \
+  .venv/bin/python -m pytest -q \
+  tests/contract/test_live_rust_highres_stress.py
+```
+
+2026-08-23 的真实 v0.3.0 结果为 5/5 成功、5 种 requested/actual size 全部严格相等、4 个
+排队进程均返回锁等待 note，总 wall time 360.115 秒。凭据没有写入报告，临时输出在测试结束后删除。
+
 ### 离线 contract / 差分测试
 
 先构建 Rust，然后运行相同 MCP STDIO 与本地 mock Micu API 矩阵：

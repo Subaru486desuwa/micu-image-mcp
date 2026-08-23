@@ -36,8 +36,8 @@ Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
 |---|---|---|
 | 支持模型 allowlist | Exact | 仅 `gpt-image-2` / `gpt-image-2-openai`，精确字符串，空白包裹也拒绝 |
 | Grok 公共错误与 server_info 状态 | Exact | 调用前、文件读取前拒绝；channel disabled/status/compatibility keys 保留 |
-| ≥1600 自动高质量线路 | Exact | route note、effective model 相同 |
-| 2K/4K generate 强制 n=1 | Exact | requested_n 与中文 note 相同 |
+| ≥1600 自动高质量线路 | Exact + live | route note、effective model 相同；5 种真实 2K/4K 尺寸均切到 `gpt-image-2-openai` |
+| 2K/4K generate 强制 n=1 | Exact + live | requested_n 与中文 note 相同；5 个真实请求的 `n=3` 均只生成 1 张 |
 | 1K 标准 generate n>1 | Exact | 最多 5 in-flight，结果按 index 排序；6 请求实测 max active=5 |
 | 高质量 generate 串行 | Exact | concurrency=1 |
 | batch 标准/高质量 | Exact | 标准 max active=5；高质量 max active=1 且第二请求 start gap ≥1.4s |
@@ -47,7 +47,7 @@ Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
 | response_format auto | Exact | URL 落盘失败后重新请求 API `b64_json`；顺序与 notes 关键语义相同 |
 | data image URL | Exact | 解包为 base64 并落盘 |
 | 文件命名与 collision | Exact | generate `_1`，edit/multi basename，batch timestamp 形状，O_EXCL `_2` 冲突结果相同 |
-| actual_size / actual_megapixels / size_honored | Exact | 38 场景差分包括 exact/mismatch/无输出 |
+| actual_size / actual_megapixels / size_honored | Exact + live | 38 场景差分包括 exact/mismatch/无输出；2K/4K 五种推荐尺寸真实 requested/actual 全相等 |
 | error/errors/notes 字段 | Exact/Semantic | 业务中文文本与字段存在性相同；HTTP client 自带的 disconnect/redirect 底层英文由差分规范化 |
 
 ## 尺寸、图片与路径
@@ -85,7 +85,7 @@ Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
 | 524 large fail-fast | Exact | 1 HTTP request，无 retry note |
 | 400 Too Many Requests→429 | Exact | 2 请求，note 显示 HTTP 429 |
 | 进程内 Semaphore | Exact semantics | Python asyncio vs Rust tokio；并发 black-box 相同 |
-| 跨进程文件锁 | Rust 通过 | fs4 try_lock poll；取消测试、独立 gate、两个真实子进程 2×400ms critical section 均通过 |
+| 跨进程文件锁 | Rust 通过 + live | fs4 try_lock poll；取消测试与 mock 均通过；真实 5 进程同时请求高分辨率时 4 个等待者均返回锁等待 note |
 
 ## 安装与发布
 
