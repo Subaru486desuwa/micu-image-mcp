@@ -4,27 +4,29 @@ mod edit;
 mod generate;
 mod multi_reference;
 mod server_info;
+mod types;
 
 use std::sync::Arc;
 
 use crate::{
-    config::Config,
-    download::SystemResolver,
-    http_client::HttpExecutor,
-    output::OutputSaver,
+    config::{AppPaths, Config},
+    fs::input::InputStore,
+    fs::output_store::OutputStore,
+    fs::response_output::OutputSaver,
+    http::client::HttpExecutor,
+    http::download::SystemResolver,
     providers::{Image2Provider, ImageProvider},
-    storage::Storage,
 };
 
 pub use common::{SecretArg, ToolFailure};
-pub use edit::EditParams;
-pub use generate::GenerateParams;
-pub use multi_reference::MultiReferenceParams;
+pub use types::{BatchParams, EditParams, GenerateParams, MultiReferenceParams};
 
 #[derive(Clone)]
 pub struct ToolEngine {
     pub(crate) config: Arc<Config>,
-    pub(crate) storage: Storage,
+    pub(crate) paths: Arc<AppPaths>,
+    pub(crate) input_store: InputStore,
+    pub(crate) output_store: OutputStore,
     pub(crate) output: OutputSaver,
     pub(crate) provider: Arc<dyn ImageProvider>,
 }
@@ -32,29 +34,32 @@ pub struct ToolEngine {
 impl ToolEngine {
     pub fn new(
         config: Arc<Config>,
-        storage: Storage,
+        paths: Arc<AppPaths>,
+        output_store: OutputStore,
         output: OutputSaver,
         provider: Arc<dyn ImageProvider>,
     ) -> Self {
+        let input_store = InputStore::new(paths.as_ref());
         Self {
             config,
-            storage,
+            paths,
+            input_store,
+            output_store,
             output,
             provider,
         }
     }
 
-    pub fn production(config: Arc<Config>) -> Result<Self, String> {
-        let storage = Storage::new(config.as_ref())?;
-        let http = HttpExecutor::new(config.as_ref())?;
+    pub fn production(config: Arc<Config>, paths: Arc<AppPaths>) -> Result<Self, String> {
+        let output_store = OutputStore::new(paths.as_ref())?;
+        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())?;
         let provider = Arc::new(Image2Provider::new(&config.base_url, http.clone())?);
         let output = OutputSaver::new(
             config.clone(),
-            storage.clone(),
+            output_store.clone(),
             http,
             Arc::new(SystemResolver),
         );
-        Ok(Self::new(config, storage, output, provider))
+        Ok(Self::new(config, paths, output_store, output, provider))
     }
 }
-pub use batch::BatchParams;

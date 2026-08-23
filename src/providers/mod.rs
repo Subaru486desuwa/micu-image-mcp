@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use secrecy::SecretString;
 
 use crate::{
-    http_client::{ApiResponse, RetryOptions},
-    validation::image::ValidatedImage,
+    fs::input::ValidatedImage,
+    http::client::{ApiResponse, RetryOptions},
 };
 
 pub use image2::Image2Provider;

@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -56,14 +57,24 @@ def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Pat
     claude = json.loads(claude_path.read_text(encoding="utf-8"))
     assert claude["theme"] == "dark"
     assert claude["mcpServers"]["other"]["command"] == "other"
-    assert claude["mcpServers"]["micu-image"]["command"] == str(RUST_BINARY.resolve())
+    stable_binary = Path(claude["mcpServers"]["micu-image"]["command"])
+    assert stable_binary.is_file()
+    assert stable_binary.name == ("micu-image-mcp.exe" if os.name == "nt" else "micu-image-mcp")
+    assert not stable_binary.is_relative_to(REPO_ROOT / "target")
     assert claude["mcpServers"]["micu-image"]["args"] == []
+    assert "MICU_API_KEY" not in claude["mcpServers"]["micu-image"]["env"]
+    assert secret not in claude_path.read_text(encoding="utf-8")
     codex = codex_path.read_text(encoding="utf-8")
     assert "model = 'gpt-test'" in codex
     assert "[mcp_servers.other]" in codex
     assert "[mcp_servers.micu-image]" in codex
     assert "[mcp_servers.micu-image.env]" in codex
-    assert secret in codex
+    parsed_codex = tomllib.loads(codex)
+    installed_server = parsed_codex["mcp_servers"]["micu-image"]
+    assert Path(installed_server["command"]) == stable_binary
+    assert installed_server["args"] == []
+    assert "MICU_API_KEY" not in installed_server["env"]
+    assert secret not in codex
     if os.name != "nt":
         assert stat.S_IMODE(claude_path.stat().st_mode) == 0o600
         assert stat.S_IMODE(codex_path.stat().st_mode) == 0o600
@@ -96,3 +107,36 @@ def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Pat
     assert list(home.glob(".claude.json.bak.*"))
     assert list(codex_dir.glob("config.toml.bak.*"))
 
+
+@pytest.mark.skipif(not RUST_BINARY.is_file(), reason="cargo build is required")
+def test_rust_installer_dev_mode_is_the_only_target_path_opt_out(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "MICU_SAVE_DIR": str(tmp_path / "images"),
+        "MICU_SAVE_DIR_ROOT": str(tmp_path / "images"),
+        "MICU_RUN_LIVE_TESTS": "0",
+    }
+    installed = subprocess.run(
+        [
+            str(RUST_BINARY),
+            "install",
+            "--yes",
+            "--no-claude",
+            "--dev",
+            "--binary-path",
+            str(RUST_BINARY),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert installed.returncode == 0, installed.stderr
+    codex = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    server = codex["mcp_servers"]["micu-image"]
+    assert Path(server["command"]) == RUST_BINARY.resolve()
+    assert server["args"] == []

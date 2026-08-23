@@ -1,81 +1,29 @@
 use futures_util::{StreamExt, stream};
 use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::{Map, Value};
 
 use crate::{
-    http_client::RetryOptions,
-    providers::GenerateRequest,
-    response::error_detail,
-    storage::{SaveLocation, SavedImage},
-    validation::{
-        path::safe_basename,
+    domain::{
+        basename::safe_basename,
         routing::{
             infer_size_from_prompt, is_large_tier, is_quality_model, model_error, resolve_model,
             size_note,
         },
         size::{SizeTier, size_tier, validate_n, validate_quality, validate_size},
     },
+    fs::output_store::{OutputDirectory, SavedImage},
+    http::client::RetryOptions,
+    http::response::error_detail,
+    providers::GenerateRequest,
 };
 
 use super::{
-    SecretArg, ToolEngine, ToolFailure,
+    GenerateParams, ToolEngine, ToolFailure,
     common::{
         default_basename, push_note_once, python_string_repr, resolve_key, saved_value,
         validation_error,
     },
 };
-
-fn default_n() -> i64 {
-    1
-}
-
-fn deserialize_n<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    match value {
-        Value::Bool(value) => Ok(i64::from(value)),
-        Value::Number(number) => {
-            if let Some(value) = number.as_i64() {
-                Ok(value)
-            } else if let Some(value) = number.as_u64().and_then(|value| i64::try_from(value).ok())
-            {
-                Ok(value)
-            } else if let Some(value) = number.as_f64().filter(|value| value.fract() == 0.0) {
-                Ok(value as i64)
-            } else {
-                Err(D::Error::custom("n must be an integer"))
-            }
-        }
-        Value::String(value) => value
-            .trim()
-            .parse()
-            .map_err(|_| D::Error::custom("n must be an integer")),
-        _ => Err(D::Error::custom("n must be an integer")),
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GenerateParams {
-    pub prompt: String,
-    #[serde(default)]
-    pub size: Option<String>,
-    #[serde(default = "default_n", deserialize_with = "deserialize_n")]
-    pub n: i64,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub quality: Option<String>,
-    #[serde(default)]
-    pub save_dir: Option<String>,
-    #[serde(default)]
-    pub basename: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<SecretArg>,
-}
 
 impl ToolEngine {
     pub async fn image_generate(&self, params: GenerateParams) -> Result<Value, ToolFailure> {
@@ -107,7 +55,10 @@ impl ToolEngine {
         if let Some(error) = quality_error {
             return Ok(validation_error(error));
         }
-        let location = match self.storage.resolve_save_dir(params.save_dir.as_deref()) {
+        let location = match self
+            .output_store
+            .resolve_save_dir(params.save_dir.as_deref())
+        {
             Ok(location) => location,
             Err(error) => return Ok(validation_error(error)),
         };
@@ -228,19 +179,19 @@ impl ToolEngine {
                 if let Some(note) = size_note(&size, Some(image.actual_size)) {
                     push_note_once(&mut notes, note);
                 }
-                saved.push(saved_value(&image, Some(result.index + 1)));
+                saved.push(saved_value(&image, Some(result.index + 1))?);
             }
             if let Some(error) = result.error {
                 errors.push(Value::String(error));
             }
         }
-        let requested_dimensions = crate::validation::size::parse_size(&size);
+        let requested_dimensions = crate::domain::size::parse_size(&size);
         let size_honored = !saved.is_empty()
             && saved.iter().all(|entry| {
                 entry
                     .get("actual_size")
                     .and_then(Value::as_str)
-                    .and_then(crate::validation::size::parse_size)
+                    .and_then(crate::domain::size::parse_size)
                     == requested_dimensions
             });
         let mut output = Map::new();
@@ -267,7 +218,7 @@ impl ToolEngine {
         size: &str,
         model: &str,
         quality: Option<&str>,
-        location: &SaveLocation,
+        location: &OutputDirectory,
         stem: &str,
         key: &SecretString,
         retry: RetryOptions,
@@ -371,12 +322,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     use crate::{
-        config::Config,
-        download::SystemResolver,
-        http_client::{ApiResponse, HttpExecutor, RetryOptions},
-        output::OutputSaver,
+        config::{Config, test_paths},
+        fs::output_store::OutputStore,
+        fs::response_output::OutputSaver,
+        http::client::{ApiResponse, HttpExecutor, RetryOptions},
+        http::download::SystemResolver,
         providers::{EditRequest, GenerateRequest, ImageProvider},
-        storage::Storage,
     };
 
     use super::*;
@@ -431,21 +382,17 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, ToolEngine, Arc<FakeProvider>) {
         let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
         let out = temp.path().join("out");
-        let config = Arc::new(
-            Config::from_map(&BTreeMap::from([
-                (
-                    "HOME".into(),
-                    temp.path().join("home").to_string_lossy().into_owned(),
-                ),
-                (
-                    "MICU_SAVE_DIR_ROOT".into(),
-                    out.to_string_lossy().into_owned(),
-                ),
-                ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
-                ("MICU_API_KEY".into(), "sk-test".into()),
-            ]))
-            .unwrap_or_else(|error| panic!("{error}")),
-        );
+        let environment = BTreeMap::from([
+            (
+                "MICU_SAVE_DIR_ROOT".into(),
+                out.to_string_lossy().into_owned(),
+            ),
+            ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
+            ("MICU_API_KEY".into(), "sk-test".into()),
+        ]);
+        let config =
+            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
+        let paths = Arc::new(test_paths(temp.path(), environment));
         let image_path = temp.path().join("fixture.png");
         RgbImage::from_pixel(32, 24, Rgb([1, 2, 3]))
             .save_with_format(&image_path, ImageFormat::Png)
@@ -461,15 +408,16 @@ mod tests {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
         });
-        let storage = Storage::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let storage = OutputStore::new(paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())
+            .unwrap_or_else(|error| panic!("{error}"));
         let output = OutputSaver::new(
             config.clone(),
             storage.clone(),
             http,
             Arc::new(SystemResolver),
         );
-        let engine = ToolEngine::new(config, storage, output, provider.clone());
+        let engine = ToolEngine::new(config, paths, storage, output, provider.clone());
         (temp, engine, provider)
     }
 

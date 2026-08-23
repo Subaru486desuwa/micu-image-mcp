@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::{config::Config, storage::SavedImage};
+use crate::{config::Config, fs::output_store::SavedImage};
 
 #[derive(Clone)]
 pub struct SecretArg(SecretString);
@@ -58,15 +58,16 @@ pub fn validation_error(message: impl Into<String>) -> Value {
     json!({"ok": false, "error": message, "errors": [message]})
 }
 
-pub fn saved_value(saved: &SavedImage, index: Option<usize>) -> Value {
+pub fn saved_value(saved: &SavedImage, index: Option<usize>) -> Result<Value, ToolFailure> {
     let mut value = serde_json::Map::new();
     if let Some(index) = index {
         value.insert("index".into(), Value::from(index));
     }
-    value.insert(
-        "path".into(),
-        Value::String(saved.path.to_string_lossy().into_owned()),
-    );
+    let path = saved
+        .path
+        .to_str()
+        .ok_or_else(|| ToolFailure("输出路径不是合法 Unicode，无法无损写入 MCP JSON".into()))?;
+    value.insert("path".into(), Value::String(path.to_owned()));
     value.insert("size_bytes".into(), Value::from(saved.size_bytes));
     value.insert(
         "actual_size".into(),
@@ -76,7 +77,7 @@ pub fn saved_value(saved: &SavedImage, index: Option<usize>) -> Value {
         "actual_megapixels".into(),
         Value::from(saved.actual_megapixels),
     );
-    Value::Object(value)
+    Ok(Value::Object(value))
 }
 
 pub fn default_basename(prefix: &str) -> String {

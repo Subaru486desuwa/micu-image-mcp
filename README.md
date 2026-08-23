@@ -49,7 +49,7 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 - Python 是迁移期 reference，`server.py`、`micu_image_mcp/` 和 Python tests 不会删除；
 - Rust 是单可执行文件实现，无参数即 STDIO serve，也提供 `install/reset/doctor/version`。
 
-本机 36 场景差分、安全测试和 RSS 基准已通过，但本次没有 push，因此 Linux、macOS Intel、
+本机 38 场景差分、安全测试和 RSS 基准已通过，但本次没有 push，因此 Linux、macOS Intel、
 Windows 原生 GitHub runner 还没有真实结果。**当前不能切换默认实现**：`install.py` 仍默认
 Python，Rust 必须显式选择。
 
@@ -59,10 +59,16 @@ Python，Rust 必须显式选择。
 
 ```bash
 chmod +x /absolute/path/micu-image-mcp   # macOS/Linux
-MICU_API_KEY=sk-... \
 MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
 /absolute/path/micu-image-mcp install --yes
 ```
+
+`install` 会把当前 binary 原子复制到稳定的 per-user data-local 目录，再让 Codex/Claude 指向该
+副本；配置不会指向仓库的 `target/release`，移动仓库或 `cargo clean` 不会使 MCP 失效：
+
+- macOS：`~/Library/Application Support/micu-image-mcp/bin/micu-image-mcp`
+- Linux：`~/.local/share/micu-image-mcp/bin/micu-image-mcp`
+- Windows：`%LOCALAPPDATA%\micu-image-mcp\bin\micu-image-mcp.exe`
 
 Rust CLI：
 
@@ -70,6 +76,8 @@ Rust CLI：
 micu-image-mcp                 # 等同 serve，STDIO MCP
 micu-image-mcp serve
 micu-image-mcp install --yes --no-claude
+micu-image-mcp install --yes --binary-path /path/to/downloaded/binary
+micu-image-mcp install --yes --dev --binary-path "$PWD/target/release/micu-image-mcp"
 micu-image-mcp reset --yes
 micu-image-mcp doctor
 micu-image-mcp version
@@ -107,7 +115,8 @@ initialize + tools/list。`--reset` 只删除 `micu-image` 节，其他 MCP serv
 
 ### macOS Keychain
 
-原 Keychain launcher 保留。未设置 `MICU_MCP_BINARY` 时继续启动 Python；试用 Rust 时设置 binary：
+原 Keychain launcher 保留用于 Python 回滚。Rust binary 本身也能在启动时按 service/account 从
+macOS Keychain 取 key，因此稳定 binary 可作为纯 `command`，不再需要 shell wrapper：
 
 ```bash
 security add-generic-password \
@@ -118,11 +127,10 @@ security add-generic-password \
 
 ```toml
 [mcp_servers.micu-image]
-command = "/absolute/path/repo/scripts/run-mcp-macos-keychain.sh"
+command = "/Users/you/Library/Application Support/micu-image-mcp/bin/micu-image-mcp"
 args = []
 
 [mcp_servers.micu-image.env]
-MICU_MCP_BINARY = "/absolute/path/micu-image-mcp"
 MICU_KEYCHAIN_SERVICE = "ai.micuapi.mcp"
 MICU_KEYCHAIN_ACCOUNT = "your-macos-account"
 MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
@@ -207,6 +215,11 @@ image2 路径：
 | `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | 可信 CDN host，逗号分隔 |
 | `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | 仅 trusted host 可放行 198.18.0.0/15 fake-ip |
 
+路径在 server 启动时只解析一次：相对 `MICU_SAVE_DIR` 和 tool `save_dir` 都以 save root 为基准；
+设置 `MICU_INPUT_ROOT` 时，相对输入路径以 input root 为基准，否则以启动时捕获的 cwd 为基准。
+只展开精确的 `~`、`~/...`、Windows `~\...`，`~someone` 会被拒。Python/Rust 兼容期共用
+`~/.cache/micu-image/bigsize.lock`。
+
 ## 手动配置
 
 Claude Code:
@@ -218,7 +231,6 @@ Claude Code:
       "command": "/absolute/path/micu-image-mcp",
       "args": [],
       "env": {
-        "MICU_API_KEY": "sk-...",
         "MICU_SAVE_DIR": "/Users/you/Pictures/micu-out",
         "MICU_SAVE_DIR_ROOT": "/Users/you/Pictures/micu-out"
       }
@@ -235,10 +247,14 @@ command = "/absolute/path/micu-image-mcp"
 args = []
 
 [mcp_servers.micu-image.env]
-MICU_API_KEY = "sk-..."
 MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
 MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 ```
+
+不要手工把 Windows 路径拼进 TOML 字符串。Rust installer 使用 `toml_edit` AST，临时写入后会
+再用 TOML parser 校验 `command`/`args`/env 的 PathBuf round-trip；单引号 literal string 和正确
+转义的双引号 basic string 都合法，关键是 parser 回读值完全一致。API key 不持久化到上述
+JSON/TOML；由客户端进程环境、macOS Keychain 或 tool 的既有 `api_key` 参数提供。
 
 迁移期若要手动使用 Python reference，把 command 改为 Python、args 改为绝对
 `server.py` 路径即可；五工具 schema 保持相同。
@@ -315,7 +331,7 @@ MICU_RUN_LIVE_TESTS=0 MICU_RUN_CONTRACT_TESTS=1 \
   tests/contract/test_latest_protocol.py
 ```
 
-当前矩阵包含 36 个场景，比较 tools schema、HTTP JSON/multipart、retry 顺序、URL/b64/data URL、
+当前矩阵包含 38 个场景，比较 tools schema、HTTP JSON/multipart、retry 顺序、URL/b64/data URL、
 SSRF、损坏图片、body cap、并发、文件冲突和实际落盘内容。mock 只监听 `127.0.0.1`，不调用
 真实生图 API。安全与兼容细节见：
 

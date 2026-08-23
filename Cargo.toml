@@ -22,7 +22,6 @@ ipnet = "2.12.1"
 rand = "0.10.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "multipart", "rustls", "socks", "stream"] }
 rmcp = { version = "3.1.4", default-features = false, features = ["server", "transport-io"] }
-rpassword = "7.5.4"
 secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }

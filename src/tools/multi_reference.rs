@@ -1,47 +1,25 @@
 use secrecy::ExposeSecret;
-use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::{
-    http_client::RetryOptions,
-    providers::EditRequest,
-    response::error_detail,
-    validation::{
-        image::{MAX_TOTAL_INPUT_BYTES, validate_input_image},
-        path::safe_basename,
+    domain::{
+        basename::safe_basename,
         routing::{is_large_tier, is_quality_model, model_error, resolve_model, size_note},
         size::{parse_size, size_tier, validate_size},
     },
+    fs::input::MAX_TOTAL_INPUT_BYTES,
+    http::client::RetryOptions,
+    http::response::error_detail,
+    providers::EditRequest,
 };
 
 use super::{
-    SecretArg, ToolEngine, ToolFailure,
+    MultiReferenceParams, ToolEngine, ToolFailure,
     common::{
         default_basename, push_note_once, python_string_repr, resolve_key, saved_value,
         validation_error,
     },
 };
-
-fn default_size() -> String {
-    "1024x1024".into()
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MultiReferenceParams {
-    pub prompt: String,
-    pub image_paths: Vec<String>,
-    #[serde(default = "default_size")]
-    pub size: String,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub save_dir: Option<String>,
-    #[serde(default)]
-    pub basename: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<SecretArg>,
-}
 
 impl ToolEngine {
     pub async fn image_multi_reference(
@@ -81,7 +59,10 @@ impl ToolEngine {
                 python_string_repr(params.basename.as_deref().unwrap_or_default())
             )));
         }
-        let location = match self.storage.resolve_save_dir(params.save_dir.as_deref()) {
+        let location = match self
+            .output_store
+            .resolve_save_dir(params.save_dir.as_deref())
+        {
             Ok(location) => location,
             Err(error) => return Ok(validation_error(error)),
         };
@@ -92,11 +73,10 @@ impl ToolEngine {
         let mut images = Vec::with_capacity(reference_count);
         let mut total_bytes = 0_u64;
         for (index, path) in params.image_paths.iter().enumerate() {
-            let image = match validate_input_image(
-                self.config.as_ref(),
-                path,
-                &format!("image_paths[{index}]"),
-            ) {
+            let image = match self
+                .input_store
+                .validate_image(path, &format!("image_paths[{index}]"))
+            {
                 Ok(image) => image,
                 Err(error) => return Ok(validation_error(error)),
             };
@@ -200,7 +180,7 @@ impl ToolEngine {
         output.insert("used_fallback".into(), Value::Bool(false));
         output.insert("size_honored".into(), Value::Bool(size_honored));
         output.insert("n_references".into(), Value::from(reference_count));
-        output.insert("saved".into(), saved_value(&saved, None));
+        output.insert("saved".into(), saved_value(&saved, None)?);
         output.insert(
             "notes".into(),
             Value::Array(notes.into_iter().map(Value::String).collect()),
@@ -226,12 +206,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     use crate::{
-        config::Config,
-        download::SystemResolver,
-        http_client::{ApiResponse, HttpExecutor, RetryOptions},
-        output::OutputSaver,
+        config::{Config, test_paths},
+        fs::output_store::OutputStore,
+        fs::response_output::OutputSaver,
+        http::client::{ApiResponse, HttpExecutor, RetryOptions},
+        http::download::SystemResolver,
         providers::{EditRequest, GenerateRequest, ImageProvider},
-        storage::Storage,
     };
 
     use super::*;
@@ -309,32 +289,30 @@ mod tests {
         let body = serde_json::to_vec(&serde_json::json!({
             "data":[{"b64_json":STANDARD.encode(std::fs::read(&paths[0]).unwrap_or_else(|error| panic!("{error}")))}]
         })).unwrap_or_else(|error| panic!("{error}"));
-        let config = Arc::new(
-            Config::from_map(&BTreeMap::from([
-                (
-                    "HOME".into(),
-                    temp.path().join("home").to_string_lossy().into_owned(),
-                ),
-                (
-                    "MICU_SAVE_DIR_ROOT".into(),
-                    out.to_string_lossy().into_owned(),
-                ),
-                ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
-                (
-                    "MICU_INPUT_ROOT".into(),
-                    input.to_string_lossy().into_owned(),
-                ),
-                ("MICU_API_KEY".into(), "sk-test".into()),
-            ]))
-            .unwrap_or_else(|error| panic!("{error}")),
-        );
+        let environment = BTreeMap::from([
+            (
+                "MICU_SAVE_DIR_ROOT".into(),
+                out.to_string_lossy().into_owned(),
+            ),
+            ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
+            (
+                "MICU_INPUT_ROOT".into(),
+                input.to_string_lossy().into_owned(),
+            ),
+            ("MICU_API_KEY".into(), "sk-test".into()),
+        ]);
+        let config =
+            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
+        let app_paths = Arc::new(test_paths(temp.path(), environment));
         let provider = Arc::new(FakeProvider {
             body,
             calls: AtomicUsize::new(0),
             captured: Mutex::new(Vec::new()),
         });
-        let storage = Storage::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let storage =
+            OutputStore::new(app_paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let http = HttpExecutor::new(config.as_ref(), app_paths.as_ref())
+            .unwrap_or_else(|error| panic!("{error}"));
         let output = OutputSaver::new(
             config.clone(),
             storage.clone(),
@@ -343,7 +321,7 @@ mod tests {
         );
         (
             temp,
-            ToolEngine::new(config, storage, output, provider.clone()),
+            ToolEngine::new(config, app_paths, storage, output, provider.clone()),
             provider,
             paths,
         )

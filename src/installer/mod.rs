@@ -1,16 +1,27 @@
 use std::{
     collections::BTreeMap,
+    ffi::OsString,
     fs,
     io::{BufRead, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde_json::{Map as JsonMap, Value as JsonValue, json};
-use toml_edit::{Array, DocumentMut, Item, value};
+use secrecy::ExposeSecret;
 use url::Url;
 
-use crate::config::{Config, is_safe_base_url};
+use crate::config::{
+    AppPaths, Config, ENV_KEYS, EnvironmentSnapshot, PathSource, is_safe_base_url,
+};
+
+pub mod atomic;
+pub mod binary;
+pub mod claude;
+mod client_config;
+pub mod codex;
+mod error;
+
+pub use client_config::ClientLaunchSpec;
+pub use error::InstallError;
 
 const DEFAULT_BASE_URL: &str = "https://www.micuapi.ai";
 
@@ -21,6 +32,8 @@ pub struct InstallOptions {
     pub yes: bool,
     pub base_url: Option<String>,
     pub save_dir: Option<PathBuf>,
+    pub binary_path: Option<PathBuf>,
+    pub dev: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -30,458 +43,286 @@ pub struct ResetOptions {
     pub yes: bool,
 }
 
-pub fn install(options: InstallOptions) -> Result<(), String> {
-    let home = dirs::home_dir().ok_or_else(|| "无法确定用户 home 目录".to_owned())?;
+pub fn install(options: InstallOptions) -> Result<(), InstallError> {
+    let mut environment = EnvironmentSnapshot::capture(ENV_KEYS)?;
+    if let Some(save_dir) = &options.save_dir {
+        let value = path_text(save_dir, "--save-dir")?;
+        environment.insert("MICU_SAVE_DIR_ROOT", value.clone());
+        environment.insert("MICU_SAVE_DIR", value);
+    } else if environment.get("MICU_SAVE_DIR_ROOT").is_none()
+        && let Some(save_dir) = environment.get("MICU_SAVE_DIR").map(str::to_owned)
+    {
+        environment.insert("MICU_SAVE_DIR_ROOT", save_dir);
+    }
     let base_url = validated_base_url(
         options
             .base_url
-            .or_else(|| std::env::var("MICU_BASEURL").ok())
             .as_deref()
+            .or_else(|| environment.get("MICU_BASEURL"))
             .unwrap_or(DEFAULT_BASE_URL),
     )?;
-    let api_key = match std::env::var("MICU_API_KEY")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    {
-        Some(key) => key,
-        None if options.yes => {
-            return Err("--yes 模式需要环境变量 MICU_API_KEY".into());
-        }
-        None => rpassword::prompt_password("米醋 Image2 API key: ")
-            .map_err(|error| format!("读取 API key 失败: {error}"))?
-            .trim()
-            .to_owned(),
+    environment.insert("MICU_BASEURL", base_url.clone());
+
+    let paths = AppPaths::resolve(&environment, PathSource::capture()?)?;
+    let selected_source = options.binary_path.as_deref().unwrap_or(&paths.executable);
+    let command = if options.dev {
+        selected_source
+            .canonicalize()
+            .map_err(|error| InstallError::BinarySource(error.to_string()))?
+    } else {
+        binary::install_binary(selected_source, &paths.install_binary)?
     };
-    if api_key.is_empty() {
-        return Err("API key 不能为空".into());
-    }
-    let save_dir = options
-        .save_dir
-        .or_else(|| std::env::var_os("MICU_SAVE_DIR").map(PathBuf::from))
-        .unwrap_or_else(|| home.join("Pictures").join("micu-out"));
-    let save_dir = absolute_path(&save_dir)?;
-    fs::create_dir_all(&save_dir)
-        .map_err(|error| format!("创建输出目录 {} 失败: {error}", save_dir.display()))?;
-    let binary = std::env::current_exe()
-        .map_err(|error| format!("无法定位当前 binary: {error}"))?
-        .canonicalize()
-        .map_err(|error| format!("无法解析当前 binary: {error}"))?;
-    let env = install_environment(&api_key, &base_url, &save_dir);
+    let launch = ClientLaunchSpec::new(
+        command.clone(),
+        Vec::<OsString>::new(),
+        install_environment(&environment, &paths, &base_url)?,
+    );
 
     write_status(format!(
-        "将安装 Rust binary={}，API key={}，save_dir={}",
-        binary.display(),
-        mask_key(&api_key),
-        save_dir.display()
+        "将安装 Rust binary={}，save_dir={}，API key 不写入客户端配置",
+        path_text(&command, "installed binary")?,
+        path_text(&paths.default_save_dir, "save dir")?,
     ))?;
     if !options.yes && !confirm("继续写入 Claude/Codex 配置？")? {
-        return Err("用户取消".into());
+        return Err(InstallError::Cancelled);
     }
     if !options.no_claude {
-        let path = home.join(".claude.json");
-        install_claude_file(&path, &binary, &env)?;
-        write_status(format!("已更新 {}", path.display()))?;
+        let report = claude::write_config_file(&paths.claude_config, &launch)?;
+        write_status(format!(
+            "已更新 {}{}",
+            path_text(&report.path, "Claude config")?,
+            backup_suffix(report.backup.as_deref())?
+        ))?;
     }
     if !options.no_codex {
-        let path = home.join(".codex").join("config.toml");
-        install_codex_file(&path, &binary, &env)?;
-        write_status(format!("已更新 {}", path.display()))?;
+        let report = codex::write_config_file(&paths.codex_config, &launch)?;
+        write_status(format!(
+            "已更新 {}{}",
+            path_text(&report.path, "Codex config")?,
+            backup_suffix(report.backup.as_deref())?
+        ))?;
     }
     Ok(())
 }
 
-pub fn reset(options: ResetOptions) -> Result<(), String> {
+pub fn reset(options: ResetOptions) -> Result<(), InstallError> {
     if !options.yes && !confirm("仅移除 micu-image 配置并保留其他 MCP server，继续？")?
     {
-        return Err("用户取消".into());
+        return Err(InstallError::Cancelled);
     }
-    let home = dirs::home_dir().ok_or_else(|| "无法确定用户 home 目录".to_owned())?;
-    if !options.no_claude {
-        let path = home.join(".claude.json");
-        if reset_claude_file(&path)? {
-            write_status(format!(
-                "已从 {} 移除 mcpServers.micu-image",
-                path.display()
-            ))?;
-        }
+    let environment = EnvironmentSnapshot::capture(ENV_KEYS)?;
+    let paths = AppPaths::resolve(&environment, PathSource::capture()?)?;
+    if !options.no_claude && claude::reset_config_file(&paths.claude_config)?.is_some() {
+        write_status("已从 Claude JSON 移除 mcpServers.micu-image".into())?;
     }
-    if !options.no_codex {
-        let path = home.join(".codex").join("config.toml");
-        if reset_codex_file(&path)? {
-            write_status(format!(
-                "已从 {} 移除 [mcp_servers.micu-image]",
-                path.display()
-            ))?;
-        }
+    if !options.no_codex && codex::reset_config_file(&paths.codex_config)?.is_some() {
+        write_status("已从 Codex TOML 移除 mcp_servers.micu-image".into())?;
     }
     Ok(())
 }
 
-pub fn doctor() -> Result<(), String> {
-    let config = Config::load().map_err(|error| error.to_string())?;
+pub fn doctor() -> Result<(), InstallError> {
+    let mut environment = EnvironmentSnapshot::capture(ENV_KEYS)?;
+    environment.load_platform_secrets();
+    let paths = AppPaths::resolve(&environment, PathSource::capture()?)?;
+    let config = Config::from_env(&environment)?;
+    let mut configured = 0_usize;
+
+    if paths.codex_config.is_file() {
+        let text = fs::read_to_string(&paths.codex_config)
+            .map_err(|error| InstallError::Doctor(format!("读取 Codex config 失败: {error}")))?;
+        if let Some(launch) = codex::parse_config_launch(&text)? {
+            verify_launch("Codex", &launch, &paths)?;
+            configured += 1;
+        }
+    }
+    if paths.claude_config.is_file() {
+        let text = fs::read_to_string(&paths.claude_config)
+            .map_err(|error| InstallError::Doctor(format!("读取 Claude config 失败: {error}")))?;
+        if let Some(launch) = claude::parse_config_launch(&text)? {
+            verify_launch("Claude", &launch, &paths)?;
+            configured += 1;
+        }
+    }
+    if configured == 0 {
+        return Err(InstallError::Doctor(
+            "Codex/Claude 均未配置 micu-image".into(),
+        ));
+    }
+    if !paths.save_root.is_dir() || !paths.default_save_dir.is_dir() {
+        return Err(InstallError::Doctor(
+            "save root/default save dir 不可用".into(),
+        ));
+    }
     write_status(format!(
-        "binary={} version={} base_url={} api_key={} save_root={}",
-        std::env::current_exe()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".into()),
+        "doctor: OK version={} clients={} base_url={} api_key_configured={} save_root={} lock_file={}",
         env!("CARGO_PKG_VERSION"),
+        configured,
         config.base_url,
-        mask_key(secrecy::ExposeSecret::expose_secret(&config.api_key)),
-        config.save_root.display()
-    ))?;
-    fs::create_dir_all(&config.save_root)
-        .map_err(|error| format!("save root 不可写 {}: {error}", config.save_root.display()))?;
-    write_status("doctor: OK".into())
+        !config.api_key.expose_secret().trim().is_empty(),
+        path_text(&paths.save_root, "save root")?,
+        path_text(&paths.lock_file, "lock file")?,
+    ))
 }
 
-fn install_environment(api_key: &str, base_url: &str, save_dir: &Path) -> BTreeMap<String, String> {
-    let mut env = BTreeMap::from([
-        ("MICU_API_KEY".into(), api_key.into()),
+fn install_environment(
+    source: &EnvironmentSnapshot,
+    paths: &AppPaths,
+    base_url: &str,
+) -> Result<BTreeMap<String, String>, InstallError> {
+    let mut environment = BTreeMap::from([
         (
             "MICU_SAVE_DIR".into(),
-            save_dir.to_string_lossy().into_owned(),
+            path_text(&paths.default_save_dir, "MICU_SAVE_DIR")?,
         ),
         (
             "MICU_SAVE_DIR_ROOT".into(),
-            save_dir.to_string_lossy().into_owned(),
+            path_text(&paths.save_root, "MICU_SAVE_DIR_ROOT")?,
         ),
     ]);
     if base_url != DEFAULT_BASE_URL {
-        env.insert("MICU_BASEURL".into(), base_url.into());
+        environment.insert("MICU_BASEURL".into(), base_url.into());
     }
-    env
+    if let Some(input_root) = &paths.input_root {
+        environment.insert(
+            "MICU_INPUT_ROOT".into(),
+            path_text(input_root, "MICU_INPUT_ROOT")?,
+        );
+    }
+    for name in [
+        "MICU_MODEL",
+        "MICU_USE_SHELL_PROXY",
+        "MICU_RESPONSE_FORMAT",
+        "MICU_TRUSTED_DOWNLOAD_HOSTS",
+        "MICU_ALLOW_FAKE_IP_DOWNLOAD",
+        "MICU_KEYCHAIN_ACCOUNT",
+        "MICU_KEYCHAIN_SERVICE",
+    ] {
+        if let Some(value) = source
+            .get(name)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            environment.insert(name.into(), value.into());
+        }
+    }
+    Ok(environment)
 }
 
-fn install_claude_file(
-    path: &Path,
-    binary: &Path,
-    env: &BTreeMap<String, String>,
-) -> Result<(), String> {
-    let current = if path.exists() {
-        let text = fs::read_to_string(path)
-            .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
-        serde_json::from_str(&text)
-            .map_err(|error| format!("{} 不是合法 JSON: {error}", path.display()))?
-    } else {
-        json!({})
-    };
-    let updated = install_claude_value(current, binary, env)?;
-    backup(path)?;
-    let bytes = serde_json::to_vec_pretty(&updated)
-        .map_err(|error| format!("Claude JSON 序列化失败: {error}"))?;
-    atomic_write_secure(path, &bytes)
-}
-
-fn reset_claude_file(path: &Path) -> Result<bool, String> {
-    if !path.exists() {
-        return Ok(false);
+fn verify_launch(
+    client: &str,
+    launch: &ClientLaunchSpec,
+    paths: &AppPaths,
+) -> Result<(), InstallError> {
+    if !launch.args().is_empty() {
+        return Err(InstallError::Doctor(format!(
+            "{client} micu-image args 必须为空"
+        )));
     }
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
-    let current: JsonValue = serde_json::from_str(&text)
-        .map_err(|error| format!("{} 不是合法 JSON: {error}", path.display()))?;
-    let (updated, changed) = reset_claude_value(current)?;
-    if !changed {
-        return Ok(false);
+    let command = launch.command();
+    if !command.is_file() {
+        return Err(InstallError::Doctor(format!(
+            "{client} binary 不存在: {}",
+            path_text(command, "configured binary")?
+        )));
     }
-    backup(path)?;
-    let bytes = serde_json::to_vec_pretty(&updated)
-        .map_err(|error| format!("Claude JSON 序列化失败: {error}"))?;
-    atomic_write_secure(path, &bytes)?;
-    Ok(true)
-}
-
-fn install_codex_file(
-    path: &Path,
-    binary: &Path,
-    env: &BTreeMap<String, String>,
-) -> Result<(), String> {
-    let text = if path.exists() {
-        fs::read_to_string(path)
-            .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?
-    } else {
-        String::new()
-    };
-    let mut document = text
-        .parse::<DocumentMut>()
-        .map_err(|error| format!("{} 不是合法 TOML: {error}", path.display()))?;
-    install_codex_document(&mut document, binary, env)?;
-    backup(path)?;
-    atomic_write_secure(path, document.to_string().as_bytes())
-}
-
-fn reset_codex_file(path: &Path) -> Result<bool, String> {
-    if !path.exists() {
-        return Ok(false);
+    if !is_executable(command)? {
+        return Err(InstallError::Doctor(format!(
+            "{client} binary 不可执行: {}",
+            path_text(command, "configured binary")?
+        )));
     }
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
-    let mut document = text
-        .parse::<DocumentMut>()
-        .map_err(|error| format!("{} 不是合法 TOML: {error}", path.display()))?;
-    if !reset_codex_document(&mut document) {
-        return Ok(false);
+    let canonical = command
+        .canonicalize()
+        .map_err(|error| InstallError::Doctor(format!("{client} binary 无法解析: {error}")))?;
+    let stable = paths.install_binary.canonicalize().ok();
+    let current = paths.executable.canonicalize().ok();
+    if Some(canonical.clone()) != stable && Some(canonical.clone()) != current {
+        return Err(InstallError::Doctor(format!(
+            "{client} command 不是稳定安装 binary 或当前 --dev binary"
+        )));
     }
-    backup(path)?;
-    atomic_write_secure(path, document.to_string().as_bytes())?;
-    Ok(true)
-}
-
-fn install_claude_value(
-    mut current: JsonValue,
-    binary: &Path,
-    env: &BTreeMap<String, String>,
-) -> Result<JsonValue, String> {
-    let root = current
-        .as_object_mut()
-        .ok_or_else(|| "~/.claude.json 顶层必须是 object".to_owned())?;
-    let servers = root
-        .entry("mcpServers")
-        .or_insert_with(|| JsonValue::Object(JsonMap::new()))
-        .as_object_mut()
-        .ok_or_else(|| "~/.claude.json 的 mcpServers 必须是 object".to_owned())?;
-    servers.insert(
-        "micu-image".into(),
-        json!({
-            "command": binary.to_string_lossy(),
-            "args": [],
-            "env": env,
-        }),
-    );
-    Ok(current)
-}
-
-fn reset_claude_value(mut current: JsonValue) -> Result<(JsonValue, bool), String> {
-    let root = current
-        .as_object_mut()
-        .ok_or_else(|| "~/.claude.json 顶层必须是 object".to_owned())?;
-    let changed = root
-        .get_mut("mcpServers")
-        .and_then(JsonValue::as_object_mut)
-        .and_then(|servers| servers.remove("micu-image"))
-        .is_some();
-    Ok((current, changed))
-}
-
-fn install_codex_document(
-    document: &mut DocumentMut,
-    binary: &Path,
-    env: &BTreeMap<String, String>,
-) -> Result<(), String> {
-    if document.get("mcp_servers").is_none() {
-        document["mcp_servers"] = Item::Table(toml_edit::Table::new());
+    let output = std::process::Command::new(&canonical)
+        .arg("version")
+        .output()
+        .map_err(|error| InstallError::Doctor(format!("{client} version 检查失败: {error}")))?;
+    if !output.status.success() {
+        return Err(InstallError::Doctor(format!(
+            "{client} binary version 命令失败"
+        )));
     }
-    let servers = document
-        .get_mut("mcp_servers")
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| "Codex config 的 mcp_servers 必须是 table".to_owned())?;
-    let mut server = toml_edit::Table::new();
-    server["command"] = value(binary.to_string_lossy().into_owned());
-    server["args"] = value(Array::new());
-    let mut env_table = toml_edit::Table::new();
-    for (name, value_text) in env {
-        env_table[name] = value(value_text.clone());
+    let version = String::from_utf8(output.stdout)
+        .map_err(|_| InstallError::Doctor(format!("{client} version 输出不是 UTF-8")))?;
+    if version.trim() != env!("CARGO_PKG_VERSION") {
+        return Err(InstallError::Doctor(format!(
+            "{client} binary version={}，期望 {}",
+            version.trim(),
+            env!("CARGO_PKG_VERSION")
+        )));
     }
-    server.insert("env", Item::Table(env_table));
-    servers.insert("micu-image", Item::Table(server));
     Ok(())
 }
 
-fn reset_codex_document(document: &mut DocumentMut) -> bool {
-    document
-        .get_mut("mcp_servers")
-        .and_then(Item::as_table_mut)
-        .and_then(|servers| servers.remove("micu-image"))
-        .is_some()
+#[cfg(unix)]
+fn is_executable(path: &Path) -> Result<bool, InstallError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path)
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .map_err(|error| InstallError::Doctor(format!("检查 binary 权限失败: {error}")))
 }
 
-fn validated_base_url(raw: &str) -> Result<String, String> {
-    let url = Url::parse(raw).map_err(|error| format!("base URL 无法解析: {error}"))?;
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> Result<bool, InstallError> {
+    Ok(path.is_file())
+}
+
+fn validated_base_url(raw: &str) -> Result<String, InstallError> {
+    let url = Url::parse(raw).map_err(|error| {
+        InstallError::Config(crate::config::ConfigError::InvalidBaseUrl {
+            value: raw.to_owned(),
+            detail: error.to_string(),
+        })
+    })?;
     if !is_safe_base_url(&url) {
-        return Err("base URL 仅允许 https，或本地 localhost HTTP".into());
+        return Err(InstallError::Config(
+            crate::config::ConfigError::UnsafeBaseUrl(raw.to_owned()),
+        ));
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
-fn absolute_path(path: &Path) -> Result<PathBuf, String> {
-    let expanded = if let Ok(remainder) = path.strip_prefix("~") {
-        let home = dirs::home_dir().ok_or_else(|| "无法确定用户 home 目录".to_owned())?;
-        if remainder.as_os_str().is_empty() {
-            home
-        } else {
-            home.join(remainder)
-        }
-    } else {
-        path.to_path_buf()
-    };
-    if expanded.is_absolute() {
-        Ok(expanded)
-    } else {
-        std::env::current_dir()
-            .map(|current| current.join(expanded))
-            .map_err(|error| format!("无法解析路径: {error}"))
-    }
+fn path_text(path: &Path, context: &'static str) -> Result<String, InstallError> {
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or(InstallError::NonUnicodePath { context })
 }
 
-fn backup(path: &Path) -> Result<Option<PathBuf>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let filename = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "config".into());
-    let backup = path.with_file_name(format!("{filename}.bak.{timestamp}"));
-    fs::copy(path, &backup).map_err(|error| format!("备份 {} 失败: {error}", path.display()))?;
-    chmod_600(&backup)?;
-    Ok(Some(backup))
+fn backup_suffix(path: Option<&Path>) -> Result<String, InstallError> {
+    path.map(|backup| path_text(backup, "backup path").map(|text| format!("，备份={text}")))
+        .transpose()
+        .map(Option::unwrap_or_default)
 }
 
-fn atomic_write_secure(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("配置路径没有 parent: {}", path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("创建配置目录 {} 失败: {error}", parent.display()))?;
-    chmod_700(parent)?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".micu-config-")
-        .tempfile_in(parent)
-        .map_err(|error| format!("创建配置临时文件失败: {error}"))?;
-    temp.write_all(bytes)
-        .map_err(|error| format!("写配置临时文件失败: {error}"))?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|error| format!("sync 配置临时文件失败: {error}"))?;
-    chmod_600(temp.path())?;
-    temp.persist(path)
-        .map_err(|error| format!("原子替换配置失败: {}", error.error))?;
-    chmod_600(path)
-}
-
-#[cfg(unix)]
-fn chmod_600(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("设置 {} 权限失败: {error}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn chmod_600(_path: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn chmod_700(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("设置 {} 权限失败: {error}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn chmod_700(_path: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-fn mask_key(key: &str) -> String {
-    let characters = key.chars().collect::<Vec<_>>();
-    if characters.len() <= 8 {
-        return "***".into();
-    }
-    let start = characters.iter().take(5).collect::<String>();
-    let end = characters
-        .iter()
-        .skip(characters.len().saturating_sub(4))
-        .collect::<String>();
-    format!("{start}...{end}")
-}
-
-fn confirm(prompt: &str) -> Result<bool, String> {
+fn confirm(prompt: &str) -> Result<bool, InstallError> {
     let mut stderr = std::io::stderr().lock();
-    write!(stderr, "{prompt} [y/N]: ").map_err(|error| error.to_string())?;
-    stderr.flush().map_err(|error| error.to_string())?;
+    write!(stderr, "{prompt} [y/N]: ")
+        .map_err(|error| InstallError::StatusIo(error.to_string()))?;
+    stderr
+        .flush()
+        .map_err(|error| InstallError::StatusIo(error.to_string()))?;
     let mut input = String::new();
     std::io::stdin()
         .lock()
         .read_line(&mut input)
-        .map_err(|error| format!("读取确认失败: {error}"))?;
+        .map_err(|error| InstallError::StatusIo(error.to_string()))?;
     Ok(matches!(
         input.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
     ))
 }
 
-fn write_status(message: String) -> Result<(), String> {
-    let mut stderr = std::io::stderr().lock();
-    writeln!(stderr, "{message}").map_err(|error| error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn claude_merge_and_reset_preserve_unrelated_fields() {
-        let current = json!({
-            "theme": "dark",
-            "mcpServers": {"other": {"command": "other"}}
-        });
-        let env = BTreeMap::from([("MICU_API_KEY".into(), "secret".into())]);
-        let updated = install_claude_value(current, Path::new("/bin/micu"), &env)
-            .unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(updated["theme"], "dark");
-        assert_eq!(updated["mcpServers"]["other"]["command"], "other");
-        assert_eq!(updated["mcpServers"]["micu-image"]["command"], "/bin/micu");
-        let (reset, changed) =
-            reset_claude_value(updated).unwrap_or_else(|error| panic!("{error}"));
-        assert!(changed);
-        assert_eq!(reset["mcpServers"]["other"]["command"], "other");
-        assert!(reset["mcpServers"].get("micu-image").is_none());
-    }
-
-    #[test]
-    fn codex_merge_and_reset_preserve_unrelated_sections() {
-        let mut document = "model = 'gpt-test'\n\n[mcp_servers.other]\ncommand = 'other'\n"
-            .parse::<DocumentMut>()
-            .unwrap_or_else(|error| panic!("{error}"));
-        let env = BTreeMap::from([
-            ("MICU_API_KEY".into(), "secret".into()),
-            ("MICU_SAVE_DIR".into(), "/tmp/out".into()),
-        ]);
-        install_codex_document(&mut document, Path::new("/bin/micu"), &env)
-            .unwrap_or_else(|error| panic!("{error}"));
-        let rendered = document.to_string();
-        assert!(rendered.contains("model = 'gpt-test'"));
-        assert!(rendered.contains("[mcp_servers.other]"));
-        assert!(rendered.contains("[mcp_servers.micu-image]"), "{rendered}");
-        assert!(
-            rendered.contains("[mcp_servers.micu-image.env]"),
-            "{rendered}"
-        );
-        assert!(reset_codex_document(&mut document));
-        let reset = document.to_string();
-        assert!(reset.contains("[mcp_servers.other]"));
-        assert!(!reset.contains("mcp_servers.micu-image"));
-    }
-
-    #[test]
-    fn base_url_validation_and_masking_never_echo_full_keys() {
-        assert_eq!(
-            validated_base_url("https://example.test/").as_deref(),
-            Ok("https://example.test")
-        );
-        assert!(validated_base_url("http://example.test").is_err());
-        assert_eq!(
-            validated_base_url("http://localhost:8080/").as_deref(),
-            Ok("http://localhost:8080")
-        );
-        let masked = mask_key("sk-1234567890abcdef");
-        assert_eq!(masked, "sk-12...cdef");
-        assert!(!masked.contains("1234567890"));
-    }
+fn write_status(message: String) -> Result<(), InstallError> {
+    writeln!(std::io::stderr().lock(), "{message}")
+        .map_err(|error| InstallError::StatusIo(error.to_string()))
 }

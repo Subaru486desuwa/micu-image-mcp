@@ -52,10 +52,14 @@ binary 无参数等于 `serve`：
 安装：
 
 ```bash
-MICU_API_KEY=sk-... \
 MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
 /absolute/path/micu-image-mcp install --yes
 ```
+
+默认会把 source binary 复制到稳定的 per-user data-local 路径，再写客户端配置：macOS 位于
+`~/Library/Application Support/micu-image-mcp/bin/`，Linux 位于
+`~/.local/share/micu-image-mcp/bin/`，Windows 位于
+`%LOCALAPPDATA%\micu-image-mcp\bin\`。仓库移动或 `cargo clean` 不会删除该副本。
 
 常用 flags：
 
@@ -64,14 +68,17 @@ micu-image-mcp install --no-codex
 micu-image-mcp install --no-claude
 micu-image-mcp install --baseurl https://www.micuapi.ai
 micu-image-mcp install --save-dir /absolute/output/path
+micu-image-mcp install --binary-path /path/to/downloaded/micu-image-mcp
+micu-image-mcp install --dev --binary-path ./target/release/micu-image-mcp
 micu-image-mcp reset --yes
 micu-image-mcp reset --yes --no-claude
 micu-image-mcp doctor
 micu-image-mcp version
 ```
 
-非交互 `--yes` 必须从 `MICU_API_KEY` 读 key。交互模式使用无回显输入。安装日志只显示脱敏
-key。base URL 仅允许 HTTPS，或 localhost/127.0.0.1/`::1` HTTP。
+installer 不把 API key 写入 Claude JSON/Codex TOML。macOS 可使用下文 Keychain；其他平台让
+客户端进程继承 `MICU_API_KEY`，或使用 tool 已有的 `api_key` 参数。base URL 仅允许 HTTPS，
+或 localhost/127.0.0.1/`::1` HTTP。
 
 ## 手动配置
 
@@ -84,7 +91,6 @@ Claude JSON：
       "command": "/absolute/path/micu-image-mcp",
       "args": [],
       "env": {
-        "MICU_API_KEY": "sk-...",
         "MICU_SAVE_DIR": "/absolute/output/path",
         "MICU_SAVE_DIR_ROOT": "/absolute/output/path"
       }
@@ -101,32 +107,42 @@ command = "/absolute/path/micu-image-mcp"
 args = []
 
 [mcp_servers.micu-image.env]
-MICU_API_KEY = "sk-..."
 MICU_SAVE_DIR = "/absolute/output/path"
 MICU_SAVE_DIR_ROOT = "/absolute/output/path"
 ```
 
-客户端保存配置后需要重启，让它重新 spawn STDIO server。
+客户端保存配置后需要重启，让它重新 spawn STDIO server。Windows 用户不应手工拼接上述 TOML；
+installer 使用 `toml_edit` AST 序列化，并对临时文件执行 parser round-trip 后才原子替换配置。
+单/双引号都不是契约，解析后的 PathBuf 与原值完全一致才是契约。
 
 ## macOS Keychain
 
-原 launcher 保留。若要让它启动 Rust，只额外设置 `MICU_MCP_BINARY`：
+原 launcher 保留用于 Python 回滚。Rust binary 可直接读取 Keychain，因此推荐配置稳定 binary：
 
 ```toml
 [mcp_servers.micu-image]
-command = "/absolute/path/repo/scripts/run-mcp-macos-keychain.sh"
+command = "/Users/you/Library/Application Support/micu-image-mcp/bin/micu-image-mcp"
 args = []
 
 [mcp_servers.micu-image.env]
-MICU_MCP_BINARY = "/absolute/path/micu-image-mcp"
 MICU_KEYCHAIN_SERVICE = "ai.micuapi.mcp"
 MICU_KEYCHAIN_ACCOUNT = "your-macos-account"
 MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
 MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 ```
 
-不设置 `MICU_MCP_BINARY` 时 launcher 继续使用 Python reference，因此现有 Keychain 用户不会被
-迁移工作树静默切换。
+Rust 只在 `MICU_API_KEY` 为空且配置了 service/account 时读取 Keychain；secret 进入
+`SecretString`，不会写日志或客户端配置。旧 launcher 未删除，不设置 `MICU_MCP_BINARY` 时仍可
+显式回滚到 Python reference。
+
+## 相对路径与锁
+
+- `MICU_SAVE_DIR_ROOT` 在启动时转为绝对、创建并 canonicalize；相对值以 home 为基准。
+- `MICU_SAVE_DIR` 和 tool `save_dir` 的相对值以 save root 为基准。
+- 设置 `MICU_INPUT_ROOT` 后，相对输入以 input root 为基准；未设置时以 server 启动时捕获的 cwd
+  为兼容基准。`server_info.safety_constraints.input_image_validation` 会显示实际规则。
+- 只支持 `~`、`~/...` 与 Windows `~\...`，不支持 `~someone`。
+- Python/Rust 兼容期都使用 `~/.cache/micu-image/bigsize.lock`。
 
 ## 验证
 
@@ -201,4 +217,3 @@ Python 实现、Python tests 和 `install.py` 都没有删除。Rust 输出文�
 basename、collision 和 root 规则；迁移不移动已有图片。详见
 [`rust-compatibility-matrix.md`](rust-compatibility-matrix.md) 和
 [`rust-security-review.md`](rust-security-review.md)。
-

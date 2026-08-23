@@ -4,16 +4,16 @@ use reqwest::header::{CONTENT_LENGTH, LOCATION};
 
 use crate::{
     config::Config,
-    download::{Resolver, validate_download_url},
-    http_client::{DOWNLOAD_WALL_TIMEOUT, HttpExecutor},
-    response::{ImagePayload, extract_first_payload},
-    storage::{SaveLocation, SavedImage, Storage},
+    fs::output_store::{OutputDirectory, OutputStore, SavedImage},
+    http::client::{DOWNLOAD_WALL_TIMEOUT, HttpExecutor},
+    http::download::{Resolver, validate_download_url},
+    http::response::{ImagePayload, extract_first_payload},
 };
 
 #[derive(Clone)]
 pub struct OutputSaver {
     config: Arc<Config>,
-    storage: Storage,
+    output_store: OutputStore,
     http: HttpExecutor,
     resolver: Arc<dyn Resolver>,
 }
@@ -21,13 +21,13 @@ pub struct OutputSaver {
 impl OutputSaver {
     pub fn new(
         config: Arc<Config>,
-        storage: Storage,
+        output_store: OutputStore,
         http: HttpExecutor,
         resolver: Arc<dyn Resolver>,
     ) -> Self {
         Self {
             config,
-            storage,
+            output_store,
             http,
             resolver,
         }
@@ -36,12 +36,14 @@ impl OutputSaver {
     pub async fn save_first(
         &self,
         response_body: &[u8],
-        location: &SaveLocation,
+        location: &OutputDirectory,
         basename: &str,
     ) -> Result<SavedImage, String> {
         match extract_first_payload(response_body)? {
             ImagePayload::Base64(encoded) => {
-                self.storage.save_base64(&encoded, location, basename).await
+                self.output_store
+                    .save_base64(&encoded, location, basename)
+                    .await
             }
             ImagePayload::Url(url) => self.save_url(&url, location, basename).await,
         }
@@ -50,7 +52,7 @@ impl OutputSaver {
     async fn save_url(
         &self,
         url: &str,
-        location: &SaveLocation,
+        location: &OutputDirectory,
         basename: &str,
     ) -> Result<SavedImage, String> {
         let target =
@@ -65,7 +67,7 @@ impl OutputSaver {
                 .get(CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse().ok());
-            self.storage
+            self.output_store
                 .save_stream(
                     response.bytes_stream(),
                     content_length,

@@ -1,13 +1,12 @@
 #![forbid(unsafe_code)]
 
-use std::{error::Error, io::Write, path::PathBuf, sync::Arc};
+use std::{error::Error, io::Write, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use micu_image_mcp::{
-    config::Config,
+    app::AppState,
     installer::{self, InstallOptions, ResetOptions},
     mcp_server::MicuServer,
-    tools::ToolEngine,
 };
 use rmcp::ServiceExt;
 use tracing_subscriber::EnvFilter;
@@ -39,6 +38,12 @@ enum Command {
         base_url: Option<String>,
         #[arg(long)]
         save_dir: Option<PathBuf>,
+        /// Copy this binary into the stable per-user install directory.
+        #[arg(long)]
+        binary_path: Option<PathBuf>,
+        /// Development mode: point client config directly at --binary-path/current executable.
+        #[arg(long)]
+        dev: bool,
     },
     /// Remove only the micu-image MCP configuration.
     Reset {
@@ -80,12 +85,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
             yes,
             base_url,
             save_dir,
+            binary_path,
+            dev,
         } => installer::install(InstallOptions {
             no_codex,
             no_claude,
             yes,
             base_url,
             save_dir,
+            binary_path,
+            dev,
         })
         .map_err(Into::into),
         Command::Reset {
@@ -103,8 +112,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
 }
 
 async fn serve() -> Result<(), Box<dyn Error>> {
-    let config = Arc::new(Config::load()?);
-    let engine = ToolEngine::production(config)?;
+    let state = AppState::load()?;
+    let engine = state.tool_engine()?;
     let server = MicuServer::new(engine)?;
     let running = server
         .serve((tokio::io::stdin(), tokio::io::stdout()))

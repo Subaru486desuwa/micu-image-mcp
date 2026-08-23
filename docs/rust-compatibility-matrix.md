@@ -46,7 +46,7 @@ Rust：`micu-image-mcp 0.2.0` + 官方 `rmcp 3.1.4`
 | response_format auto | Exact | URL 落盘失败后重新请求 API `b64_json`；顺序与 notes 关键语义相同 |
 | data image URL | Exact | 解包为 base64 并落盘 |
 | 文件命名与 collision | Exact | generate `_1`，edit/multi basename，batch timestamp 形状，O_EXCL `_2` 冲突结果相同 |
-| actual_size / actual_megapixels / size_honored | Exact | 36 场景差分包括 exact/mismatch/无输出 |
+| actual_size / actual_megapixels / size_honored | Exact | 38 场景差分包括 exact/mismatch/无输出 |
 | error/errors/notes 字段 | Exact/Semantic | 业务中文文本与字段存在性相同；HTTP client 自带的 disconnect/redirect 底层英文由差分规范化 |
 
 ## 尺寸、图片与路径
@@ -93,8 +93,8 @@ Rust：`micu-image-mcp 0.2.0` + 官方 `rmcp 3.1.4`
 | Python reference 保留 | Exact | `server.py`、package、Python tests 未删除 |
 | install.py Phase A | 已实现 | 默认仍 Python；`--runtime rust --rust-binary ...` 才配置 binary |
 | Rust 无参数/serve | 已实现并 smoke | 无参数默认为 STDIO serve |
-| Rust install/reset/doctor/version | 本机单测/CLI help 通过 | JSON/TOML merge/reset、backup、atomic write、0600、flags 与 masking |
-| macOS Keychain launcher | 已实现 | 未设 `MICU_MCP_BINARY` 保持 Python；设置后 exec Rust `serve` |
+| Rust install/reset/doctor/version | 本机单测/CLI 通过 | 稳定 data-local binary、JSON/TOML parser round-trip、backup、atomic replace、0600、幂等/reset |
+| macOS Keychain | 已实现 | Rust 可按 service/account 直接读取；旧 launcher 保留用于 Python 回滚 |
 | Linux x86_64 release | Unverified remote | workflow 已添加；本次未 push，runner 未执行 |
 | macOS x86_64 release | Unverified remote | 使用当前官方 `macos-15-intel` label；runner 未执行 |
 | macOS arm64 release | 本机通过 / remote unverified | 本机 release 通过；`macos-15` workflow 未执行 |
@@ -103,7 +103,7 @@ Rust：`micu-image-mcp 0.2.0` + 官方 `rmcp 3.1.4`
 
 ## 差分测试范围
 
-当前 live differential 共 36 个 mock case，另有 initialize、完整 tools/list、server_info 和入口
+当前 live differential 共 38 个 mock case，另有 initialize、完整 tools/list、server_info 和入口
 validation snapshot。case 覆盖 URL/b64/data URL、generations/edits/multiple `image[]`、retry/status、
 timeout/disconnect、body cap、非法 JSON、无 payload、输入/输出路径、图片损坏、mask、5 并发、
 1.5s gap、filename collision、key/base64 redaction。

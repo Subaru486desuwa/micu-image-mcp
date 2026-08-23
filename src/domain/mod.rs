@@ -1,4 +1,3 @@
-pub mod image;
-pub mod path;
+pub mod basename;
 pub mod routing;
 pub mod size;

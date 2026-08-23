@@ -1,31 +1,13 @@
 use std::{
     fs::File,
-    io::{BufReader, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
-    sync::Arc,
+    io::{BufReader, Read, Seek, SeekFrom},
 };
 
-use cap_std::{ambient_authority, fs::Dir};
 use image::{GenericImageView, ImageFormat, ImageReader, Limits};
 
-use crate::config::Config;
-
-pub const MAX_INPUT_FILE_BYTES: u64 = 4 * 1024 * 1024;
-pub const MAX_TOTAL_INPUT_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_DECODED_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 pub const MAX_DECODED_IMAGE_EDGE: u32 = 8_192;
 pub const MAX_DECODE_ALLOC_BYTES: u64 = 96 * 1024 * 1024;
-
-pub struct ValidatedImage {
-    pub path: PathBuf,
-    pub filename: String,
-    pub file: Arc<tempfile::NamedTempFile>,
-    pub size_bytes: u64,
-    pub format: ImageFormat,
-    pub mime: &'static str,
-    pub dimensions: (u32, u32),
-    pub png_color_type: Option<u8>,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DecodedImageInfo {
@@ -34,74 +16,6 @@ pub struct DecodedImageInfo {
     pub extension: &'static str,
     pub dimensions: (u32, u32),
     pub png_color_type: Option<u8>,
-}
-
-pub fn validate_input_image(
-    config: &Config,
-    path: &str,
-    label: &str,
-) -> Result<ValidatedImage, String> {
-    let requested = expand_input_path(path)?;
-    let (resolved_path, file) = open_input_file(config, &requested, path, label)?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("{label} 无法 stat: {error}"))?;
-    if !metadata.is_file() {
-        return Err(format!("{label} 不存在: {}", requested.display()));
-    }
-    let size_bytes = metadata.len();
-    if size_bytes > MAX_INPUT_FILE_BYTES {
-        return Err(format!(
-            "{label} 文件 {:.1}MB 超过单文件上限 {}MB；请先压缩",
-            size_bytes as f64 / 1024.0 / 1024.0,
-            MAX_INPUT_FILE_BYTES / 1024 / 1024
-        ));
-    }
-    let mut snapshot = tempfile::NamedTempFile::new()
-        .map_err(|error| format!("{label} 无法创建安全输入快照: {error}"))?;
-    let mut source = file
-        .try_clone()
-        .map_err(|error| format!("{label} 无法复制输入 file handle: {error}"))?;
-    source
-        .seek(SeekFrom::Start(0))
-        .map_err(|error| format!("{label} 无法重置输入 file handle: {error}"))?;
-    std::io::copy(&mut source, snapshot.as_file_mut())
-        .map_err(|error| format!("{label} 安全输入快照写入失败: {error}"))?;
-    snapshot
-        .as_file_mut()
-        .flush()
-        .map_err(|error| format!("{label} 安全输入快照 flush 失败: {error}"))?;
-    let info = inspect_image_file(snapshot.as_file(), size_bytes, label)?;
-    if !matches!(
-        info.format,
-        ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP
-    ) {
-        return Err(format!(
-            "{label} 格式 {} 不受上游支持；请转换为 PNG、JPEG 或 WebP",
-            format_name(info.format)
-        ));
-    }
-    if info.dimensions.0 < 16 || info.dimensions.1 < 16 {
-        return Err(format!(
-            "{label} 尺寸 {}x{} 太小，不像正常图片",
-            info.dimensions.0, info.dimensions.1
-        ));
-    }
-    let filename = resolved_path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "image".to_owned());
-    Ok(ValidatedImage {
-        path: resolved_path,
-        filename,
-        file: Arc::new(snapshot),
-        size_bytes,
-        format: info.format,
-        mime: info.mime,
-        dimensions: info.dimensions,
-        png_color_type: info.png_color_type,
-    })
 }
 
 pub fn inspect_image_file(
@@ -137,99 +51,6 @@ pub fn inspect_image_file(
             None
         },
     })
-}
-
-pub fn validate_mask(mask: &ValidatedImage, image: &ValidatedImage) -> Result<(), String> {
-    if mask.format != ImageFormat::Png {
-        return Err("mask_path 必须是 PNG（OpenAI 规范要求 alpha 通道）".into());
-    }
-    if mask.dimensions != image.dimensions {
-        return Err(format!(
-            "mask 尺寸 {}x{} 必须与原图 {}x{} 一致",
-            mask.dimensions.0, mask.dimensions.1, image.dimensions.0, image.dimensions.1
-        ));
-    }
-    if !matches!(mask.png_color_type, Some(4 | 6)) {
-        let color_type = mask.png_color_type;
-        let description = match color_type {
-            Some(0) => "灰度".to_owned(),
-            Some(2) => "RGB".to_owned(),
-            Some(3) => "调色板".to_owned(),
-            Some(value) => format!("未知 ({value})"),
-            None => "未知 (None)".to_owned(),
-        };
-        let rendered = color_type.map_or_else(|| "None".to_owned(), |value| value.to_string());
-        return Err(format!(
-            "mask PNG color_type={rendered}（{description}），缺 alpha 通道；必须用 GA(4) 或 RGBA(6) 格式，alpha=0 标记编辑区"
-        ));
-    }
-    Ok(())
-}
-
-fn expand_input_path(raw: &str) -> Result<PathBuf, String> {
-    let path = if raw == "~" {
-        dirs::home_dir().ok_or_else(|| "无法确定用户 home 目录".to_owned())?
-    } else if let Some(remainder) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
-        dirs::home_dir()
-            .ok_or_else(|| "无法确定用户 home 目录".to_owned())?
-            .join(remainder)
-    } else {
-        PathBuf::from(raw)
-    };
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        std::env::current_dir()
-            .map(|current| current.join(path))
-            .map_err(|error| format!("无法解析相对输入路径: {error}"))
-    }
-}
-
-fn open_input_file(
-    config: &Config,
-    requested: &Path,
-    raw: &str,
-    label: &str,
-) -> Result<(PathBuf, File), String> {
-    if let Some(root) = &config.input_root {
-        let canonical_root = std::fs::canonicalize(root)
-            .map_err(|error| format!("无法打开 MICU_INPUT_ROOT={}: {error}", root.display()))?;
-        let canonical_target = std::fs::canonicalize(requested)
-            .map_err(|_| format!("{label} 不存在: {}", requested.display()))?;
-        let relative = canonical_target
-            .strip_prefix(&canonical_root)
-            .map_err(|_| {
-                format!(
-                    "{label} 必须在 MICU_INPUT_ROOT={} 之下（已启用输入路径白名单）；收到 {}",
-                    canonical_root.display(),
-                    python_string_repr(raw)
-                )
-            })?;
-        let root_dir =
-            Dir::open_ambient_dir(&canonical_root, ambient_authority()).map_err(|error| {
-                format!(
-                    "无法打开 MICU_INPUT_ROOT={}: {error}",
-                    canonical_root.display()
-                )
-            })?;
-        let file = root_dir.open(relative).map_err(|_| {
-            format!(
-                "{label} 必须在 MICU_INPUT_ROOT={} 之下（已启用输入路径白名单）；收到 {}",
-                canonical_root.display(),
-                python_string_repr(raw)
-            )
-        })?;
-        return Ok((canonical_target, file.into_std()));
-    }
-
-    let file = File::open(requested).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            format!("{label} 不存在: {}", requested.display())
-        } else {
-            format!("{label} 读取失败: {error}")
-        }
-    })?;
-    Ok((requested.to_path_buf(), file))
 }
 
 fn read_header(file: &File) -> std::io::Result<Vec<u8>> {
@@ -333,7 +154,7 @@ fn validate_decode_dimensions(width: u32, height: u32, label: &str) -> Result<()
     Ok(())
 }
 
-fn format_name(format: ImageFormat) -> &'static str {
+pub(crate) fn format_name(format: ImageFormat) -> &'static str {
     match format {
         ImageFormat::Png => "PNG",
         ImageFormat::Jpeg => "JPEG",
@@ -343,35 +164,34 @@ fn format_name(format: ImageFormat) -> &'static str {
     }
 }
 
-fn python_string_repr(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");
-    format!("'{escaped}'")
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, fs};
 
     use image::{ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
 
+    use crate::{
+        config::{PathPolicy, test_paths},
+        fs::input::{MAX_INPUT_FILE_BYTES, validate_input_image, validate_mask},
+    };
+
     use super::*;
 
-    fn config(root: &std::path::Path) -> Config {
-        Config::from_map(&BTreeMap::from([
-            (
-                "HOME".into(),
-                root.join("home").to_string_lossy().into_owned(),
-            ),
-            (
-                "MICU_SAVE_DIR_ROOT".into(),
-                root.join("out").to_string_lossy().into_owned(),
-            ),
-            (
-                "MICU_INPUT_ROOT".into(),
-                root.join("input").to_string_lossy().into_owned(),
-            ),
-        ]))
-        .unwrap_or_else(|error| panic!("{error}"))
+    fn config(root: &std::path::Path) -> PathPolicy {
+        let paths = test_paths(
+            root,
+            BTreeMap::from([
+                (
+                    "MICU_SAVE_DIR_ROOT".into(),
+                    root.join("out").to_string_lossy().into_owned(),
+                ),
+                (
+                    "MICU_INPUT_ROOT".into(),
+                    root.join("input").to_string_lossy().into_owned(),
+                ),
+            ]),
+        );
+        PathPolicy::new(&paths)
     }
 
     fn save_rgb(path: &std::path::Path, format: ImageFormat, width: u32, height: u32) {

@@ -243,6 +243,26 @@ CASES: tuple[CaseSpec, ...] = (
         setup="truncated",
     ),
     CaseSpec(
+        "edit_malformed_jpeg",
+        "image_edit",
+        {
+            "prompt": "x",
+            "image_path": "<INPUT>/malformed.jpg",
+            "size": "1024x1024",
+        },
+        setup="malformed_jpeg",
+    ),
+    CaseSpec(
+        "edit_malformed_webp",
+        "image_edit",
+        {
+            "prompt": "x",
+            "image_path": "<INPUT>/malformed.webp",
+            "size": "1024x1024",
+        },
+        setup="malformed_webp",
+    ),
+    CaseSpec(
         "edit_decompression_bomb",
         "image_edit",
         {
@@ -388,6 +408,12 @@ def _prepare_inputs(setup: str, input_root: Path, case_root: Path, output_root: 
             output.truncate(4 * 1024 * 1024 + 1)
     elif setup == "truncated":
         (input_root / "truncated.png").write_bytes(png_bytes()[:40])
+    elif setup == "malformed_jpeg":
+        (input_root / "malformed.jpg").write_bytes(b"\xff\xd8\xff\xe0" + (b"\x00" * 36))
+    elif setup == "malformed_webp":
+        (input_root / "malformed.webp").write_bytes(
+            b"RIFF" + (32).to_bytes(4, "little") + b"WEBPVP8 " + (b"\x00" * 24)
+        )
     elif setup == "bomb":
         raw = bytearray(png_bytes())
         raw[16:20] = (100_000).to_bytes(4, "big")

@@ -20,12 +20,12 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 use crate::{
-    config::Config,
-    download::ResolvedDownload,
-    locks::BigRequestGate,
-    response::{error_detail, sanitize_sensitive},
-    retry::{NETWORK_RETRY_DELAY, RETRY_JITTER_MAX, effective_retry_status, retry_delay},
-    validation::image::ValidatedImage,
+    config::{AppPaths, Config},
+    fs::input::ValidatedImage,
+    fs::lock::BigRequestGate,
+    http::download::ResolvedDownload,
+    http::response::{error_detail, sanitize_sensitive},
+    http::retry::{NETWORK_RETRY_DELAY, RETRY_JITTER_MAX, effective_retry_status, retry_delay},
 };
 
 pub const DOWNLOAD_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -156,7 +156,7 @@ struct DownloadClientKey {
 }
 
 impl HttpExecutor {
-    pub fn new(config: &Config) -> Result<Self, String> {
+    pub fn new(config: &Config, paths: &AppPaths) -> Result<Self, String> {
         let api_client = configured_client_builder(config.use_shell_proxy)?
             .build()
             .map_err(|_| "无法初始化 HTTP client".to_owned())?;
@@ -165,7 +165,7 @@ impl HttpExecutor {
                 api_client,
                 api_request_timeout: config.api_request_timeout,
                 use_shell_proxy: config.use_shell_proxy,
-                big_gate: BigRequestGate::new(config.lock_file.clone()),
+                big_gate: BigRequestGate::new(paths.lock_file.clone()),
                 download_clients: Mutex::new(HashMap::new()),
             }),
         })

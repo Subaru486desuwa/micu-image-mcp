@@ -54,7 +54,7 @@ impl ToolEngine {
         set_top(
             &mut info,
             "default_save_dir",
-            Value::String(self.config.save_dir.to_string_lossy().into_owned()),
+            Value::String(path_text(&self.paths.default_save_dir, "default_save_dir")?),
         )?;
         set_top(
             &mut info,
@@ -110,29 +110,49 @@ impl ToolEngine {
             "save_dir_root",
             Value::String(format!(
                 "所有输出强制落在 MICU_SAVE_DIR_ROOT={} 之下；传 root 之外路径会被拒",
-                self.config.save_root.display()
+                path_text(&self.paths.save_root, "save root")?
             )),
         )?;
         set_nested(
             &mut info,
             "safety_constraints",
             "input_image_validation",
-            Value::String(
-                "所有输入图先检查文件大小与 magic，再以 allocation/像素/边长硬上限执行完整解码；仅允许 PNG/JPEG/WebP，截断、损坏、伪装格式和解压炸弹会在请求前拒绝"
-                    .into(),
-            ),
+            Value::String(input_validation_description(&self.paths)?),
         )?;
         set_nested(
             &mut info,
             "retry_policy",
             "concurrency_2k_4k",
-            Value::String(
-                "双层锁: (1) 进程内 tokio::sync::Semaphore(1) 同 MCP 进程内并发本地排队; (2) 跨进程 fs4 try_lock + async sleep 轮询 @ ~/.cache/micu-image/bigsize.lock —— 多 Claude Code/Codex 窗口各自独立 MCP 子进程时跨进程串行打 origin，取消或错误返回由 RAII 释放锁和 file handle。"
-                    .into(),
-            ),
+            Value::String(format!(
+                "双层锁: (1) 进程内 tokio::sync::Semaphore(1) 同 MCP 进程内并发本地排队; (2) 跨进程 fs4 try_lock + async sleep 轮询 @ {} —— Python/Rust 兼容期共用此锁；取消或错误返回由 RAII 释放锁和 file handle。",
+                path_text(&self.paths.lock_file, "lock file")?
+            )),
         )?;
         Ok(info)
     }
+}
+
+fn path_text(path: &std::path::Path, context: &str) -> Result<String, ToolFailure> {
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| ToolFailure(format!("{context} 不是合法 Unicode，无法写入 server_info")))
+}
+
+fn input_validation_description(paths: &crate::config::AppPaths) -> Result<String, ToolFailure> {
+    let relative_rule = if let Some(root) = &paths.input_root {
+        format!(
+            "相对输入路径相对于 MICU_INPUT_ROOT={} 解析，所有输入均受该 capability root 限制",
+            path_text(root, "input root")?
+        )
+    } else {
+        format!(
+            "未设置 MICU_INPUT_ROOT 时，相对输入路径相对于 server 启动时捕获的 cwd={} 解析",
+            path_text(&paths.startup_cwd, "startup cwd")?
+        )
+    };
+    Ok(format!(
+        "所有输入图先检查文件大小与 magic，再以 allocation/像素/边长硬上限执行完整解码；仅允许 PNG/JPEG/WebP，截断、损坏、伪装格式和解压炸弹会在请求前拒绝；{relative_rule}"
+    ))
 }
 
 fn set_top(info: &mut Value, key: &str, value: Value) -> Result<(), ToolFailure> {
@@ -160,12 +180,12 @@ mod tests {
     use secrecy::SecretString;
 
     use crate::{
-        config::Config,
-        download::SystemResolver,
-        http_client::{ApiResponse, HttpExecutor, RetryOptions},
-        output::OutputSaver,
+        config::{Config, test_paths},
+        fs::output_store::OutputStore,
+        fs::response_output::OutputSaver,
+        http::client::{ApiResponse, HttpExecutor, RetryOptions},
+        http::download::SystemResolver,
         providers::{EditRequest, GenerateRequest, ImageProvider},
-        storage::Storage,
     };
 
     use super::*;
@@ -198,30 +218,27 @@ mod tests {
     fn server_info_preserves_compatibility_keys_but_reports_rust_runtime_truth() {
         let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
         let out = temp.path().join("out");
-        let config = Arc::new(
-            Config::from_map(&BTreeMap::from([
-                (
-                    "HOME".into(),
-                    temp.path().join("home").to_string_lossy().into_owned(),
-                ),
-                (
-                    "MICU_SAVE_DIR_ROOT".into(),
-                    out.to_string_lossy().into_owned(),
-                ),
-                ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
-                ("MICU_API_KEY".into(), "sk-test".into()),
-            ]))
-            .unwrap_or_else(|error| panic!("{error}")),
-        );
-        let storage = Storage::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let environment = BTreeMap::from([
+            (
+                "MICU_SAVE_DIR_ROOT".into(),
+                out.to_string_lossy().into_owned(),
+            ),
+            ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
+            ("MICU_API_KEY".into(), "sk-test".into()),
+        ]);
+        let config =
+            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
+        let paths = Arc::new(test_paths(temp.path(), environment));
+        let storage = OutputStore::new(paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())
+            .unwrap_or_else(|error| panic!("{error}"));
         let output = OutputSaver::new(
             config.clone(),
             storage.clone(),
             http,
             Arc::new(SystemResolver),
         );
-        let engine = ToolEngine::new(config, storage, output, Arc::new(NeverProvider));
+        let engine = ToolEngine::new(config, paths, storage, output, Arc::new(NeverProvider));
         let info = engine
             .server_info()
             .unwrap_or_else(|error| panic!("{error}"));
@@ -236,7 +253,16 @@ mod tests {
         assert!(
             info["safety_constraints"]["input_image_validation"]
                 .as_str()
-                .is_some_and(|text| text.contains("完整解码") && text.contains("allocation"))
+                .is_some_and(|text| {
+                    text.contains("完整解码")
+                        && text.contains("allocation")
+                        && text.contains("server 启动时捕获的 cwd")
+                })
+        );
+        assert!(
+            info["retry_policy"]["concurrency_2k_4k"]
+                .as_str()
+                .is_some_and(|text| text.contains("bigsize.lock") && text.contains("Python/Rust"))
         );
     }
 }

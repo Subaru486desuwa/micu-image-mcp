@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use url::Url;
 
 use crate::{
-    http_client::{
+    http::client::{
         ApiResponse, HttpExecutor, JsonRequestFactory, MultipartRequestFactory, RetryOptions,
         UploadPart,
     },

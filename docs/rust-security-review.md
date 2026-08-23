@@ -19,7 +19,8 @@
 - 通过高分辨率并发打爆上游队列。
 
 不把同一操作系统用户已经拥有的任意调试/内存读取能力视为本程序可抵御的边界。明文 MCP
-客户端配置也不能抵御同一用户读取；macOS Keychain launcher 用于降低长期明文 key 暴露。
+客户端配置也不能抵御同一用户读取；Rust 不再把 key 写入客户端配置，macOS 可直接从 Keychain
+读取，旧 launcher 仅保留用于 Python 回滚。
 
 ## 配置与 secret
 
@@ -64,8 +65,9 @@
 - URL/base64 都先写 root 内 `O_EXCL` 临时文件；失败或 future 取消由 RAII 删除。
 - 完整 decode 通过后，用同一文件系统内的 hard-link no-clobber 提交最终名称。已有文件不会
   覆盖，冲突按 `_2`…`_1000` 递增。
-- 配置文件使用同目录临时文件、`sync_all`、atomic persist，并在 Unix 尽量设为 0600；写前
-  生成 0600 backup。Claude JSON 和 Codex TOML 只修改 micu-image 节。
+- 配置文件使用同目录临时文件、`sync_all`；先以真实 TOML/JSON parser 验证临时文件和 PathBuf
+  round-trip，再生成 0600 backup 并 atomic replace。Claude JSON/Codex TOML 只修改 micu-image
+  节，不持久化 API key。
 
 ## SSRF 与 DNS rebinding
 
@@ -116,7 +118,7 @@ proxy 或使用可信、可审计的代理。
 
 当前已实际通过：
 
-- Python/Rust 36 场景 live differential；
+- Python/Rust 38 场景 live differential（含 malformed JPEG/WebP）；
 - SSRF loopback、IPv4-mapped IPv6、private redirect、fake-ip/trusted-host 单测；
 - 4 MiB/8 MiB/25 MiB 上限与无 Content-Length streaming cap；
 - truncated/malformed/bomb/mask 校验；

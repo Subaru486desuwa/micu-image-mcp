@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use micu_image_mcp::locks::BigRequestGate;
+use micu_image_mcp::fs::lock::BigRequestGate;
 
 #[test]
 fn lock_probe_child() {

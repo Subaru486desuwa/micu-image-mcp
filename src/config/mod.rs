@@ -1,10 +1,47 @@
-use std::{collections::BTreeMap, env::VarError, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 
 use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
-use crate::validation::routing::STANDARD_MODEL;
+use crate::domain::routing::STANDARD_MODEL;
+
+mod env;
+mod paths;
+
+pub use env::{EnvironmentError, EnvironmentSnapshot};
+pub(crate) use paths::create_directory_within;
+#[cfg(test)]
+pub(crate) use paths::test_paths;
+pub use paths::{AppPaths, PathError, PathPolicy, PathSource};
+
+pub const ENV_KEYS: &[&str] = &[
+    "HOME",
+    "USER",
+    "USERNAME",
+    "USERPROFILE",
+    "MICU_API_KEY",
+    "MICU_BASEURL",
+    "MICU_MODEL",
+    "MICU_SAVE_DIR",
+    "MICU_SAVE_DIR_ROOT",
+    "MICU_INPUT_ROOT",
+    "MICU_USE_SHELL_PROXY",
+    "MICU_RESPONSE_FORMAT",
+    "MICU_TRUSTED_DOWNLOAD_HOSTS",
+    "MICU_ALLOW_FAKE_IP_DOWNLOAD",
+    "MICU_GROK_BASEURL",
+    "MICU_GROK_API_KEY",
+    "XAI_API_KEY",
+    "GROK_API_KEY",
+    "XAI_MODEL",
+    "GROK_MODEL",
+    "MICU_GROK_SIZE_MODE",
+    "MICU_CONTRACT_TESTING",
+    "MICU_TEST_API_TIMEOUT_MS",
+    "MICU_KEYCHAIN_ACCOUNT",
+    "MICU_KEYCHAIN_SERVICE",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseFormat {
@@ -18,15 +55,11 @@ pub struct Config {
     pub base_url: Url,
     pub api_key: SecretString,
     pub default_model: String,
-    pub save_dir: PathBuf,
-    pub save_root: PathBuf,
-    pub input_root: Option<PathBuf>,
     pub use_shell_proxy: bool,
     pub response_format: ResponseFormat,
     pub response_formats_to_try: Vec<&'static str>,
     pub trusted_download_hosts: Vec<String>,
     pub allow_fake_ip_download: bool,
-    pub lock_file: PathBuf,
     pub grok_base_url: String,
     pub grok_api_key: SecretString,
     pub xai_model: String,
@@ -36,65 +69,25 @@ pub struct Config {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("环境变量 {name} 不是有效 UTF-8")]
-    InvalidUnicode { name: &'static str },
+    #[error(transparent)]
+    Environment(#[from] EnvironmentError),
     #[error("MICU_BASEURL 无法解析: {value:?} ({detail})")]
     InvalidBaseUrl { value: String, detail: String },
     #[error("MICU_BASEURL 仅允许 https，或本机 localhost HTTP；收到 {0}")]
     UnsafeBaseUrl(String),
-    #[error("无法确定用户 home 目录")]
-    HomeUnavailable,
-    #[error("无法解析当前工作目录: {0}")]
-    CurrentDirectory(String),
 }
 
 impl Config {
     pub fn load() -> Result<Self, ConfigError> {
-        const KEYS: &[&str] = &[
-            "HOME",
-            "USERPROFILE",
-            "MICU_API_KEY",
-            "MICU_BASEURL",
-            "MICU_MODEL",
-            "MICU_SAVE_DIR",
-            "MICU_SAVE_DIR_ROOT",
-            "MICU_INPUT_ROOT",
-            "MICU_USE_SHELL_PROXY",
-            "MICU_RESPONSE_FORMAT",
-            "MICU_TRUSTED_DOWNLOAD_HOSTS",
-            "MICU_ALLOW_FAKE_IP_DOWNLOAD",
-            "MICU_GROK_BASEURL",
-            "MICU_GROK_API_KEY",
-            "XAI_API_KEY",
-            "GROK_API_KEY",
-            "XAI_MODEL",
-            "GROK_MODEL",
-            "MICU_GROK_SIZE_MODE",
-            "MICU_CONTRACT_TESTING",
-            "MICU_TEST_API_TIMEOUT_MS",
-        ];
-        let mut environment = BTreeMap::new();
-        for &name in KEYS {
-            match std::env::var(name) {
-                Ok(value) => {
-                    environment.insert(name.to_owned(), value);
-                }
-                Err(VarError::NotPresent) => {}
-                Err(VarError::NotUnicode(_)) => {
-                    return Err(ConfigError::InvalidUnicode { name });
-                }
-            }
-        }
-        Self::from_map(&environment)
+        let environment = EnvironmentSnapshot::capture(ENV_KEYS)?;
+        Self::from_env(&environment)
+    }
+
+    pub fn from_env(environment: &EnvironmentSnapshot) -> Result<Self, ConfigError> {
+        Self::from_map(environment.as_map())
     }
 
     pub fn from_map(environment: &BTreeMap<String, String>) -> Result<Self, ConfigError> {
-        let home = environment
-            .get("HOME")
-            .or_else(|| environment.get("USERPROFILE"))
-            .map(PathBuf::from)
-            .or_else(dirs::home_dir)
-            .ok_or(ConfigError::HomeUnavailable)?;
         let base_url_raw = environment
             .get("MICU_BASEURL")
             .map(String::as_str)
@@ -106,22 +99,6 @@ impl Config {
         if !is_safe_base_url(&base_url) {
             return Err(ConfigError::UnsafeBaseUrl(base_url_raw.to_owned()));
         }
-
-        let default_root = home.join("Pictures").join("micu-out");
-        let save_root = match environment.get("MICU_SAVE_DIR_ROOT") {
-            Some(path) => absolute_path(path, &home)?,
-            None => default_root,
-        };
-        let save_dir = match environment.get("MICU_SAVE_DIR") {
-            Some(path) => absolute_path(path, &home)?,
-            None => save_root.clone(),
-        };
-        let input_root = environment
-            .get("MICU_INPUT_ROOT")
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .map(|value| absolute_path(value, &home))
-            .transpose()?;
 
         let response_format = match environment
             .get("MICU_RESPONSE_FORMAT")
@@ -189,9 +166,6 @@ impl Config {
                 .get("MICU_MODEL")
                 .cloned()
                 .unwrap_or_else(|| STANDARD_MODEL.to_owned()),
-            save_dir,
-            save_root,
-            input_root,
             use_shell_proxy: env_truthy(environment.get("MICU_USE_SHELL_PROXY"), false),
             response_format,
             response_formats_to_try,
@@ -200,7 +174,6 @@ impl Config {
                 environment.get("MICU_ALLOW_FAKE_IP_DOWNLOAD"),
                 true,
             ),
-            lock_file: home.join(".cache").join("micu-image").join("bigsize.lock"),
             grok_base_url,
             grok_api_key: grok_key.unwrap_or_default().into(),
             xai_model,
@@ -251,22 +224,6 @@ fn env_truthy(value: Option<&String>, default: bool) -> bool {
             "1" | "true" | "yes"
         )
     })
-}
-
-fn absolute_path(raw: &str, home: &std::path::Path) -> Result<PathBuf, ConfigError> {
-    let expanded = if raw == "~" {
-        home.to_path_buf()
-    } else if let Some(remainder) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
-        home.join(remainder)
-    } else {
-        PathBuf::from(raw)
-    };
-    if expanded.is_absolute() {
-        return Ok(expanded);
-    }
-    let current = std::env::current_dir()
-        .map_err(|error| ConfigError::CurrentDirectory(error.to_string()))?;
-    Ok(current.join(expanded))
 }
 
 #[cfg(test)]

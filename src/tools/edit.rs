@@ -1,49 +1,25 @@
 use secrecy::ExposeSecret;
-use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::{
-    http_client::RetryOptions,
-    providers::EditRequest,
-    response::error_detail,
-    validation::{
-        image::{validate_input_image, validate_mask},
-        path::safe_basename,
+    domain::{
+        basename::safe_basename,
         routing::{is_large_tier, is_quality_model, model_error, resolve_model, size_note},
         size::{size_tier, validate_size},
     },
+    fs::input::validate_mask,
+    http::client::RetryOptions,
+    http::response::error_detail,
+    providers::EditRequest,
 };
 
 use super::{
-    SecretArg, ToolEngine, ToolFailure,
+    EditParams, ToolEngine, ToolFailure,
     common::{
         default_basename, push_note_once, python_string_repr, resolve_key, saved_value,
         validation_error,
     },
 };
-
-fn default_size() -> String {
-    "1024x1024".into()
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EditParams {
-    pub prompt: String,
-    pub image_path: String,
-    #[serde(default)]
-    pub mask_path: Option<String>,
-    #[serde(default = "default_size")]
-    pub size: String,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub save_dir: Option<String>,
-    #[serde(default)]
-    pub basename: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<SecretArg>,
-}
 
 impl ToolEngine {
     pub async fn image_edit(&self, params: EditParams) -> Result<Value, ToolFailure> {
@@ -69,20 +45,25 @@ impl ToolEngine {
                 python_string_repr(params.basename.as_deref().unwrap_or_default())
             )));
         }
-        let location = match self.storage.resolve_save_dir(params.save_dir.as_deref()) {
+        let location = match self
+            .output_store
+            .resolve_save_dir(params.save_dir.as_deref())
+        {
             Ok(location) => location,
             Err(error) => return Ok(validation_error(error)),
         };
-        let image =
-            match validate_input_image(self.config.as_ref(), &params.image_path, "image_path") {
-                Ok(image) => image,
-                Err(error) => return Ok(validation_error(error)),
-            };
+        let image = match self
+            .input_store
+            .validate_image(&params.image_path, "image_path")
+        {
+            Ok(image) => image,
+            Err(error) => return Ok(validation_error(error)),
+        };
         let (effective_model, mut notes) =
             resolve_model(params.model.as_deref(), &self.config.default_model, &size);
         let key = resolve_key(self.config.as_ref(), params.api_key)?;
         let mask = if let Some(mask_path) = params.mask_path {
-            let mask = match validate_input_image(self.config.as_ref(), &mask_path, "mask_path") {
+            let mask = match self.input_store.validate_image(&mask_path, "mask_path") {
                 Ok(mask) => mask,
                 Err(error) => return Ok(validation_error(error)),
             };
@@ -173,7 +154,7 @@ impl ToolEngine {
         output.insert("model".into(), Value::String(effective_model));
         output.insert("size".into(), Value::String(size));
         output.insert("used_fallback".into(), Value::Bool(false));
-        output.insert("saved".into(), saved_value(&saved, None));
+        output.insert("saved".into(), saved_value(&saved, None)?);
         output.insert(
             "notes".into(),
             Value::Array(notes.into_iter().map(Value::String).collect()),
@@ -199,12 +180,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     use crate::{
-        config::Config,
-        download::SystemResolver,
-        http_client::{ApiResponse, HttpExecutor, RetryOptions},
-        output::OutputSaver,
+        config::{Config, test_paths},
+        fs::output_store::OutputStore,
+        fs::response_output::OutputSaver,
+        http::client::{ApiResponse, HttpExecutor, RetryOptions},
+        http::download::SystemResolver,
         providers::{EditRequest, GenerateRequest, ImageProvider},
-        storage::Storage,
     };
 
     use super::*;
@@ -281,39 +262,36 @@ mod tests {
         let body = serde_json::to_vec(&serde_json::json!({
             "data": [{"b64_json": STANDARD.encode(std::fs::read(&source).unwrap_or_else(|error| panic!("{error}")))}]
         })).unwrap_or_else(|error| panic!("{error}"));
-        let config = Arc::new(
-            Config::from_map(&BTreeMap::from([
-                (
-                    "HOME".into(),
-                    temp.path().join("home").to_string_lossy().into_owned(),
-                ),
-                (
-                    "MICU_SAVE_DIR_ROOT".into(),
-                    out.to_string_lossy().into_owned(),
-                ),
-                ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
-                (
-                    "MICU_INPUT_ROOT".into(),
-                    input.to_string_lossy().into_owned(),
-                ),
-                ("MICU_API_KEY".into(), "sk-test".into()),
-            ]))
-            .unwrap_or_else(|error| panic!("{error}")),
-        );
+        let environment = BTreeMap::from([
+            (
+                "MICU_SAVE_DIR_ROOT".into(),
+                out.to_string_lossy().into_owned(),
+            ),
+            ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
+            (
+                "MICU_INPUT_ROOT".into(),
+                input.to_string_lossy().into_owned(),
+            ),
+            ("MICU_API_KEY".into(), "sk-test".into()),
+        ]);
+        let config =
+            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
+        let paths = Arc::new(test_paths(temp.path(), environment));
         let provider = Arc::new(FakeProvider {
             body,
             edits: Mutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
         });
-        let storage = Storage::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let storage = OutputStore::new(paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())
+            .unwrap_or_else(|error| panic!("{error}"));
         let output = OutputSaver::new(
             config.clone(),
             storage.clone(),
             http,
             Arc::new(SystemResolver),
         );
-        let engine = ToolEngine::new(config, storage, output, provider.clone());
+        let engine = ToolEngine::new(config, paths, storage, output, provider.clone());
         (temp, engine, provider, source, mask)
     }
 

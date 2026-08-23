@@ -1,35 +1,15 @@
 use futures_util::{StreamExt, stream};
-use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::validation::{
+use crate::domain::{
     routing::{is_quality_model, model_error, resolve_model},
     size::validate_size,
 };
 
 use super::{
-    EditParams, SecretArg, ToolEngine, ToolFailure,
+    BatchParams, EditParams, SecretArg, ToolEngine, ToolFailure,
     common::{default_basename, validation_error},
 };
-
-fn default_size() -> String {
-    "1024x1024".into()
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BatchParams {
-    pub prompt: String,
-    pub image_paths: Vec<String>,
-    #[serde(default = "default_size")]
-    pub size: String,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub save_dir: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<SecretArg>,
-}
 
 impl ToolEngine {
     pub async fn image_batch_edit(&self, params: BatchParams) -> Result<Value, ToolFailure> {
@@ -56,7 +36,10 @@ impl ToolEngine {
                 total,
             ));
         };
-        let location = match self.storage.resolve_save_dir(params.save_dir.as_deref()) {
+        let location = match self
+            .output_store
+            .resolve_save_dir(params.save_dir.as_deref())
+        {
             Ok(location) => location,
             Err(error) => return Ok(batch_validation_error(error, total)),
         };
@@ -67,7 +50,11 @@ impl ToolEngine {
         } else {
             5
         };
-        let output_dir = location.absolute.to_string_lossy().into_owned();
+        let output_dir = location
+            .absolute
+            .to_str()
+            .ok_or_else(|| ToolFailure("输出目录不是合法 Unicode，无法无损写入 MCP JSON".into()))?
+            .to_owned();
         let prompt = params.prompt;
         let image_paths = params.image_paths;
         let key = params.api_key;
@@ -204,12 +191,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     use crate::{
-        config::Config,
-        download::SystemResolver,
-        http_client::{ApiResponse, HttpExecutor, RetryOptions},
-        output::OutputSaver,
+        config::{Config, test_paths},
+        fs::output_store::OutputStore,
+        fs::response_output::OutputSaver,
+        http::client::{ApiResponse, HttpExecutor, RetryOptions},
+        http::download::SystemResolver,
         providers::{EditRequest, GenerateRequest, ImageProvider},
-        storage::Storage,
     };
 
     use super::*;
@@ -280,33 +267,31 @@ mod tests {
             &serde_json::json!({"data":[{"b64_json":STANDARD.encode(output_image)}]}),
         )
         .unwrap_or_else(|error| panic!("{error}"));
-        let config = Arc::new(
-            Config::from_map(&BTreeMap::from([
-                (
-                    "HOME".into(),
-                    temp.path().join("home").to_string_lossy().into_owned(),
-                ),
-                (
-                    "MICU_SAVE_DIR_ROOT".into(),
-                    out.to_string_lossy().into_owned(),
-                ),
-                ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
-                (
-                    "MICU_INPUT_ROOT".into(),
-                    input.to_string_lossy().into_owned(),
-                ),
-                ("MICU_API_KEY".into(), "sk-test".into()),
-            ]))
-            .unwrap_or_else(|error| panic!("{error}")),
-        );
+        let environment = BTreeMap::from([
+            (
+                "MICU_SAVE_DIR_ROOT".into(),
+                out.to_string_lossy().into_owned(),
+            ),
+            ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
+            (
+                "MICU_INPUT_ROOT".into(),
+                input.to_string_lossy().into_owned(),
+            ),
+            ("MICU_API_KEY".into(), "sk-test".into()),
+        ]);
+        let config =
+            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
+        let app_paths = Arc::new(test_paths(temp.path(), environment));
         let provider = Arc::new(FakeProvider {
             body,
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
             starts: Mutex::new(Vec::new()),
         });
-        let storage = Storage::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let storage =
+            OutputStore::new(app_paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
+        let http = HttpExecutor::new(config.as_ref(), app_paths.as_ref())
+            .unwrap_or_else(|error| panic!("{error}"));
         let output = OutputSaver::new(
             config.clone(),
             storage.clone(),
@@ -315,7 +300,7 @@ mod tests {
         );
         (
             temp,
-            ToolEngine::new(config, storage, output, provider.clone()),
+            ToolEngine::new(config, app_paths, storage, output, provider.clone()),
             provider,
             paths,
         )
