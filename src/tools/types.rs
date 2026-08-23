@@ -39,7 +39,6 @@ where
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct GenerateParams {
     pub prompt: String,
     #[serde(default)]
@@ -59,7 +58,6 @@ pub struct GenerateParams {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EditParams {
     pub prompt: String,
     pub image_path: String,
@@ -78,7 +76,6 @@ pub struct EditParams {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BatchParams {
     pub prompt: String,
     pub image_paths: Vec<String>,
@@ -93,7 +90,6 @@ pub struct BatchParams {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MultiReferenceParams {
     pub prompt: String,
     pub image_paths: Vec<String>,

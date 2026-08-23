@@ -24,6 +24,7 @@ Rust：`micu-image-mcp 0.2.0` + 官方 `rmcp 3.1.4`
 | tools/list outputSchema | Exact | 五个工具均保持 Python `additionalProperties: true` contract |
 | JSON text + structuredContent | Exact/Semantic | 同时返回 pretty JSON text 与 structuredContent；比较时只忽略 object key 顺序 |
 | 参数类型 validator 诊断 | Semantic | 错误均为 MCP `isError=true`；Pydantic URL/行文与 serde 诊断不同，因此差分只规范化 validator 文案，不忽略字段或错误状态 |
+| 未知 tool 参数 | Exact | Python/Pydantic 与 Rust/serde 均忽略未知字段，便于 MCP 客户端前向兼容；五工具协议差分覆盖 |
 | `n=true` 历史 coercion | Exact | Rust custom deserializer 保留 Pydantic `true -> 1` 行为，然后到达相同缺-key/执行路径 |
 
 `tests/contract/fixtures/python/tools-list.json` 与 Rust `tools-list.json` 的 `result.tools` 当前直接
