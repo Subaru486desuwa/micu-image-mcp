@@ -128,7 +128,7 @@ proxy 或使用可信、可审计的代理。
 - API timeout、disconnect、408/429/500/524、Retry-After 两种格式；
 - stdout JSON-only 与 key/base64 stderr 扫描；
 - `cargo clippy --lib --bins ... -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic`；
-- `cargo audit`：加载 1,225 条 advisory，扫描 281 个 lockfile dependency，退出码 0。
+- `cargo audit`：加载 1,225 条 advisory，扫描 279 个 lockfile dependency，退出码 0。
 
 crate root 和 binary root 都有 `#![forbid(unsafe_code)]`；生产 `src/` 的严格 Clippy 检查没有
 `unwrap()`、`expect()` 或 `panic!()`。

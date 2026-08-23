@@ -32,7 +32,8 @@
 - Windows 原生 root 大小写与 `C:\safe` / `C:\safe2` 前缀混淆
 - Windows junction 与 UNC 根外逃逸
 
-对应修复提交：`aec146b` (`fix: unify cross-platform path handling`)。
+对应修复提交：`aec146b` (`fix: unify cross-platform path handling`)；审查修复与真实 UNC/42-case
+矩阵补充：`9e7e262` (`fix: address path refactor review findings`)。
 
 更新/重装：
 

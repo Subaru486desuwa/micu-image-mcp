@@ -264,7 +264,7 @@ JSON/TOML；由客户端进程环境、macOS Keychain 或 tool 的既有 `api_ke
 ## 性能 / 压力测试
 
 Rust/Python 同机启动与 RSS 原始数据见 [docs/rust-benchmark.md](docs/rust-benchmark.md)。当前 arm64
-Mac 的 Rust idle RSS 中位数为 9,392 KiB，Python 为 66,192 KiB；该结果不代替尚未运行的
+Mac 的 Rust idle RSS 中位数为 9,504 KiB，Python 为 66,080 KiB；该结果不代替尚未运行的
 跨平台 release CI。
 
 `tests/` 下两个独立脚本，直接 in-process import `server.py` 调 `image_generate`，不走 stdio MCP（避免子进程开销污染样本）。真实请求需要有效 key，并且只有精确设置 `MICU_RUN_LIVE_TESTS=1` 才会启动；不带 key 用 `--dry-run` 也能验证脚本/导入/校验链路。

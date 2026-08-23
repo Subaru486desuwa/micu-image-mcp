@@ -1,6 +1,6 @@
 # Rust path refactor design and audit
 
-Status: implemented and locally verified in `aec146b`
+Status: implemented in `aec146b`, review fixes in `9e7e262`
 
 Baseline: `e81b92e2e20417cb482dab48c3673d468f107e52`
 
