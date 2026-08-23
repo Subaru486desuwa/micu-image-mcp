@@ -35,16 +35,18 @@ reference；编译好的 Rust binary 只能通过显式选项配置。
 
 - `SecretString` API key；
 - 已验证的 base URL；
-- save/input root；
 - response-format、proxy、trusted-host/fake-ip 策略；
-- HTTP timeout、连接池和锁文件路径。
+- HTTP timeout。
+
+所有 home/cwd/executable/save/input/cache/lock/client-config 路径由 `AppPaths` 在启动时解析一次；
+`Config` 不再混入路径拓扑。
 
 工具参数中没有 `base_url`。base URL 只能在进程启动时进入 `Config`。`api_key` 参数因现有
 工具 schema 兼容性继续保留，但进入同一个 secret wrapper，永不实现 `Debug` 明文输出。
 
-### 3.2 `Validation`
+### 3.2 `domain` 与 filesystem input
 
-`validation` 是纯逻辑深模块，接口只接受原始工具参数并返回已验证值或公共中文错误：
+`domain` 是纯逻辑深模块，`InputStore` 是 capability-based 文件系统深模块：
 
 - `Size`：格式、边长、16 对齐、像素总数、长宽比、size tier；
 - `ModelRoute`：精确 allowlist、Grok 公共拒绝语义、≥1600 自动高质量路由；
@@ -53,9 +55,10 @@ reference；编译好的 Rust binary 只能通过显式选项配置。
 
 已打开 handle 而不是重新按路径读取，避免“校验后替换文件”把不同内容上传。
 
-### 3.3 `Storage`
+### 3.3 `OutputSandbox` / `OutputStore`
 
-`Storage` 隐藏输出牢笼、临时文件、图片验证和 no-clobber 命名。调用方只提交 payload 与
+`OutputSandbox` 隐藏路径牢笼和原子 no-clobber 提交；`OutputStore` 隐藏受限流式写入与图片
+验证。调用方只提交 payload 与
 basename，得到 `SavedImage`：
 
 - URL 下载直接流入目标目录内的临时文件；
@@ -158,13 +161,15 @@ Multipart 上传从已验证的 file handle clone 创建 streaming body。多图
 阶段 A：
 
 - `install.py` 新增显式 Rust binary 选项；默认仍是 Python；
-- shell/Keychain launcher 可显式 exec binary，Python fallback 仍可用；
+- 旧 shell/Keychain launcher 保留用于 Python fallback；Rust 可直接读取 Keychain；
 - 不改动其他 MCP server 配置。
 
 阶段 B：
 
 - binary 提供 `serve/install/reset/doctor/version`；无参数等于 `serve`；
-- JSON/TOML 通过结构化 parser 合并；备份后 temp + atomic replace；尽量 0600；
+- binary 原子复制到稳定 per-user data-local 目录，`--dev/--binary-path` 才允许开发路径；
+- JSON/TOML 通过 AST 合并；temp 写后 parser/PathBuf round-trip，再 backup + atomic replace；
+  尽量 0600，且不把 API key 写入客户端配置；
 - 只有所有切换门槛都有真实结果时，才把安装默认值改为 Rust。
 
 本地不能替代 GitHub 原生 Windows/Linux runner 结果。在对应 CI 未实际完成前，文档和安装器

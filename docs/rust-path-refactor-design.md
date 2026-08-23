@@ -1,7 +1,9 @@
 # Rust path refactor design and audit
 
-Status: audit/design before implementation  
-Baseline: `e81b92e2e20417cb482dab48c3673d468f107e52`  
+Status: implemented and locally verified in `aec146b`
+
+Baseline: `e81b92e2e20417cb482dab48c3673d468f107e52`
+
 Related issue: GitHub #4, Windows backslashes rendered inside TOML basic strings
 
 This refactor treats path handling as a deep module with a small typed interface. It must not
@@ -128,7 +130,7 @@ Callers and tests use these interfaces. Home/cwd/config lookup, lexical normaliz
 capability-opening, AST serialization, write-read verification, temp cleanup, and platform
 permissions remain implementation details.
 
-## 5. Planned source structure
+## 5. Implemented source structure
 
 The crate remains at repository root so the retained Python reference and existing release commands
 continue to work.
@@ -154,11 +156,13 @@ src/
     retry.rs
   fs/
     mod.rs
-    image.rs                  full decode and InputStore
-    sandbox.rs                save/input lexical + capability policy
-    output.rs                 OutputStore / atomic image writer
+    image.rs                  bounded magic/full decode primitives
+    input.rs                  InputStore, capability open, upload snapshot, mask policy
+    sandbox.rs                save lexical/capability policy and atomic no-clobber commit
+    output_store.rs           bounded stream/base64 OutputStore
+    response_output.rs        URL/b64 response selection and download adapter
     lock.rs                   cancellation-safe shared lock
-  install/
+  installer/
     mod.rs                    orchestration only
     atomic.rs                 backup + verified atomic replace
     binary.rs                 stable per-user binary install
@@ -175,8 +179,10 @@ src/
     server_info.rs
 ```
 
-The move will use Git rename detection and keep business logic changes out of mechanical module
-moves. Focused tests run after each vertical slice, followed by the frozen STDIO/mock fixtures.
+`git diff --find-renames` identified the config/domain/fs/http moves as renames (HTTP/domain pure
+logic was 97-100% similar). Focused tests ran after each vertical slice, followed by the frozen
+STDIO/mock fixtures. The unrelated unknown-tool-argument compatibility fix is isolated in
+`2e8b3c7` rather than mixed into the path commit.
 
 ## 6. Platform verification
 
@@ -187,4 +193,3 @@ moves. Focused tests run after each vertical slice, followed by the frozen STDIO
   Windows and skip only when the runner cannot create a junction; that limitation is reported.
 - GitHub native jobs remain Ubuntu, macOS arm64/x64, and Windows x86_64. No local macOS result is
   presented as proof that native Windows paths work.
-
