@@ -1,15 +1,15 @@
 # 从 Python reference 迁移到 Rust binary
 
-当前状态：阶段 A/B 功能已实现，但默认入口尚未切换。原因不是功能缺失，而是本次没有 push，
-所以 Linux、macOS Intel、Windows 原生 GitHub runner 没有真实通过记录。
+当前状态：v0.3.0 的 `main` 与推荐安装入口为 Rust native；Python v0.2.0 保留在
+`python-reference` 分支，并继续用于协议差分和紧急回滚。
 
 ## 选择合适的路径
 
-- 想保持当前稳定配置：继续运行 Python `server.py`，无需修改。
-- 想试用本机已编译/下载的 Rust：显式配置 binary；Python reference 保留用于回滚/差分。
+- 新安装或升级：使用 release Rust binary 的 `install`。
+- 需要回滚：切到 `python-reference`，或恢复 installer 创建的配置备份。
 - 最终用户不需要 Rust toolchain：从 release artifact 下载对应单文件 binary。
 
-release workflow 计划产出：
+release workflow 产出：
 
 - `micu-image-mcp-linux-x86_64`
 - `micu-image-mcp-macos-x86_64`
@@ -17,11 +17,11 @@ release workflow 计划产出：
 - `micu-image-mcp-windows-x86_64.exe`
 - `SHA256SUMS`
 
-在远端 workflow 尚未实际运行前，不应把当前本机 binary 当作正式跨平台 release。
+发布页中的 binary 来自对应平台原生 runner；本地 `target/release` 只用于开发验证。
 
-## 阶段 A：用 install.py 显式选择 Rust
+## Python compatibility installer
 
-`install.py` 的默认仍是 Python reference：
+`install.py` 保持 Python reference 默认，仅用于兼容和回滚：
 
 ```bash
 python install.py --runtime python

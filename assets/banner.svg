@@ -93,7 +93,7 @@
 
   <line x1="226" y1="198" x2="816" y2="198" stroke="#62819a" stroke-opacity="0.25"/>
   <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="12.5" fill="#758da1">
-    <text x="226" y="218">v0.2.0</text>
+    <text x="226" y="218">v0.3.0</text>
     <circle cx="287" cy="214" r="2" fill="#4f6d84"/>
     <text x="300" y="218">github.com/Subaru486desuwa/micu-image-mcp</text>
     <text x="816" y="218" text-anchor="end" fill="#91a6b8">GENERATE · EDIT · COMPOSE</text>

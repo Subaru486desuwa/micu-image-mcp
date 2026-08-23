@@ -2,7 +2,7 @@
 
 更新时间：2026-08-23  
 Python reference：仓库 HEAD `578b32a` 上保留的 `server.py` / `micu_image_mcp/`  
-Rust：`micu-image-mcp 0.2.0` + 官方 `rmcp 3.1.4`
+Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
 
 状态定义：
 
@@ -16,7 +16,7 @@ Rust：`micu-image-mcp 0.2.0` + 官方 `rmcp 3.1.4`
 | 项目 | 状态 | 证据/差异 |
 |---|---|---|
 | STDIO transport | Exact | Python/Rust smoke 均通过，stdout 每行均为 JSON-RPC |
-| 2024-11-05 initialize lifecycle | Semantic | protocol/capabilities/name 相同；`serverInfo.version` 是 Python FastMCP `1.28.0` vs Rust 项目 `0.2.0` |
+| 2024-11-05 initialize lifecycle | Semantic | protocol/capabilities/name 相同；`serverInfo.version` 是 Python FastMCP `1.28.0` vs Rust 项目 `0.3.0` |
 | 2026-07-28 stateless lifecycle | Rust 通过 | `server/discover`、带完整 `_meta` 的 tools/list/tools/call 通过；Python 仅作为 legacy reference，不要求支持该修订 |
 | 五个 tool 名称与顺序 | Exact | `image_generate`, `image_edit`, `image_batch_edit`, `image_multi_reference`, `server_info` |
 | tools/list descriptions | Exact | Rust binary 编译进冻结 catalog；完整字符串相等 |
@@ -122,6 +122,6 @@ timeout/disconnect、body cap、非法 JSON、无 payload、输入/输出路径�
 
 ## 当前切换结论
 
-**不可以切换默认实现。** 本机 Python/Rust 测试、差分、安全、RSS 与 macOS arm64 release 均已
-通过，但 release gate 明确要求 macOS/Linux/Windows build 都有真实通过结果。本次不 push，
-所以 GitHub 原生 runner 结果不存在。`install.py` 因而仍默认 Python，Rust 必须显式选择。
+v0.3.0 将 Rust native 设为 `main` 与推荐安装入口；Python v0.2.0 固定保留在
+`python-reference` 分支。发布 tag 只有在 GitHub Linux、macOS x86_64/arm64、Windows x86_64
+原生 jobs 全部通过后才创建；`install.py` 仅作为 Python reference 的兼容/回滚工具。

@@ -242,7 +242,7 @@ mod tests {
         let info = engine
             .server_info()
             .unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(info["version"], "0.2.0");
+        assert_eq!(info["version"], "0.3.0");
         assert_eq!(
             info["available_models"],
             serde_json::json!(["gpt-image-2", "gpt-image-2-openai"])

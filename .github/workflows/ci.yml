@@ -97,6 +97,16 @@ jobs:
           tests/contract/test_latest_protocol.py
           tests/contract/test_rust_installer_cli.py
 
+      - name: Rust STDIO multiprocess stress
+        env:
+          MICU_RUN_LIVE_TESTS: "0"
+        run: >-
+          python -m tests.contract.stress_rust_stdio
+          --rust-command ./target/debug/micu-image-mcp
+          --processes 4
+          --rounds 1
+          --output /tmp/micu-rust-stress.json
+
       - name: Production source has no panic shortcuts
         run: >-
           cargo clippy --locked --lib --bins --all-features --

@@ -61,7 +61,10 @@ def _write(root: Path, name: str, value: Any) -> None:
 def collect(command: list[str]) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="micu-contract-") as temp_dir:
         save_root = Path(temp_dir).resolve()
-        replacements = [(str(save_root), "<SAVE_ROOT>")]
+        replacements = [
+            (str(save_root), "<SAVE_ROOT>"),
+            (str(REPO_ROOT), "<STARTUP_CWD>"),
+        ]
         env = isolated_server_env(save_root)
         with StdioSession(command=command, env=env, cwd=REPO_ROOT) as session:
             initialize = session.initialize("2024-11-05")

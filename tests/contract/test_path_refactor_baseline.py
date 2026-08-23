@@ -30,7 +30,12 @@ def test_path_refactor_preserves_initialize_tools_schema_validation_and_public_s
         ("tools-list.json", "tools-list-before-path-refactor.json"),
         ("validation-calls.json", "validation-calls-before-path-refactor.json"),
     ):
-        assert_equal(_before(baseline_name), current[current_name], current_name)
+        expected = _before(baseline_name)
+        actual = current[current_name]
+        if current_name == "initialize-2024-11-05.json":
+            expected = normalize_stdio(current_name, expected)
+            actual = normalize_stdio(current_name, actual)
+        assert_equal(expected, actual, current_name)
 
     # Only the two explicitly requested runtime path descriptions may change. Keys, field types,
     # and all other server_info values remain exact.
@@ -38,6 +43,9 @@ def test_path_refactor_preserves_initialize_tools_schema_validation_and_public_s
         "server-info.json", _before("server-info-before-path-refactor.json")
     )
     current_info = normalize_stdio("server-info.json", current["server-info.json"])
+    for value in (expected_info, current_info):
+        value["result"]["structuredContent"]["version"] = "<PROJECT_VERSION>"
+        value["result"]["content"][0]["text"]["version"] = "<PROJECT_VERSION>"
     assert_equal(expected_info, current_info, "server_info path refactor")
 
 

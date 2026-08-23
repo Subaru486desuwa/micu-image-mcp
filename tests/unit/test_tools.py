@@ -140,7 +140,7 @@ def test_image_generate_rejects_every_other_model(model):
 def test_server_info_reports_only_image2_models():
     r = server.server_info()
 
-    assert r["version"] == "0.2.0"
+    assert r["version"] == "0.3.0"
     assert r["available_models"] == ["gpt-image-2", "gpt-image-2-openai"]
     assert r["grok_channel_enabled"] is False
     assert r["grok_available_models"] == []

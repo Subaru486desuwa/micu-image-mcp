@@ -42,20 +42,21 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 > **Windows 中文提示词**：MCP 会以原生 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，不要把含中文的 here-string 直接通过管道喂给 `python -`；Windows PowerShell 的 `$OutputEncoding` 可能是 ASCII，导致中文在进入 MCP 前已变成 `?`。请将脚本保存为 UTF-8 文件后执行，或先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`。
 
-## 安装与渐进迁移状态
+## 安装
 
-仓库现在同时保留两个实现：
+从 v0.3.0 起，`main` 与推荐安装入口是 Rust 原生单文件 MCP server：
 
-- Python 是迁移期 reference，`server.py`、`micu_image_mcp/` 和 Python tests 不会删除；
-- Rust 是单可执行文件实现，无参数即 STDIO serve，也提供 `install/reset/doctor/version`。
+- 默认 STDIO serve，无参数即可运行；
+- 运行时不需要 Python、pip、httpx 或 Pillow；
+- 提供 `install/reset/doctor/version`；
+- Python v0.2.0 reference 永久保留在
+  [`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) 分支，
+  main 中的兼容源码与差分测试也继续保留。
 
-本机 38 场景差分、安全测试和 RSS 基准已通过，但本次没有 push，因此 Linux、macOS Intel、
-Windows 原生 GitHub runner 还没有真实结果。**当前不能切换默认实现**：`install.py` 仍默认
-Python，Rust 必须显式选择。
+### Rust binary（推荐）
 
-### Rust binary（无需 Python/pip）
-
-正式 release workflow 通过后，从 Releases 下载平台对应文件并核对 `SHA256SUMS`：
+从 [最新 Release](https://github.com/Subaru486desuwa/micu-image-mcp/releases/latest) 下载平台对应文件并
+核对 `SHA256SUMS`：
 
 ```bash
 chmod +x /absolute/path/micu-image-mcp   # macOS/Linux
@@ -83,23 +84,22 @@ micu-image-mcp doctor
 micu-image-mcp version
 ```
 
-开发阶段也可让 Phase A installer 显式配置已编译 binary：
+源码开发时可显式配置已编译 binary：
 
 ```bash
 cargo build --release
-MICU_API_KEY=sk-... \
 MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
-python install.py --yes \
-  --runtime rust \
-  --rust-binary "$PWD/target/release/micu-image-mcp"
+target/release/micu-image-mcp install --yes --dev \
+  --binary-path "$PWD/target/release/micu-image-mcp"
 ```
 
-### Python reference（当前默认/回滚入口）
+### Python reference（保留/回滚）
 
 ```bash
-git clone --depth 1 https://github.com/Subaru486desuwa/micu-image-mcp.git micu-image-mcp
-cd micu-image-mcp
-python install.py                 # 等同 --runtime python
+git clone --branch python-reference --depth 1 \
+  https://github.com/Subaru486desuwa/micu-image-mcp.git micu-image-mcp-python
+cd micu-image-mcp-python
+python install.py
 ```
 
 非交互：
@@ -110,8 +110,8 @@ MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
 python install.py --yes --runtime python
 ```
 
-Python installer 会安装依赖、轻量探测 `/v1/models`、备份并合并 Claude/Codex 配置，最后执行
-initialize + tools/list。`--reset` 只删除 `micu-image` 节，其他 MCP server 不动。
+main 中的 `install.py` 只作为兼容/回滚工具；新安装应使用 Rust binary 自带的 `install`。
+Python installer 会备份并合并 Claude/Codex 配置，`--reset` 只删除 `micu-image` 节。
 
 ### macOS Keychain
 

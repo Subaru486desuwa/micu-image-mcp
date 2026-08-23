@@ -359,7 +359,7 @@ fn configured_client_builder(use_shell_proxy: bool) -> Result<ClientBuilder, Str
         .pool_max_idle_per_host(20)
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(60))
-        .user_agent("micu-image-mcp-rust/0.2.0");
+        .user_agent(concat!("micu-image-mcp-rust/", env!("CARGO_PKG_VERSION")));
     if !use_shell_proxy {
         return Ok(builder.no_proxy());
     }

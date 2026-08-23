@@ -8,4 +8,4 @@ mcp = FastMCP("...") 注册 + 5 个 @mcp.tool() 函数 + main()。
 `import server` 找到的符号集合不变。
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

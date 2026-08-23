@@ -160,7 +160,7 @@ Multipart 上传从已验证的 file handle clone 创建 streaming body。多图
 
 阶段 A：
 
-- `install.py` 新增显式 Rust binary 选项；默认仍是 Python；
+- `install.py` 保留显式 Rust binary 选项，但在 v0.3.0 后定位为 Python compatibility/rollback；
 - 旧 shell/Keychain launcher 保留用于 Python fallback；Rust 可直接读取 Keychain；
 - 不改动其他 MCP server 配置。
 
@@ -172,8 +172,8 @@ Multipart 上传从已验证的 file handle clone 创建 streaming body。多图
   尽量 0600，且不把 API key 写入客户端配置；
 - 只有所有切换门槛都有真实结果时，才把安装默认值改为 Rust。
 
-本地不能替代 GitHub 原生 Windows/Linux runner 结果。在对应 CI 未实际完成前，文档和安装器
-必须继续标记“尚不可切换默认实现”。
+本地不能替代 GitHub 原生 Windows/Linux runner 结果。v0.3.0 tag 只在对应 CI 全部通过后创建；
+随后 `main`/README 以 Rust 为默认，Python 固定在 `python-reference` 分支。
 
 ## 8. crate 与 feature 选择
 
