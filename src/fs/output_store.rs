@@ -202,7 +202,7 @@ async fn decode_chunk_to_file(
 mod tests {
     use std::{collections::BTreeMap, fs};
 
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::engine::general_purpose::STANDARD;
     use futures_util::stream;
     use image::{ImageFormat, Rgb, RgbImage};
 
@@ -297,13 +297,13 @@ mod tests {
         let location = storage
             .resolve_save_dir(None)
             .unwrap_or_else(|error| panic!("{error}"));
-        let encoded = STANDARD.encode(&image);
+        let encoded = base64::Engine::encode(&STANDARD, &image);
         let saved = storage
             .save_base64(&encoded, &location, "b64")
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(saved.actual_size, (32, 24));
-        let truncated = STANDARD.encode(&image[..40]);
+        let truncated = base64::Engine::encode(&STANDARD, &image[..40]);
         assert!(
             storage
                 .save_base64(&truncated, &location, "bad")
