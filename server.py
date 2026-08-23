@@ -15,10 +15,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import time
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+
+
+def _load_frozen_tool_descriptions() -> dict[str, str]:
+    contract_path = Path(__file__).resolve().parent / "micu_image_mcp" / "tool_contract.json"
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    return {tool["name"]: tool["description"] for tool in contract["result"]["tools"]}
+
+
+_FROZEN_TOOL_DESCRIPTIONS = _load_frozen_tool_descriptions()
 
 # ---------- 从 internal package re-export (语义零漂移) ----------
 from micu_image_mcp import __version__
@@ -170,7 +181,7 @@ async def _call_and_save_with_format_fallback(
     return None, last_err
 
 
-@mcp.tool()
+@mcp.tool(description=_FROZEN_TOOL_DESCRIPTIONS["image_generate"])
 async def image_generate(
     prompt: str,
     size: str | None = None,
@@ -499,7 +510,7 @@ async def image_generate(
     }
 
 
-@mcp.tool()
+@mcp.tool(description=_FROZEN_TOOL_DESCRIPTIONS["image_edit"])
 async def image_edit(
     prompt: str,
     image_path: str,
@@ -735,7 +746,7 @@ async def image_edit(
     }
 
 
-@mcp.tool()
+@mcp.tool(description=_FROZEN_TOOL_DESCRIPTIONS["image_batch_edit"])
 async def image_batch_edit(
     prompt: str,
     image_paths: list[str],
@@ -865,7 +876,7 @@ async def image_batch_edit(
     }
 
 
-@mcp.tool()
+@mcp.tool(description=_FROZEN_TOOL_DESCRIPTIONS["image_multi_reference"])
 async def image_multi_reference(
     prompt: str,
     image_paths: list[str],
@@ -1143,7 +1154,7 @@ async def image_multi_reference(
     }
 
 
-@mcp.tool()
+@mcp.tool(description=_FROZEN_TOOL_DESCRIPTIONS["server_info"])
 def server_info() -> dict[str, Any]:
     """返回当前 Image2 模型、参数约束、路由和安全边界。"""
     return {

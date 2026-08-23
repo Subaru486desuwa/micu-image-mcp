@@ -119,6 +119,7 @@ proxy 或使用可信、可审计的代理。
 当前已实际通过：
 
 - Python/Rust 38 场景 live differential（含 malformed JPEG/WebP）；
+- 冻结 42 项 size/model/quality/route 参数矩阵的 source hash、nodeid 和执行结果 before/after；
 - SSRF loopback、IPv4-mapped IPv6、private redirect、fake-ip/trusted-host 单测；
 - 4 MiB/8 MiB/25 MiB 上限与无 Content-Length streaming cap；
 - truncated/malformed/bomb/mask 校验；

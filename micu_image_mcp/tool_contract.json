@@ -1,0 +1,367 @@
+{
+  "id": 2,
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      {
+        "description": "文本生成图像（text-to-image）。米醋代理 + gpt-image-2 系列。\n\n[WHAT] 把一段文字 prompt 渲染成 1 张或 N 张图像，落盘到本地。\n\n[WHEN TO USE]\n  - 用户要\"画 / 生成 / 创建一张图\"且没有提供任何参考图 → 用此 tool。\n  - 如果用户提供了 1 张参考图要\"修改 / 编辑 / 替换某部分\" → 改用 image_edit。\n  - 如果用户提供了多张参考图要\"按它们的风格画一张新的\" → 用 image_multi_reference。\n  - 如果不知道怎么选 size：先调 server_info() 看 recommended_sizes。\n\n[SIZE 选取建议]\n  - 默认 None：MCP 自动从 prompt 关键字推断（4K/UHD → 3840x2160；1080p/2K → 2048x1152；\n    正方形/logo/头像 → 1024x1024；竖屏/9:16 → 1024x1536；横屏/16:9 → 1536x1024 等）。\n    推断不出来 fallback 1024x1024。\n  - 强烈推荐：如果你（LLM）已经从用户消息读出确定的 size 偏好，**直接显式传 size**，比关键字推断准。\n  - 用户提到\"高清/4K/海报/壁纸\" → \"3840x2160\"（横）或 \"2160x3840\"（竖），自动用 gpt-image-2-openai。\n  - 用户提到\"FullHD/1080p/横屏视频封面\" → \"2048x1152\"（横）或 \"1152x2048\"（竖）；\n    这两个尺寸均满足当前 16 像素对齐和总像素约束。\n  - W 与 H 必须都是 16 的倍数；最长边 ≤3840；长宽比 ≤3:1；总像素 655,360-8,294,400。\n  - **2K/4K 自动走高质量线路**：≥2K 自动切 gpt-image-2-openai。2026-08-14 实测其 1536×1024、\n    2048×1152、3840×2160 均按请求像素返回；gpt-image-2 的自定义宽高可能被后端重映射。\n\n[PROMPT 写法建议]\n  - 中英文混合可。gpt-image-2 文本渲染近完美，可大段嵌字（中英标点都行）。\n  - 越具体越好：风格 / 视角 / 光线 / 主体 / 细节程度。\n\nArgs:\n    prompt: 图像描述。1-2000 字符。例：\"A minimalist sushi mascot logo, soft pastel palette\".\n    size: \"WxH\" 字符串或 None。**留 None 让 MCP 从 prompt 推**（弱 LLM 兜底用）；\n          强 LLM 已知偏好时**直接显式传**更准。W 和 H 都必须是 16 的倍数。常用：\n          \"1024x1024\" \"1280x720\" \"1024x1536\" \"1536x1024\" \"720x1280\"        ← 1K 档\n          \"2048x2048\" \"2048x1152\" \"1152x2048\"                              ← 2K 档（自动 gpt-image-2-openai）\n          \"3840x2160\" \"2160x3840\"                                          ← 4K 档（自动 gpt-image-2-openai）\n          默认 None（推断后兜底 1024x1024）。\n    n: 张数 1-10。1K 时 N>1 自动 5 并发；≥2K 强制 N=1（代理限流）。默认 1。\n    model: 显式指定模型。留空时按 size 自动选（max edge ≥1600 用 gpt-image-2-openai，否则 gpt-image-2）。\n          可选值：\"gpt-image-2\"（标准线路）/ \"gpt-image-2-openai\"（高质量线路）。\n    quality: 可选质量参数：\"auto\" / \"low\" / \"medium\" / \"high\"；留空则使用后端默认值。\n    save_dir: 输出目录。**必须在安全根目录 MICU_SAVE_DIR_ROOT 之下**（默认 ~/Pictures/micu-out）；\n              传 root 之外路径会被拒。留空使用默认。\n    basename: 文件名前缀（不带扩展名），仅允许 [A-Za-z0-9_\\-.]。\n              含 / .. 或路径分量会被拒。默认 \"gen_<ns_timestamp>\"。\n    api_key: 覆盖 MICU_API_KEY 环境变量。一般留空。\n             注意：base_url 已锁在启动时 env，运行期不接受 tool 参数（防 key 外泄到攻击者 host）。\n\nReturns: dict 含以下字段：\n    ok (bool): 至少有 1 张成功才为 True。\n    model (str): 实际用的模型 id。\n    size (str): 请求的 size。\n    requested_n (int): 实际生成的张数。\n    saved (list[dict]): 每张成功的图。每项含 path（绝对路径）/ size_bytes / actual_size（PNG header 读出的真实像素）/ actual_megapixels。\n    errors (list[str]): 失败请求的错误描述。\n    notes (list[str]): 路由 / 自动决策 / 实测尺寸偏差的说明。\n\nExamples:\n    # 最简：默认 1024x1024 单张\n    image_generate(prompt=\"a red apple on white\")\n\n    # 4K 壁纸\n    image_generate(prompt=\"cyberpunk Tokyo at night\", size=\"3840x2160\")\n\n    # 一次出 4 张候选（1K 自动并发）\n    image_generate(prompt=\"cute sticker of a cat\", size=\"1024x1024\", n=4)\n\nCommon errors and what to do:\n    \"size W/H 必须是 16 的倍数\" → 客户端入口拒；例如 1920×1080 应改为 1920×1088 或推荐的 2048×1152。\n    \"HTTP 524: timeout\" → 已自动重试 3 次仍失败，建议改小 size 或稍后再试。\n    \"未配置 API key\" → 设置 MICU_API_KEY 环境变量或传 api_key 参数。\n",
+        "inputSchema": {
+          "properties": {
+            "api_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Api Key"
+            },
+            "basename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Basename"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Model"
+            },
+            "n": {
+              "default": 1,
+              "title": "N",
+              "type": "integer"
+            },
+            "prompt": {
+              "title": "Prompt",
+              "type": "string"
+            },
+            "quality": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Quality"
+            },
+            "save_dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Save Dir"
+            },
+            "size": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size"
+            }
+          },
+          "required": [
+            "prompt"
+          ],
+          "title": "image_generateArguments",
+          "type": "object"
+        },
+        "name": "image_generate",
+        "outputSchema": {
+          "additionalProperties": true,
+          "title": "image_generateDictOutput",
+          "type": "object"
+        }
+      },
+      {
+        "description": "图像编辑（image-to-image，单张输入）。当前线路支持 1K/2K/4K。\n\n[WHAT] 接受 1 张本地图片 + 修改指令，输出修改后的图。\n\n[WHEN TO USE]\n  - 用户提供 1 张图（路径或刚刚生成的图）且要\"改 / 替换 / 加 / 去掉某部分\" → 用此 tool。\n  - 如果用户没提供图想从零生成 → 改用 image_generate。\n  - 如果用户提供了多张图想\"批量改\"（每张做同样操作）→ 改用 image_batch_edit。\n  - 如果用户用多张图作风格参考想画一张新的 → 用 image_multi_reference。\n\n[尺寸能力]（2026-08-14 当前线路实测）\n  - 1K：gpt-image-2 与 gpt-image-2-openai 的 1024×1024 edits 均成功并精确返回。\n  - 2K：自动切 gpt-image-2-openai；2048×1152 edits 成功并精确返回。\n  - 4K：自动切 gpt-image-2-openai；3840×2160 edits 成功并精确返回。\n\n[当前线路]\n  - 参考图 4K 的旧线路硬阻断已移除；1K/2K/4K 均统一走 /v1/images/edits。\n  - 2K/4K 自动使用 gpt-image-2-openai，并通过跨进程锁串行请求高质量队列。\n  - 始终通过 saved.actual_size 核对后端实际返回像素。\n\n[路由实现]（实测确定）\n  - 所有尺寸统一走 /v1/images/edits multipart（米醋唯一真正消费输入图的端点）。\n    Images API 返回错误时直接报错，不把图像模型转发到不兼容的 /v1/chat/completions。\n  - mask 现已在所有尺寸支持（不再区分 1K/2K）。\n\n[MASK 工作原理]\n  - mask_path 指向一张 PNG，尺寸应与 image_path 一致。\n  - mask 中 **alpha=0（透明）** 的像素 = 要修改的区域。\n  - alpha=255（不透明）的像素 = 要保持原样。\n  - 不传 mask 则模型自由决定改哪里。\n\nArgs:\n    prompt: 修改指令，越具体越好。例：\"change the background to deep navy with stars, keep the subject pixel-identical\".\n    image_path: 输入图的绝对或相对路径。PNG / JPG / WebP 都支持。\n    mask_path: 可选 alpha mask PNG 路径，透明区即编辑区。所有尺寸均生效。\n    size: 输出 size。W/H 必须是 16 的倍数；总像素和长宽比规则见 server_info。\n          \"1024x1024\" \"1280x720\" \"1024x1536\" \"1536x1024\" \"720x1280\"  ← 1K 档\n          \"2048x2048\" \"2048x1152\" \"1152x2048\"                        ← 2K 档（自动高质量线路）\n          \"3840x2160\" / \"2160x3840\"  ← 4K 档（自动高质量线路）\n          默认 \"1024x1024\"。\n    model: \"gpt-image-2\"（默认）/ \"gpt-image-2-openai\"（高质量线路，≥2K 自动切）。\n    save_dir: 输出目录（必须在安全根目录之下）。默认 ~/Pictures/micu-out 或 MICU_SAVE_DIR。\n    basename: 文件名前缀（仅 [A-Za-z0-9_-.]）。默认 \"edit_<ns_ts>\"。\n    api_key: 覆盖 MICU_API_KEY；base_url 已锁在启动期 env，运行期不接受。\n\nReturns: dict 含：\n    ok (bool): 是否成功。\n    model (str): 实际用的模型。\n    size (str): 请求 size。\n    used_fallback (bool): 为兼容既有返回结构保留；当前 Image2 模型固定为 False。\n    saved (dict): { path, size_bytes, actual_size, actual_megapixels }。\n    notes (list[str]): 决策与提示。\n\nExamples:\n    # 换背景\n    image_edit(prompt=\"replace background with a sunset beach\", image_path=\"/p/portrait.jpg\")\n\n    # 局部修改（mask 生效）\n    image_edit(prompt=\"change hair color to silver\", image_path=\"/p/x.png\", mask_path=\"/p/x_mask.png\")\n\n    # 升细节（2K 自动使用高质量线路）\n    image_edit(prompt=\"enhance to cinematic detail, preserve composition\", image_path=\"/p/draft.png\", size=\"2048x2048\")\n\n    # 4K 参考图编辑（自动使用高质量线路）\n    image_edit(prompt=\"preserve composition and refine every detail\", image_path=\"/p/draft.png\", size=\"3840x2160\")\n\nCommon errors:\n    \"image_path 不存在\" → 检查路径，建议用绝对路径。\n    \"HTTP 524\" → 当前高质量队列繁忙；自动策略仍失败时请稍后再试。\n",
+        "inputSchema": {
+          "properties": {
+            "api_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Api Key"
+            },
+            "basename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Basename"
+            },
+            "image_path": {
+              "title": "Image Path",
+              "type": "string"
+            },
+            "mask_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mask Path"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Model"
+            },
+            "prompt": {
+              "title": "Prompt",
+              "type": "string"
+            },
+            "save_dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Save Dir"
+            },
+            "size": {
+              "default": "1024x1024",
+              "title": "Size",
+              "type": "string"
+            }
+          },
+          "required": [
+            "prompt",
+            "image_path"
+          ],
+          "title": "image_editArguments",
+          "type": "object"
+        },
+        "name": "image_edit",
+        "outputSchema": {
+          "additionalProperties": true,
+          "title": "image_editDictOutput",
+          "type": "object"
+        }
+      },
+      {
+        "description": "批量图像编辑：N 张输入图 → N 张输出图，每张独立应用同一指令。\n\n[WHAT] 对 image_paths 里的每一张图分别调用 image_edit，统一 prompt 与 size，结果合并返回。\n\n[WHEN TO USE]\n  - 用户提供多张图且每张要做\"同样的修改\"（如批量加水印 / 统一换底 / 统一调色）→ 用此 tool。\n  - 如果是\"用多张图作风格参考画 1 张新图\" → 这不是此 tool，暂未实现。\n  - 如果只有 1 张图 → 用 image_edit。\n\n[并发策略]\n  - gpt-image-2：5 并发（HTML 网页同款）。\n  - gpt-image-2-openai：串行 + 1.5s gap（高质量线路并发更容易被限流）。\n  - 任意一张失败不影响其他张；返回 results 里逐张标 ok/error。\n\n[LIMITS]\n  - 与 image_edit 一致支持 1K/2K/4K；2K/4K 自动切高质量线路并逐张串行。\n  - image_paths 长度建议 2-20 张；高分辨率批次成本与耗时按图片数量线性增加。\n\nArgs:\n    prompt: 应用到每张图的修改指令。例：\"add a subtle watermark in bottom-right\".\n    image_paths: 输入图路径列表（绝对或相对）。\n    size: 输出 size，支持 1K/2K/4K；≥2K 自动使用高质量线路。默认 \"1024x1024\"。\n    model: \"gpt-image-2\" / \"gpt-image-2-openai\"。留空按 size 自动选。\n    save_dir: 输出目录（必须在安全根目录之下）。文件名 batch_<ts>_<idx>.png。\n    api_key: 覆盖 MICU_API_KEY；base_url 已锁在启动期 env，运行期不接受。\n\nReturns: dict 含：\n    ok (bool): True 表示至少 1 张成功。\n    total (int): 输入图总数。\n    succeeded (int): 成功张数。\n    failed (int): 失败张数。\n    concurrency (int): 实际用的并发度（5 或 1）。\n    results (list[dict]): 每张图的详细结果（含 input 路径、saved.path、可能的 error）。\n\nExamples:\n    image_batch_edit(\n        prompt=\"convert to pencil sketch style\",\n        image_paths=[\"/p/a.jpg\", \"/p/b.jpg\", \"/p/c.jpg\"],\n        size=\"1024x1024\",\n    )\n",
+        "inputSchema": {
+          "properties": {
+            "api_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Api Key"
+            },
+            "image_paths": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Image Paths",
+              "type": "array"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Model"
+            },
+            "prompt": {
+              "title": "Prompt",
+              "type": "string"
+            },
+            "save_dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Save Dir"
+            },
+            "size": {
+              "default": "1024x1024",
+              "title": "Size",
+              "type": "string"
+            }
+          },
+          "required": [
+            "prompt",
+            "image_paths"
+          ],
+          "title": "image_batch_editArguments",
+          "type": "object"
+        },
+        "name": "image_batch_edit",
+        "outputSchema": {
+          "additionalProperties": true,
+          "title": "image_batch_editDictOutput",
+          "type": "object"
+        }
+      },
+      {
+        "description": "多图融合参考 → 输出 1 张新图；当前线路支持 1K/2K/4K。\n\n[WHAT] 输入 2-10 张参考图 + prompt，模型综合所有图的视觉信息后画 1 张全新的图。\n与 image_batch_edit 的本质区别：batch 是 N 进 N 出（每张独立改），此 tool 是 N 进 1 出（综合参考）。\n\n[WHEN TO USE]\n  - 用户：\"这几张是同一产品的不同角度，按这个风格画一个新角度\" → 用此 tool。\n  - 用户：\"这些是我喜欢的风格，画一张类似风格的 X\" → 用此 tool。\n  - 用户：\"这是 logo 主图，这是辅助图，做成海报\" → 用此 tool。\n  - 如果用户只想\"逐张修改\" → 改用 image_batch_edit。\n  - 如果用户只有 1 张图 → 改用 image_edit。\n  - 如果用户没提供任何参考图 → 改用 image_generate。\n\n[当前线路]\n  - 参考图 4K 的旧线路硬阻断已移除；所有尺寸统一走 /v1/images/edits + image[]。\n  - 2K/4K 自动使用 gpt-image-2-openai，并通过跨进程锁串行请求高质量队列。\n\n[路由实现]\n  - 固定走 /v1/images/edits + 多个 image[] 字段。**米醋唯一真正消费输入图的端点**\n    （实测 image_tokens 线性 = 560×N）。旧的 generations + image_urls 被米醋静默忽略\n    （image_tokens=0，等于纯文生图，参考图不起作用），已弃用。\n  - 自动切高质量线路：max edge ≥1600 → gpt-image-2-openai\n  - Images API 返回错误时直接报错，不把图像模型转发到不兼容的 /v1/chat/completions。\n\n[LIMITS]（当前真实状态，会变化）\n  - image_paths 长度 2-10 张。\n  - 1K 档：多图 N=2..10 历史实测成功，参考图真消费；实际像素以 saved.actual_size 为准。\n  - 2K/4K：自动切 gpt-image-2-openai + edits/image[]；不再有本地尺寸硬阻断。\n    高分辨率多图融合的耗时会随参考图数量增加，成功后以 saved.actual_size / size_honored 核对真实像素。\n  - 米醋多图间歇拒绝时会按重试策略处理，仍失败则直接返回 Images API 错误。\n  - 单张参考图建议 ≤2MB；总输入 ≤8MB（米醋代理上限实测约 10MB）。\n\nArgs:\n    prompt: 综合指令。例：\"combine the colors from img1 and the composition from img2 into a sunset cityscape\".\n    image_paths: 2-10 张参考图路径（绝对或相对）。\n    size: 输出 size。支持 1K/2K/4K；≥2K 自动切高质量线路。\n          成功时以 saved.actual_size 和 size_honored 核对真实像素。默认 \"1024x1024\"。\n    model: \"gpt-image-2\"（默认）/ \"gpt-image-2-openai\"（高质量线路，≥2K 自动切换）。\n    save_dir: 输出目录（必须在安全根目录之下）。\n    basename: 文件名前缀（仅 [A-Za-z0-9_-.]，含 / .. 会被拒）。默认 \"multiref_<ns_ts>\"。\n    api_key: 覆盖 MICU_API_KEY；base_url 已锁在启动期 env，运行期不接受。\n\nReturns: dict 含：\n    ok (bool): 是否成功。\n    model (str): 实际用的模型。\n    n_references (int): 实际嵌入的参考图张数。\n    saved (dict): { path, size_bytes, actual_size, actual_megapixels }。\n    notes (list[str]): 决策与提示。\n\nExamples:\n    # 1K 综合参考\n    image_multi_reference(\n        prompt=\"combine these into a single cinematic poster\",\n        image_paths=[\"/p/sketch.png\", \"/p/character.png\", \"/p/background.png\"],\n    )\n\n    # 2K 综合参考（高质量线路）\n    image_multi_reference(\n        prompt=\"merge the architecture style from img1 with the lighting from img2\",\n        image_paths=[\"/p/img1.jpg\", \"/p/img2.jpg\"],\n        size=\"2048x2048\",\n    )\n\n    # 4K 综合参考（自动使用高质量线路）\n    image_multi_reference(\n        prompt=\"combine the product references into one 4K campaign visual\",\n        image_paths=[\"/p/front.jpg\", \"/p/side.jpg\"],\n        size=\"3840x2160\",\n    )\n\nCommon errors:\n    \"至少需要 2 张参考图\" → 1 张请用 image_edit。\n    \"请求体超 X MB\" → 减少图片数量或先压缩。\n    \"HTTP 524\" → 当前高质量队列繁忙；自动策略仍失败时请稍后再试。\n",
+        "inputSchema": {
+          "properties": {
+            "api_key": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Api Key"
+            },
+            "basename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Basename"
+            },
+            "image_paths": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Image Paths",
+              "type": "array"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Model"
+            },
+            "prompt": {
+              "title": "Prompt",
+              "type": "string"
+            },
+            "save_dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Save Dir"
+            },
+            "size": {
+              "default": "1024x1024",
+              "title": "Size",
+              "type": "string"
+            }
+          },
+          "required": [
+            "prompt",
+            "image_paths"
+          ],
+          "title": "image_multi_referenceArguments",
+          "type": "object"
+        },
+        "name": "image_multi_reference",
+        "outputSchema": {
+          "additionalProperties": true,
+          "title": "image_multi_referenceDictOutput",
+          "type": "object"
+        }
+      },
+      {
+        "description": "返回当前 Image2 模型、参数约束、路由和安全边界。",
+        "inputSchema": {
+          "properties": {},
+          "title": "server_infoArguments",
+          "type": "object"
+        },
+        "name": "server_info",
+        "outputSchema": {
+          "additionalProperties": true,
+          "title": "server_infoDictOutput",
+          "type": "object"
+        }
+      }
+    ]
+  }
+}

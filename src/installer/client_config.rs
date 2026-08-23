@@ -14,6 +14,20 @@ const SECRET_ENV_NAMES: &[&str] = &[
     "GROK_API_KEY",
 ];
 
+const MANAGED_ENV_NAMES: &[&str] = &[
+    "MICU_BASEURL",
+    "MICU_MODEL",
+    "MICU_SAVE_DIR",
+    "MICU_SAVE_DIR_ROOT",
+    "MICU_INPUT_ROOT",
+    "MICU_USE_SHELL_PROXY",
+    "MICU_RESPONSE_FORMAT",
+    "MICU_TRUSTED_DOWNLOAD_HOSTS",
+    "MICU_ALLOW_FAKE_IP_DOWNLOAD",
+    "MICU_KEYCHAIN_ACCOUNT",
+    "MICU_KEYCHAIN_SERVICE",
+];
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct ClientLaunchSpec {
     command: PathBuf,
@@ -74,6 +88,36 @@ impl fmt::Debug for ClientLaunchSpec {
 
 pub(crate) fn is_secret_environment_name(name: &str) -> bool {
     SECRET_ENV_NAMES.contains(&name)
+}
+
+pub(crate) fn keep_existing_environment_name(name: &str, expected: &ClientLaunchSpec) -> bool {
+    !is_secret_environment_name(name)
+        && (!MANAGED_ENV_NAMES.contains(&name) || expected.env().contains_key(name))
+}
+
+pub(crate) fn verify_launch_round_trip(
+    actual: &ClientLaunchSpec,
+    expected: &ClientLaunchSpec,
+) -> Result<(), String> {
+    if actual.command() != expected.command() {
+        return Err("command 与原 PathBuf 不一致".into());
+    }
+    if actual.args() != expected.args() {
+        return Err("args 与原 OsString 不一致".into());
+    }
+    for (name, expected_value) in expected.env() {
+        if actual.env().get(name) != Some(expected_value) {
+            return Err(format!("env.{name} 与原值不一致"));
+        }
+    }
+    if actual
+        .env()
+        .keys()
+        .any(|name| is_secret_environment_name(name))
+    {
+        return Err("客户端配置不得持久化 API key".into());
+    }
+    Ok(())
 }
 
 fn unicode<'a>(value: &'a OsStr, context: &'static str) -> Result<&'a str, InstallError> {

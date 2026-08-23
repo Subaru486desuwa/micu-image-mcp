@@ -13,9 +13,7 @@ use crate::{
     fs::input::InputStore,
     fs::output_store::OutputStore,
     fs::response_output::OutputSaver,
-    http::client::HttpExecutor,
-    http::download::SystemResolver,
-    providers::{Image2Provider, ImageProvider},
+    providers::ImageProvider,
 };
 
 pub use common::{SecretArg, ToolFailure};
@@ -48,18 +46,5 @@ impl ToolEngine {
             output,
             provider,
         }
-    }
-
-    pub fn production(config: Arc<Config>, paths: Arc<AppPaths>) -> Result<Self, String> {
-        let output_store = OutputStore::new(paths.as_ref())?;
-        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())?;
-        let provider = Arc::new(Image2Provider::new(&config.base_url, http.clone())?);
-        let output = OutputSaver::new(
-            config.clone(),
-            output_store.clone(),
-            http,
-            Arc::new(SystemResolver),
-        );
-        Ok(Self::new(config, paths, output_store, output, provider))
     }
 }

@@ -10,7 +10,7 @@ use toml_edit::{Array, DocumentMut, Item, Table, Value, value};
 use super::{
     ClientLaunchSpec, InstallError,
     atomic::{WriteReport, replace_verified},
-    client_config::is_secret_environment_name,
+    client_config::{keep_existing_environment_name, verify_launch_round_trip},
 };
 
 pub fn write_config_file(
@@ -65,7 +65,7 @@ pub fn merge_config(existing: &str, launch: &ClientLaunchSpec) -> Result<String,
     server["args"] = value(args);
 
     let environment = environment_table(server)?;
-    environment.retain(|name, _| !is_secret_environment_name(name));
+    environment.retain(|name, _| keep_existing_environment_name(name, launch));
     for (name, value_text) in launch.env() {
         environment[name] = value(value_text.clone());
     }
@@ -179,31 +179,5 @@ pub(crate) fn verify_round_trip(
 ) -> Result<(), InstallError> {
     let actual = parse_config_launch(rendered)?
         .ok_or_else(|| InstallError::CodexRoundTrip("缺少 mcp_servers.micu-image".into()))?;
-    if actual.command() != expected.command() {
-        return Err(InstallError::CodexRoundTrip(
-            "command 与原 PathBuf 不一致".into(),
-        ));
-    }
-    if actual.args() != expected.args() {
-        return Err(InstallError::CodexRoundTrip(
-            "args 与原 OsString 不一致".into(),
-        ));
-    }
-    for (name, expected_value) in expected.env() {
-        if actual.env().get(name) != Some(expected_value) {
-            return Err(InstallError::CodexRoundTrip(format!(
-                "env.{name} 与原值不一致"
-            )));
-        }
-    }
-    if actual
-        .env()
-        .keys()
-        .any(|name| is_secret_environment_name(name))
-    {
-        return Err(InstallError::CodexRoundTrip(
-            "客户端配置不得持久化 API key".into(),
-        ));
-    }
-    Ok(())
+    verify_launch_round_trip(&actual, expected).map_err(InstallError::CodexRoundTrip)
 }

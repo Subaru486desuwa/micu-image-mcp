@@ -43,6 +43,13 @@ pub enum InstallError {
         target: std::path::PathBuf,
         backup: Option<std::path::PathBuf>,
     },
+    #[error("配置临时文件校验失败: {detail}; target={target:?}; temp={temp:?}; backup={backup:?}")]
+    VerificationFailed {
+        detail: String,
+        target: std::path::PathBuf,
+        temp: std::path::PathBuf,
+        backup: Option<std::path::PathBuf>,
+    },
     #[error("用户取消")]
     Cancelled,
     #[error("installer 状态输出失败: {0}")]

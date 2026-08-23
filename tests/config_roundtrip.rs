@@ -157,6 +157,47 @@ fn codex_reset_removes_only_micu_image_sections() {
     assert!(!reset.contains("mcp_servers.micu-image"));
 }
 
+#[test]
+fn installers_remove_stale_managed_environment_but_preserve_unknown_environment() {
+    let launch = ClientLaunchSpec::new(
+        PathBuf::from("/stable/micu-image-mcp"),
+        Vec::new(),
+        BTreeMap::from([("MICU_SAVE_DIR".into(), "/new/output".into())]),
+    );
+    let codex_existing = r#"[mcp_servers.micu-image]
+command = 'old'
+args = []
+
+[mcp_servers.micu-image.env]
+MICU_BASEURL = 'https://old.example'
+MICU_INPUT_ROOT = '/old/input'
+CUSTOM_ENV = 'keep'
+"#;
+    let codex = merge_config(codex_existing, &launch).unwrap_or_else(|error| panic!("{error}"));
+    assert!(!codex.contains("MICU_BASEURL"));
+    assert!(!codex.contains("MICU_INPUT_ROOT"));
+    assert!(codex.contains("CUSTOM_ENV = 'keep'"));
+
+    let claude_existing = r#"{
+      "mcpServers": {
+        "micu-image": {
+          "command": "old",
+          "args": [],
+          "env": {
+            "MICU_BASEURL": "https://old.example",
+            "MICU_INPUT_ROOT": "/old/input",
+            "CUSTOM_ENV": "keep"
+          }
+        }
+      }
+    }"#;
+    let claude =
+        merge_claude_config(claude_existing, &launch).unwrap_or_else(|error| panic!("{error}"));
+    assert!(!claude.contains("MICU_BASEURL"));
+    assert!(!claude.contains("MICU_INPUT_ROOT"));
+    assert!(claude.contains("CUSTOM_ENV"));
+}
+
 #[cfg(unix)]
 #[test]
 fn codex_config_rejects_non_unicode_paths_instead_of_lossy_rewriting() {

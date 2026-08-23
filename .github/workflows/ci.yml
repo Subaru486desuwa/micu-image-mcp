@@ -9,6 +9,24 @@ permissions:
   contents: read
 
 jobs:
+  python-compat:
+    name: Python ${{ matrix.python-version }} reference
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -e '.[test]'
+      - env:
+          MICU_RUN_LIVE_TESTS: "0"
+          MICU_RUN_CONTRACT_TESTS: "0"
+        run: python -m pytest -q
+
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest
@@ -33,12 +51,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Python reference and tests
-        run: python -m pip install -e . pytest
+        run: python -m pip install -e '.[test]'
 
       - name: Python reference tests
         env:
           MICU_RUN_LIVE_TESTS: "0"
         run: python -m pytest -q
+
+      - name: Frozen 42-case parameter matrix before/after
+        env:
+          MICU_RUN_LIVE_TESTS: "0"
+        run: python -m tests.contract.compare_parameter_matrix --output /tmp/parameter-matrix.json
 
       - name: Python smoke and offline dry-run
         env:
@@ -139,6 +162,7 @@ jobs:
           cargo test --locked --test config_roundtrip codex_config_windows_backslash_regression_issue_4
           cargo test --locked --test path_matrix windows_root_checks_are_component_aware_and_case_insensitive
           cargo test --locked --test sandbox_paths windows_junction_and_unc_escape_are_rejected
+          cargo test --locked --test sandbox_paths windows_unc_share_can_be_the_actual_output_capability_root
       - name: Build release binary
         run: cargo build --locked --release --all-features
       - uses: actions/upload-artifact@v4

@@ -178,3 +178,55 @@ fn windows_junction_and_unc_escape_are_rejected() {
             .is_err()
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_unc_share_can_be_the_actual_output_capability_root() {
+    struct ShareGuard(String);
+
+    impl Drop for ShareGuard {
+        fn drop(&mut self) {
+            let _ignored = std::process::Command::new("net")
+                .args(["share", &self.0, "/delete", "/y"])
+                .status();
+        }
+    }
+
+    let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+    let local_root = temp.path().join("UNC root 米醋");
+    fs::create_dir_all(&local_root).unwrap_or_else(|error| panic!("{error}"));
+    let share_name = format!("MicuMcp{}", std::process::id());
+    let assignment = format!("{share_name}={}", path_text(&local_root));
+    let status = std::process::Command::new("net")
+        .args(["share", &assignment, "/GRANT:Everyone,FULL"])
+        .status()
+        .unwrap_or_else(|error| panic!("unable to create test share: {error}"));
+    assert!(
+        status.success(),
+        "Windows runner must allow a temporary local SMB share"
+    );
+    let _share = ShareGuard(share_name.clone());
+
+    let home = temp.path().join("home");
+    let cwd = temp.path().join("cwd");
+    let data = temp.path().join("data");
+    let executable = temp.path().join("micu.exe");
+    for directory in [&home, &cwd, &data] {
+        fs::create_dir_all(directory).unwrap_or_else(|error| panic!("{error}"));
+    }
+    fs::write(&executable, b"binary").unwrap_or_else(|error| panic!("{error}"));
+    let unc_root = format!(r"\\localhost\{share_name}");
+    let environment = EnvironmentSnapshot::from_map(BTreeMap::from([
+        ("MICU_SAVE_DIR_ROOT".into(), unc_root),
+        ("MICU_SAVE_DIR".into(), "nested output".into()),
+    ]));
+    let paths = AppPaths::resolve(&environment, PathSource::new(home, cwd, executable, data))
+        .unwrap_or_else(|error| panic!("{error}"));
+    let store = OutputStore::new(&paths).unwrap_or_else(|error| panic!("{error}"));
+    let output = store
+        .resolve_save_dir(Some("deeper/图片"))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(paths.save_root.is_dir());
+    assert!(paths.default_save_dir.is_dir());
+    assert!(output.absolute.is_dir());
+}

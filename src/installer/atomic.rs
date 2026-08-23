@@ -29,7 +29,6 @@ where
         action: "创建目录",
         detail: error.to_string(),
     })?;
-    make_private_directory(parent)?;
     let mut temp = tempfile::Builder::new()
         .prefix(".micu-config-")
         .tempfile_in(parent)
@@ -59,7 +58,14 @@ where
         action: "重读临时文件",
         detail: error.to_string(),
     })?;
-    verify(&written)?;
+    if let Err(error) = verify(&written) {
+        return Err(InstallError::VerificationFailed {
+            detail: error.to_string(),
+            target: path.to_path_buf(),
+            temp: temp.path().to_path_buf(),
+            backup: None,
+        });
+    }
 
     let backup = create_backup(path)?;
     temp.persist(path)
@@ -141,23 +147,6 @@ fn make_private_file(path: &Path) -> Result<(), InstallError> {
 
 #[cfg(not(unix))]
 fn make_private_file(_path: &Path) -> Result<(), InstallError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn make_private_directory(path: &Path) -> Result<(), InstallError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
-        InstallError::ConfigIo {
-            action: "设置目录 0700 权限",
-            detail: error.to_string(),
-        }
-    })
-}
-
-#[cfg(not(unix))]
-fn make_private_directory(_path: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 

@@ -80,6 +80,15 @@ fn installing_an_already_stable_binary_is_a_noop() {
 #[test]
 fn verified_client_config_writes_backup_reparse_and_preserve_original_on_failure() {
     let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+    let parent_permissions_before = fs::metadata(temp.path())
+        .unwrap_or_else(|error| panic!("{error}"))
+        .permissions();
     let codex = temp.path().join(".codex/config.toml");
     let claude = temp.path().join(".claude.json");
     fs::create_dir_all(codex.parent().unwrap_or_else(|| Path::new(".")))
@@ -104,6 +113,13 @@ fn verified_client_config_writes_backup_reparse_and_preserve_original_on_failure
         write_codex_config(&codex, &launch).unwrap_or_else(|error| panic!("{error}"));
     let claude_report =
         write_claude_config(&claude, &launch).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        fs::metadata(temp.path())
+            .unwrap_or_else(|error| panic!("{error}"))
+            .permissions(),
+        parent_permissions_before,
+        "writing ~/.claude.json must not chmod the home directory"
+    );
     assert!(
         codex_report
             .backup
@@ -126,8 +142,12 @@ fn verified_client_config_writes_backup_reparse_and_preserve_original_on_failure
     let original = fs::read(&codex).unwrap_or_else(|error| panic!("{error}"));
     let failed = replace_verified(&codex, b"not valid TOML", |_written| {
         Err(InstallError::CodexRoundTrip("forced mismatch".into()))
-    });
-    assert!(failed.is_err());
+    })
+    .expect_err("forced verification must fail");
+    let failure = failed.to_string();
+    assert!(failure.contains("target="));
+    assert!(failure.contains("temp="));
+    assert!(failure.contains("backup=None"));
     assert_eq!(
         fs::read(&codex).unwrap_or_else(|error| panic!("{error}")),
         original,

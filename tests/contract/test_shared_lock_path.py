@@ -17,7 +17,7 @@ RUST_BINARY = REPO_ROOT / "target" / "debug" / (
 
 
 @pytest.mark.skipif(not RUST_BINARY.is_file(), reason="cargo build is required")
-def test_python_and_rust_share_the_same_default_high_resolution_lock(tmp_path: Path) -> None:
+def test_python_and_rust_share_the_same_default_large_size_tier_lock(tmp_path: Path) -> None:
     home = tmp_path.resolve()
     env = isolated_server_env(home)
     python = subprocess.run(

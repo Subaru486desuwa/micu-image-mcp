@@ -7,6 +7,9 @@ use crate::{
         AppPaths, Config, ConfigError, ENV_KEYS, EnvironmentError, EnvironmentSnapshot, PathError,
         PathSource,
     },
+    fs::{output_store::OutputStore, response_output::OutputSaver},
+    http::{client::HttpExecutor, download::SystemResolver},
+    providers::Image2Provider,
     tools::ToolEngine,
 };
 
@@ -39,6 +42,24 @@ impl AppState {
     }
 
     pub fn tool_engine(&self) -> Result<ToolEngine, AppError> {
-        ToolEngine::production(self.config.clone(), self.paths.clone()).map_err(AppError::Modules)
+        let output_store = OutputStore::new(self.paths.as_ref()).map_err(AppError::Modules)?;
+        let http = HttpExecutor::new(self.config.as_ref(), self.paths.as_ref())
+            .map_err(AppError::Modules)?;
+        let provider = Arc::new(
+            Image2Provider::new(&self.config.base_url, http.clone()).map_err(AppError::Modules)?,
+        );
+        let output = OutputSaver::new(
+            self.config.clone(),
+            output_store.clone(),
+            http,
+            Arc::new(SystemResolver),
+        );
+        Ok(ToolEngine::new(
+            self.config.clone(),
+            self.paths.clone(),
+            output_store,
+            output,
+            provider,
+        ))
     }
 }

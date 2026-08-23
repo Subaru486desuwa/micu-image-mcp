@@ -325,13 +325,18 @@ MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --mode multiprocess --co
 
 ```bash
 cargo build
+MICU_RUN_LIVE_TESTS=0 \
+  .venv/bin/python -m tests.contract.compare_parameter_matrix \
+  --output /tmp/micu-parameter-matrix.json
 MICU_RUN_LIVE_TESTS=0 MICU_RUN_CONTRACT_TESTS=1 \
   .venv/bin/python -m pytest -q \
+  tests/contract/test_path_refactor_baseline.py \
   tests/contract/test_python_rust_differential.py \
   tests/contract/test_latest_protocol.py
 ```
 
-当前矩阵包含 38 个场景，比较 tools schema、HTTP JSON/multipart、retry 顺序、URL/b64/data URL、
+冻结的 42 项 size/model/quality/route 参数 nodeid、source hash 和执行结果会先做 before/after；随后
+38 个黑盒场景比较 tools schema、HTTP JSON/multipart、retry 顺序、URL/b64/data URL、
 SSRF、损坏图片、body cap、并发、文件冲突和实际落盘内容。mock 只监听 `127.0.0.1`，不调用
 真实生图 API。安全与兼容细节见：
 
