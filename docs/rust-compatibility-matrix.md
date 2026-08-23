@@ -96,11 +96,11 @@ Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
 | Rust 无参数/serve | 已实现并 smoke | 无参数默认为 STDIO serve |
 | Rust install/reset/doctor/version | 本机单测/CLI 通过 | 稳定 data-local binary、JSON/TOML parser round-trip、backup、atomic replace、0600、幂等/reset |
 | macOS Keychain | 已实现 | Rust 可按 service/account 直接读取；旧 launcher 保留用于 Python 回滚 |
-| Linux x86_64 release | Unverified remote | workflow 已添加；本次未 push，runner 未执行 |
-| macOS x86_64 release | Unverified remote | 使用当前官方 `macos-15-intel` label；runner 未执行 |
-| macOS arm64 release | 本机通过 / remote unverified | 本机 release 通过；`macos-15` workflow 未执行 |
-| Windows x86_64 release | Unverified remote | workflow 已添加；runner 未执行 |
-| checksums | Unverified remote | release workflow 生成 SHA256SUMS；尚无实际 artifact |
+| Linux x86_64 release | Verified | 原生 test + release build 通过（CI 32631626392） |
+| macOS x86_64 release | Verified | `macos-15-intel` 原生 test + release build 通过（CI 32631626392） |
+| macOS arm64 release | Verified | 本机与 `macos-15` 原生 test + release build 均通过（CI 32631626392） |
+| Windows x86_64 release | Verified | 原生 test、issue #4、junction、真实 UNC share 与 release build 通过（CI 32631626392） |
+| checksums | Pending tagged release | release workflow 已配置生成 SHA256SUMS；在 `v0.3.0` tag 发布时验证实际 artifact |
 
 ## 差分测试范围
 

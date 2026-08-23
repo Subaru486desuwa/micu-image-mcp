@@ -104,12 +104,14 @@ b64 fixture 的原始图片为 17 MiB，编码后 JSON 仍低于 25 MiB API body
 
 ## 解释与限制
 
-- 本结果是同一台 Apple Silicon Mac 的本机证据，不代替 Linux/Windows 原生 runner。
+- 性能/RSS 数值是同一台 Apple Silicon Mac 的本机证据；Linux/Windows/macOS 原生 runner
+  已在 CI 32631626392 通过功能、平台路径测试与 release build，但 CI 不提供可与本机直接比较的 RSS 基准。
 - 大 fixture 各只有一次运行，适合验证内存结构和数量级，不应当当作精密微基准。
 - Rust 多图 wall time略高于 Python（210.784 vs 183.319 ms），原因是安全输入快照与流式
   multipart；内存从 80,112 KiB 降到 10,496 KiB。这里没有为了速度取消安全快照。
 - RSS final 没有强制 allocator 归还页面；峰值比较仍是进程实际可见 RSS，而非理论 allocation。
 - 所有图片来自确定性本地 fixture，未提交生成图片，未消耗额度。
 
-就本机门槛而言，内存、启动、tools/list 和 URL 流式目标全部通过。默认入口是否切换仍由完整
-release gate 决定，尤其是尚未实际执行的 GitHub macOS Intel、Linux、Windows 原生 CI。
+就本机门槛而言，内存、启动、tools/list 和 URL 流式目标全部通过。GitHub macOS Intel/arm64、
+Linux x86_64、Windows x86_64 原生 CI 也已通过，因此 v0.3.0 的 Rust 默认入口 release gate 已满足；
+这些跨平台 runner 结果不改变本报告只在 Apple Silicon 上测量性能数字的边界。

@@ -140,9 +140,11 @@ crate root 和 binary root 都有 `#![forbid(unsafe_code)]`；生产 `src/` 的�
 
 ## 尚未关闭的风险
 
-- GitHub Linux/Windows/macOS Intel/arm64 workflow 已添加，但本次没有 push，故没有真实 runner
-  结果；Windows ACL 下的“0600 等价”只能由原生 runner/人工复核确认。
+- GitHub Linux/Windows/macOS Intel/arm64 原生 workflow 已在 CI 32631626392 全部通过；Windows
+  job 还真实覆盖了 issue #4、junction 与 UNC share。Windows ACL 下的“0600 等价”仍建议在企业
+  域策略环境中人工复核。
 - shell proxy 模式不能对远端代理 DNS 提供端到端 pinning，见上文。
 - 17 MiB b64 fixture 的 Rust 峰值仍为 34,592 KiB；这是受限 JSON/base64 body 的固有成本，
   但显著低于 Python 179,232 KiB，且没有 decoded output buffer 常驻。
-- release artifact 的签名/公证不在当前要求内；已有 SHA-256 workflow，但尚未实际产出远端 artifact。
+- release artifact 的签名/公证不在当前要求内；SHA-256 workflow 已配置，实际 checksum artifact
+  将在 `v0.3.0` tagged release 中验证。

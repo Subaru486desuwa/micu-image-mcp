@@ -194,7 +194,7 @@ panic；CI 除 fmt/clippy/test 外运行 `cargo audit`（当前 CLI 稳定版 0.
 
 ## 9. 切换判定
 
-Rust 可执行文件完成不等于切换完成。默认入口保持 Python，直到以下证据同时存在：Python
-原测试、Rust tests、黑盒差分、五工具 schema、安全测试、stdout 检查、benchmark，以及
-macOS arm64/x86_64、Linux x86_64、Windows x86_64 原生构建均通过。任何一项未运行会在
-兼容矩阵和最终报告中明确标为未验证。
+Rust 可执行文件完成不等于切换完成。切换门槛包括：Python 原测试、Rust tests、黑盒差分、
+五工具 schema、安全测试、stdout 检查、benchmark，以及 macOS arm64/x86_64、Linux x86_64、
+Windows x86_64 原生构建。v0.3.0 已满足这些门槛（跨平台证据见 CI 32631626392），因此 `main`
+使用 Rust 原生实现作为默认入口；Python reference 完整保留在 `python-reference` 分支及主分支源码中。
