@@ -1,0 +1,268 @@
+{
+  "batch_empty_images": {
+    "id": 21,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"image_paths 必须是非空 list\",\n  \"errors\": [\n    \"image_paths 必须是非空 list\"\n  ],\n  \"total\": 0\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "image_paths 必须是非空 list",
+        "errors": [
+          "image_paths 必须是非空 list"
+        ],
+        "ok": false,
+        "total": 0
+      }
+    }
+  },
+  "batch_non_list_images": {
+    "id": 22,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "Error executing tool image_batch_edit: 参数校验失败 (image_batch_edit): invalid type: string \"one.png\", expected a sequence",
+          "type": "text"
+        }
+      ],
+      "isError": true
+    }
+  },
+  "edit_missing_image": {
+    "id": 20,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"image_path 不存在: /definitely/missing.png\",\n  \"errors\": [\n    \"image_path 不存在: /definitely/missing.png\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "image_path 不存在: /definitely/missing.png",
+        "errors": [
+          "image_path 不存在: /definitely/missing.png"
+        ],
+        "ok": false
+      }
+    }
+  },
+  "generate_bad_basename": {
+    "id": 18,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"basename '../escape' 含非法字符或路径分量；仅允许 [A-Za-z0-9_-.]，禁含 / 与 ..\",\n  \"errors\": [\n    \"basename '../escape' 含非法字符或路径分量；仅允许 [A-Za-z0-9_-.]，禁含 / 与 ..\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "basename '../escape' 含非法字符或路径分量；仅允许 [A-Za-z0-9_-.]，禁含 / 与 ..",
+        "errors": [
+          "basename '../escape' 含非法字符或路径分量；仅允许 [A-Za-z0-9_-.]，禁含 / 与 .."
+        ],
+        "ok": false
+      }
+    }
+  },
+  "generate_empty_prompt": {
+    "id": 10,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"prompt 不能为空\",\n  \"errors\": [\n    \"prompt 不能为空\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "prompt 不能为空",
+        "errors": [
+          "prompt 不能为空"
+        ],
+        "ok": false
+      }
+    }
+  },
+  "generate_grok_disabled": {
+    "id": 17,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"Grok 生图渠道暂时关闭，待服务器支持后再启用；当前仅支持 gpt-image-2 / gpt-image-2-openai。\",\n  \"errors\": [\n    \"Grok 生图渠道暂时关闭，待服务器支持后再启用；当前仅支持 gpt-image-2 / gpt-image-2-openai。\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "Grok 生图渠道暂时关闭，待服务器支持后再启用；当前仅支持 gpt-image-2 / gpt-image-2-openai。",
+        "errors": [
+          "Grok 生图渠道暂时关闭，待服务器支持后再启用；当前仅支持 gpt-image-2 / gpt-image-2-openai。"
+        ],
+        "ok": false
+      }
+    }
+  },
+  "generate_invalid_quality": {
+    "id": 15,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"quality 不支持 'ultra'；可选 auto / high / low / medium\",\n  \"errors\": [\n    \"quality 不支持 'ultra'；可选 auto / high / low / medium\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "quality 不支持 'ultra'；可选 auto / high / low / medium",
+        "errors": [
+          "quality 不支持 'ultra'；可选 auto / high / low / medium"
+        ],
+        "ok": false
+      }
+    }
+  },
+  "generate_invalid_size": {
+    "id": 13,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"size W/H 必须是 16 的倍数，收到 1920x1080\",\n  \"errors\": [\n    \"size W/H 必须是 16 的倍数，收到 1920x1080\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "size W/H 必须是 16 的倍数，收到 1920x1080",
+        "errors": [
+          "size W/H 必须是 16 的倍数，收到 1920x1080"
+        ],
+        "ok": false
+      }
+    }
+  },
+  "generate_missing_key": {
+    "id": 19,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "Error executing tool image_generate: 未配置 API key。请设置 MICU_API_KEY 环境变量，或在调用时传 api_key 参数。",
+          "type": "text"
+        }
+      ],
+      "isError": true
+    }
+  },
+  "generate_n_bool": {
+    "id": 12,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "Error executing tool image_generate: 未配置 API key。请设置 MICU_API_KEY 环境变量，或在调用时传 api_key 参数。",
+          "type": "text"
+        }
+      ],
+      "isError": true
+    }
+  },
+  "generate_n_over_limit": {
+    "id": 11,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"n 必须 ≤ 10，收到 11（防止意外 burn quota）\",\n  \"errors\": [\n    \"n 必须 ≤ 10，收到 11（防止意外 burn quota）\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "n 必须 ≤ 10，收到 11（防止意外 burn quota）",
+        "errors": [
+          "n 必须 ≤ 10，收到 11（防止意外 burn quota）"
+        ],
+        "ok": false
+      }
+    }
+  },
+  "generate_non_string_quality": {
+    "id": 16,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "Error executing tool image_generate: 参数校验失败 (image_generate): invalid type: integer `1`, expected a string",
+          "type": "text"
+        }
+      ],
+      "isError": true
+    }
+  },
+  "generate_non_string_size": {
+    "id": 14,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "Error executing tool image_generate: 参数校验失败 (image_generate): invalid type: integer `1024`, expected a string",
+          "type": "text"
+        }
+      ],
+      "isError": true
+    }
+  },
+  "multi_reference_too_few": {
+    "id": 23,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"至少需要 2 张参考图（收到 1）。1 张请用 image_edit；0 张请用 image_generate。\",\n  \"errors\": [\n    \"至少需要 2 张参考图（收到 1）。1 张请用 image_edit；0 张请用 image_generate。\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "至少需要 2 张参考图（收到 1）。1 张请用 image_edit；0 张请用 image_generate。",
+        "errors": [
+          "至少需要 2 张参考图（收到 1）。1 张请用 image_edit；0 张请用 image_generate。"
+        ],
+        "ok": false
+      }
+    }
+  },
+  "multi_reference_too_many": {
+    "id": 24,
+    "jsonrpc": "2.0",
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"ok\": false,\n  \"error\": \"参考图最多 10 张，当前 11 张。请减少或分批。\",\n  \"errors\": [\n    \"参考图最多 10 张，当前 11 张。请减少或分批。\"\n  ]\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "error": "参考图最多 10 张，当前 11 张。请减少或分批。",
+        "errors": [
+          "参考图最多 10 张，当前 11 张。请减少或分批。"
+        ],
+        "ok": false
+      }
+    }
+  }
+}
