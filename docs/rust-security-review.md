@@ -62,6 +62,10 @@
 ### 输出
 
 - `MICU_SAVE_DIR_ROOT` 创建后 canonicalize，并以 `cap-std::fs::Dir` 作为 capability root。
+- Windows UNC root 因 `cap-std` 会把 SMB reparse 判为逃逸，使用限定的 fallback：逐路径分量
+  canonicalize/根内检查、每次写入前复查、`create_new` 临时文件和同 share 原子 rename。静态
+  junction 逃逸与真实本机 SMB share 都由 Windows runner 测试；恶意远端 share 在检查与 open
+  之间主动改写 reparse point 的 TOCTOU 仍是 UNC 模式的剩余风险。
 - save_dir 的 `..`、绝对越界及 symlink escape 均拒绝。
 - URL/base64 都先写 root 内 `O_EXCL` 临时文件；失败或 future 取消由 RAII 删除。
 - 完整 decode 通过后，用同一文件系统内的 hard-link no-clobber 提交最终名称。已有文件不会

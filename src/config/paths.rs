@@ -232,6 +232,10 @@ pub(crate) fn create_directory_within(
     context: &'static str,
 ) -> Result<PathBuf, PathError> {
     ensure_within(root, candidate, context)?;
+    #[cfg(windows)]
+    if is_windows_unc_root(root) {
+        return create_windows_unc_directory(root, candidate, context);
+    }
     let relative = candidate
         .strip_prefix(root)
         .map_err(|_| PathError::OutsideRoot { context })?;
@@ -250,6 +254,60 @@ pub(crate) fn create_directory_within(
             })?;
     }
     let canonical = fs::canonicalize(candidate).map_err(|error| PathError::Canonicalize {
+        context,
+        detail: error.to_string(),
+    })?;
+    ensure_within(root, &canonical, context)?;
+    Ok(canonical)
+}
+
+#[cfg(windows)]
+fn create_windows_unc_directory(
+    root: &Path,
+    candidate: &Path,
+    context: &'static str,
+) -> Result<PathBuf, PathError> {
+    let anchored = anchor_within_root(root, candidate, context)?;
+    let relative = anchored
+        .strip_prefix(root)
+        .map_err(|_| PathError::OutsideRoot { context })?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if !metadata.is_dir() {
+                    return Err(PathError::CreateDirectory {
+                        context,
+                        detail: "路径分量不是目录".into(),
+                    });
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Err(create_error) = fs::create_dir(&current)
+                    && create_error.kind() != std::io::ErrorKind::AlreadyExists
+                {
+                    return Err(PathError::CreateDirectory {
+                        context,
+                        detail: create_error.to_string(),
+                    });
+                }
+            }
+            Err(error) => {
+                return Err(PathError::CreateDirectory {
+                    context,
+                    detail: error.to_string(),
+                });
+            }
+        }
+        let canonical = fs::canonicalize(&current).map_err(|error| PathError::Canonicalize {
+            context,
+            detail: error.to_string(),
+        })?;
+        ensure_within(root, &canonical, context)?;
+        current = canonical;
+    }
+    let canonical = fs::canonicalize(&current).map_err(|error| PathError::Canonicalize {
         context,
         detail: error.to_string(),
     })?;
@@ -365,6 +423,24 @@ fn ensure_within(root: &Path, candidate: &Path, context: &'static str) -> Result
 #[cfg(not(windows))]
 fn path_starts_with(candidate: &Path, root: &Path) -> Result<bool, PathError> {
     Ok(candidate.starts_with(root))
+}
+
+#[cfg(windows)]
+pub(crate) fn is_windows_unc_root(path: &Path) -> bool {
+    use std::path::Prefix;
+
+    path.components().next().is_some_and(|component| {
+        matches!(
+            component,
+            Component::Prefix(prefix)
+                if matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..))
+        )
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_windows_unc_root(_path: &Path) -> bool {
+    false
 }
 
 #[cfg(test)]

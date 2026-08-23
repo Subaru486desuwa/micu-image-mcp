@@ -12,7 +12,7 @@ use cap_std::{
     fs::{Dir, OpenOptions},
 };
 
-use crate::config::{AppPaths, PathPolicy, create_directory_within};
+use crate::config::{AppPaths, PathPolicy, create_directory_within, is_windows_unc_root};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputDirectory {
@@ -22,18 +22,39 @@ pub struct OutputDirectory {
 
 #[derive(Clone)]
 pub struct OutputSandbox {
-    root: Arc<Dir>,
+    backend: SandboxBackend,
     root_path: Arc<PathBuf>,
     policy: PathPolicy,
+}
+
+#[derive(Clone)]
+enum SandboxBackend {
+    Capability(Arc<Dir>),
+    #[cfg(windows)]
+    WindowsUnc,
 }
 
 impl OutputSandbox {
     pub fn new(paths: &AppPaths) -> Result<Self, String> {
         let root_path = paths.save_root.clone();
-        let root = Dir::open_ambient_dir(&root_path, ambient_authority())
-            .map_err(|error| format!("无法打开 save root {}: {error}", root_path.display()))?;
+        let backend = if is_windows_unc_root(&root_path) {
+            #[cfg(windows)]
+            {
+                SandboxBackend::WindowsUnc
+            }
+            #[cfg(not(windows))]
+            {
+                unreachable!("UNC backend is Windows-only")
+            }
+        } else {
+            SandboxBackend::Capability(Arc::new(
+                Dir::open_ambient_dir(&root_path, ambient_authority()).map_err(|error| {
+                    format!("无法打开 save root {}: {error}", root_path.display())
+                })?,
+            ))
+        };
         Ok(Self {
-            root: Arc::new(root),
+            backend,
             root_path: Arc::new(root_path),
             policy: PathPolicy::new(paths),
         })
@@ -52,9 +73,19 @@ impl OutputSandbox {
             .map_err(|_| self.save_dir_error(raw_for_error.as_deref().unwrap_or_default()))?
             .to_path_buf();
         if !canonical_relative.as_os_str().is_empty() {
-            self.root
-                .open_dir(&canonical_relative)
-                .map_err(|_| self.save_dir_error(raw_for_error.as_deref().unwrap_or_default()))?;
+            match &self.backend {
+                SandboxBackend::Capability(root) => {
+                    root.open_dir(&canonical_relative).map_err(|_| {
+                        self.save_dir_error(raw_for_error.as_deref().unwrap_or_default())
+                    })?;
+                }
+                #[cfg(windows)]
+                SandboxBackend::WindowsUnc => {
+                    std::fs::read_dir(&canonical).map_err(|_| {
+                        self.save_dir_error(raw_for_error.as_deref().unwrap_or_default())
+                    })?;
+                }
+            }
         }
         Ok(OutputDirectory {
             relative: canonical_relative,
@@ -75,19 +106,43 @@ impl OutputSandbox {
             let counter = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
             let filename = format!(".micu-{}-{epoch_nanos}-{counter}.tmp", std::process::id());
             let relative = location.relative.join(filename);
-            let mut options = OpenOptions::new();
-            options.read(true).write(true).create_new(true);
-            match self.root.open_with(&relative, &options) {
+            let opened = match &self.backend {
+                SandboxBackend::Capability(root) => {
+                    let mut options = OpenOptions::new();
+                    options.read(true).write(true).create_new(true);
+                    root.open_with(&relative, &options)
+                        .map(cap_std::fs::File::into_std)
+                }
+                #[cfg(windows)]
+                SandboxBackend::WindowsUnc => {
+                    if let Err(error) = create_directory_within(
+                        self.root_path.as_ref(),
+                        &location.absolute,
+                        "save_dir",
+                    ) {
+                        Err(std::io::Error::other(error.to_string()))
+                    } else {
+                        std::fs::OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .create_new(true)
+                            .open(self.root_path.join(&relative))
+                    }
+                }
+            };
+            match opened {
                 Ok(file) => {
                     return Ok((
                         TempLease {
                             cleanup: Arc::new(TempCleanup {
-                                root: self.root.clone(),
+                                backend: self.backend.clone(),
+                                #[cfg(windows)]
+                                root_path: self.root_path.clone(),
                                 relative,
                                 removed: AtomicBool::new(false),
                             }),
                         },
-                        file.into_std(),
+                        file,
                     ));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -112,15 +167,40 @@ impl OutputSandbox {
                 format!("{basename}_{index}.{extension}")
             };
             let candidate = location.relative.join(filename);
-            match self
-                .root
-                .hard_link(lease.relative(), self.root.as_ref(), &candidate)
-            {
+            let committed_result = match &self.backend {
+                SandboxBackend::Capability(root) => {
+                    root.hard_link(lease.relative(), root.as_ref(), &candidate)
+                }
+                #[cfg(windows)]
+                SandboxBackend::WindowsUnc => {
+                    if let Err(error) = create_directory_within(
+                        self.root_path.as_ref(),
+                        &location.absolute,
+                        "save_dir",
+                    ) {
+                        Err(std::io::Error::other(error.to_string()))
+                    } else {
+                        std::fs::rename(
+                            self.root_path.join(lease.relative()),
+                            self.root_path.join(&candidate),
+                        )
+                    }
+                }
+            };
+            match committed_result {
                 Ok(()) => {
+                    if self.uses_rename_commit() {
+                        lease.mark_committed();
+                    }
                     committed = Some(candidate);
                     break;
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::AlreadyExists
+                        || self.root_path.join(&candidate).exists() =>
+                {
+                    continue;
+                }
                 Err(error) => return Err(format!("输出文件原子提交失败: {error}")),
             }
         }
@@ -136,6 +216,17 @@ impl OutputSandbox {
             python_string_repr(raw)
         )
     }
+
+    fn uses_rename_commit(&self) -> bool {
+        #[cfg(windows)]
+        {
+            matches!(&self.backend, SandboxBackend::WindowsUnc)
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -149,26 +240,37 @@ impl TempLease {
     }
 
     fn remove_now(&mut self) {
-        if self
-            .cleanup
-            .root
-            .remove_file(&self.cleanup.relative)
-            .is_ok()
-        {
+        if self.cleanup.remove().is_ok() {
             self.cleanup.removed.store(true, Ordering::Release);
         }
+    }
+
+    fn mark_committed(&mut self) {
+        self.cleanup.removed.store(true, Ordering::Release);
     }
 }
 
 struct TempCleanup {
-    root: Arc<Dir>,
+    backend: SandboxBackend,
+    #[cfg(windows)]
+    root_path: Arc<PathBuf>,
     relative: PathBuf,
     removed: AtomicBool,
 }
 
+impl TempCleanup {
+    fn remove(&self) -> std::io::Result<()> {
+        match &self.backend {
+            SandboxBackend::Capability(root) => root.remove_file(&self.relative),
+            #[cfg(windows)]
+            SandboxBackend::WindowsUnc => std::fs::remove_file(self.root_path.join(&self.relative)),
+        }
+    }
+}
+
 impl Drop for TempCleanup {
     fn drop(&mut self) {
-        if !self.removed.load(Ordering::Acquire) && self.root.remove_file(&self.relative).is_ok() {
+        if !self.removed.load(Ordering::Acquire) && self.remove().is_ok() {
             self.removed.store(true, Ordering::Release);
         }
     }

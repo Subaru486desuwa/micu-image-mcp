@@ -10,10 +10,10 @@ mod env;
 mod paths;
 
 pub use env::{EnvironmentError, EnvironmentSnapshot};
-pub(crate) use paths::create_directory_within;
 #[cfg(test)]
 pub(crate) use paths::test_paths;
 pub use paths::{AppPaths, PathError, PathPolicy, PathSource};
+pub(crate) use paths::{create_directory_within, is_windows_unc_root};
 
 pub const ENV_KEYS: &[&str] = &[
     "HOME",
