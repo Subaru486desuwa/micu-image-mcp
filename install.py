@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -54,6 +55,38 @@ GROK_IMAGE_MODELS = (
     "grok-imagine-image-pro",
     "grok-imagine-image-edit",
 )
+
+
+@dataclass(frozen=True)
+class RuntimeCommand:
+    runtime: str
+    command: str
+    args: list[str]
+
+
+def resolve_runtime_command(args: argparse.Namespace, repo_root: Path) -> RuntimeCommand:
+    """Resolve the explicit migration runtime without changing the default prematurely."""
+    if args.runtime == "python":
+        server_path = repo_root / "server.py"
+        if not server_path.is_file():
+            err(f"找不到 server.py: {server_path}")
+        return RuntimeCommand("python", sys.executable, [str(server_path)])
+
+    binary_name = "micu-image-mcp.exe" if sys.platform == "win32" else "micu-image-mcp"
+    candidate = (
+        Path(args.rust_binary).expanduser()
+        if args.rust_binary
+        else repo_root / "target" / "release" / binary_name
+    )
+    candidate = candidate.resolve()
+    if not candidate.is_file():
+        err(
+            f"找不到 Rust binary: {candidate}\n"
+            "请先下载 release artifact，或 cargo build --release 后传 --rust-binary <path>。"
+        )
+    if sys.platform != "win32" and not os.access(candidate, os.X_OK):
+        err(f"Rust binary 不可执行: {candidate}")
+    return RuntimeCommand("rust", str(candidate), [])
 
 
 # ---------- 日志输出 ----------
@@ -470,7 +503,7 @@ def _backup(path: Path) -> Path | None:
     return bak
 
 
-def write_claude(server_path: str, env_dict: dict) -> Path:
+def write_claude(command: str, command_args: list[str], env_dict: dict) -> Path:
     step("配置 Claude Code")
     cfg = Path.home() / ".claude.json"
     data: dict = {}
@@ -488,8 +521,8 @@ def write_claude(server_path: str, env_dict: dict) -> Path:
     if "micu-image" in servers:
         info("已存在 micu-image 配置, 覆盖")
     servers["micu-image"] = {
-        "command": sys.executable,
-        "args": [server_path],
+        "command": command,
+        "args": command_args,
         "env": env_dict,
     }
     _atomic_write_secure(cfg, json.dumps(data, indent=2, ensure_ascii=False))
@@ -497,7 +530,7 @@ def write_claude(server_path: str, env_dict: dict) -> Path:
     return cfg
 
 
-def write_codex(server_path: str, env_dict: dict) -> Path:
+def write_codex(command: str, command_args: list[str], env_dict: dict) -> Path:
     step("配置 Codex CLI")
     cfg_dir = Path.home() / ".codex"
     cfg = cfg_dir / "config.toml"
@@ -513,8 +546,8 @@ def write_codex(server_path: str, env_dict: dict) -> Path:
     env_lines = "\n".join(f"{k} = {tstr(v)}" for k, v in env_dict.items())
     block = (
         "\n[mcp_servers.micu-image]\n"
-        f"command = {tstr(sys.executable)}\n"
-        f"args = [{tstr(server_path)}]\n"
+        f"command = {tstr(command)}\n"
+        f"args = [{', '.join(tstr(arg) for arg in command_args)}]\n"
         "\n[mcp_servers.micu-image.env]\n"
         f"{env_lines}\n\n"
     )
@@ -550,7 +583,7 @@ _EXPECTED_TOOLS = {"image_generate", "image_edit", "image_batch_edit",
                    "image_multi_reference", "server_info"}
 
 
-def smoke_test(server_path: str, env_dict: dict) -> None:
+def smoke_test(runtime_command: RuntimeCommand, env_dict: dict) -> None:
     step("自检 server 启动")
     env = os.environ.copy()
     env.update(env_dict)
@@ -564,7 +597,7 @@ def smoke_test(server_path: str, env_dict: dict) -> None:
 
     try:
         p = subprocess.Popen(
-            [sys.executable, server_path],
+            [runtime_command.command, *runtime_command.args],
             env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -626,10 +659,11 @@ def smoke_test(server_path: str, env_dict: dict) -> None:
 # ---------- 摘要 ----------
 
 def summary(env_dict: dict, claude_cfg: Path | None, codex_cfg: Path | None,
-            server_path: str) -> None:
+            runtime_command: RuntimeCommand) -> None:
     print("\n=== 完成 ===")
-    print(f"  python      : {sys.executable}")
-    print(f"  server.py   : {server_path}")
+    print(f"  runtime     : {runtime_command.runtime}")
+    print(f"  command     : {runtime_command.command}")
+    print(f"  args        : {runtime_command.args}")
     print(f"  api key     : {mask_key(env_dict.get('MICU_API_KEY', ''))}")
     print(f"  save_dir    : {env_dict.get('MICU_SAVE_DIR', '')}")
     print(f"  save_root   : {env_dict.get('MICU_SAVE_DIR_ROOT', '')}")
@@ -733,6 +767,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pypi-index", default=None, help="自定义 pip index URL (覆盖 --mirror)")
     p.add_argument("--baseurl", default=DEFAULT_BASEURL,
                    help=f"米醋代理 baseurl (默认 {DEFAULT_BASEURL})")
+    p.add_argument(
+        "--runtime",
+        choices=("python", "rust"),
+        default="python",
+        help="迁移期运行时；默认 python reference，全部 release gate 通过前不自动切 Rust",
+    )
+    p.add_argument(
+        "--rust-binary",
+        default=None,
+        help="已编译/下载的 Rust binary 路径（配合 --runtime rust）",
+    )
     p.add_argument("--reset", action="store_true",
                    help="移除已写入的 micu-image MCP 配置 (Claude + Codex), 不动 pip 包")
     return p.parse_args()
@@ -747,27 +792,38 @@ def main() -> None:
 
     print("=== 米醋画图 MCP 一键安装 ===\n")
     check_python()
-    check_pip()
     check_running_clients()
 
     repo_root = Path(__file__).resolve().parent
-    server_path = repo_root / "server.py"
-    if not server_path.exists():
-        err(f"找不到 server.py: {server_path}")
+    runtime_command = resolve_runtime_command(args, repo_root)
     info(f"仓库: {repo_root}")
+    info(
+        f"运行时: {runtime_command.runtime} -> "
+        f"{[runtime_command.command, *runtime_command.args]}"
+    )
 
-    mirror_url = args.pypi_index or PIP_MIRRORS.get(args.mirror)
-    install_deps(repo_root, mirror_url)
+    if runtime_command.runtime == "python":
+        check_pip()
+        mirror_url = args.pypi_index or PIP_MIRRORS.get(args.mirror)
+        install_deps(repo_root, mirror_url)
+    else:
+        ok("Rust binary 已就绪；跳过 pip/Python server 依赖安装")
 
     env_dict, save_dir, save_root = collect_config(args.yes, args.baseurl)
 
-    claude_cfg = write_claude(str(server_path), env_dict) if not args.no_claude else None
-    codex_cfg = write_codex(str(server_path), env_dict) if not args.no_codex else None
+    claude_cfg = (
+        write_claude(runtime_command.command, runtime_command.args, env_dict)
+        if not args.no_claude else None
+    )
+    codex_cfg = (
+        write_codex(runtime_command.command, runtime_command.args, env_dict)
+        if not args.no_codex else None
+    )
 
     if not args.no_smoke:
-        smoke_test(str(server_path), env_dict)
+        smoke_test(runtime_command, env_dict)
 
-    summary(env_dict, claude_cfg, codex_cfg, str(server_path))
+    summary(env_dict, claude_cfg, codex_cfg, runtime_command)
 
 
 if __name__ == "__main__":

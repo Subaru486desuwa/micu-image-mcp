@@ -42,53 +42,72 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 > **Windows 中文提示词**：MCP 会以原生 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，不要把含中文的 here-string 直接通过管道喂给 `python -`；Windows PowerShell 的 `$OutputEncoding` 可能是 ASCII，导致中文在进入 MCP 前已变成 `?`。请将脚本保存为 UTF-8 文件后执行，或先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`。
 
-## 一键安装
+## 安装与渐进迁移状态
 
-方式一：用 Git 下载源码（推荐）。
+仓库现在同时保留两个实现：
+
+- Python 是迁移期 reference，`server.py`、`micu_image_mcp/` 和 Python tests 不会删除；
+- Rust 是单可执行文件实现，无参数即 STDIO serve，也提供 `install/reset/doctor/version`。
+
+本机 36 场景差分、安全测试和 RSS 基准已通过，但本次没有 push，因此 Linux、macOS Intel、
+Windows 原生 GitHub runner 还没有真实结果。**当前不能切换默认实现**：`install.py` 仍默认
+Python，Rust 必须显式选择。
+
+### Rust binary（无需 Python/pip）
+
+正式 release workflow 通过后，从 Releases 下载平台对应文件并核对 `SHA256SUMS`：
+
+```bash
+chmod +x /absolute/path/micu-image-mcp   # macOS/Linux
+MICU_API_KEY=sk-... \
+MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
+/absolute/path/micu-image-mcp install --yes
+```
+
+Rust CLI：
+
+```bash
+micu-image-mcp                 # 等同 serve，STDIO MCP
+micu-image-mcp serve
+micu-image-mcp install --yes --no-claude
+micu-image-mcp reset --yes
+micu-image-mcp doctor
+micu-image-mcp version
+```
+
+开发阶段也可让 Phase A installer 显式配置已编译 binary：
+
+```bash
+cargo build --release
+MICU_API_KEY=sk-... \
+MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
+python install.py --yes \
+  --runtime rust \
+  --rust-binary "$PWD/target/release/micu-image-mcp"
+```
+
+### Python reference（当前默认/回滚入口）
 
 ```bash
 git clone --depth 1 https://github.com/Subaru486desuwa/micu-image-mcp.git micu-image-mcp
 cd micu-image-mcp
-python install.py
+python install.py                 # 等同 --runtime python
 ```
 
-以后更新同一个目录：
-
-```bash
-cd micu-image-mcp
-git pull --ff-only
-python install.py
-```
-
-方式二：用 npm 临时下载源码（适合没有 `git` 命令的环境）。这个项目不是 npm 包，不要用 `npm install micu-image-mcp`；下面的命令只是通过 `tiged` 从 GitHub 拉取源码，仍需要当前网络能访问 GitHub。
-
-```bash
-npm exec --yes tiged -- github:Subaru486desuwa/micu-image-mcp#main micu-image-mcp
-cd micu-image-mcp
-python install.py
-```
-
-脚本会：
-
-1. 检查 Python >= 3.10
-2. 安装依赖
-3. 交互配置米醋 Image2 分组 API key、输出目录
-4. 写入 `~/.claude.json` 和 `~/.codex/config.toml`
-5. 启动 server 做一次 initialize 握手
-
-安装脚本会用 `/v1/models` 做轻量校验，尽量在安装阶段发现 key 分组粘错的问题。
-
-非交互安装：
+非交互：
 
 ```bash
 MICU_API_KEY=sk-... \
-MICU_SAVE_DIR=~/Pictures/micu-out \
-python install.py --yes
+MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
+python install.py --yes --runtime python
 ```
 
-`--yes` 模式下如果 `MICU_API_KEY` 看不到 `gpt-image-2` / `gpt-image-2-openai`，安装会直接失败，避免写入错误配置。
+Python installer 会安装依赖、轻量探测 `/v1/models`、备份并合并 Claude/Codex 配置，最后执行
+initialize + tools/list。`--reset` 只删除 `micu-image` 节，其他 MCP server 不动。
 
-macOS 上若不希望把长期 API key 明文写进 MCP 配置，可把它存入登录钥匙串，并让 Codex 的 STDIO MCP command 指向 `scripts/run-mcp-macos-keychain.sh`：
+### macOS Keychain
+
+原 Keychain launcher 保留。未设置 `MICU_MCP_BINARY` 时继续启动 Python；试用 Rust 时设置 binary：
 
 ```bash
 security add-generic-password \
@@ -97,42 +116,41 @@ security add-generic-password \
   -T /usr/bin/security -w
 ```
 
-命令会交互式读取 key，不会把 key 留在 shell history。MCP 配置只需保留非敏感变量：
-
 ```toml
 [mcp_servers.micu-image]
-command = "/absolute/path/micu-image-mcp/scripts/run-mcp-macos-keychain.sh"
+command = "/absolute/path/repo/scripts/run-mcp-macos-keychain.sh"
 args = []
 
 [mcp_servers.micu-image.env]
-MICU_BASEURL = "https://www.micuapi.ai"
-MICU_MODEL = "gpt-image-2"
+MICU_MCP_BINARY = "/absolute/path/micu-image-mcp"
 MICU_KEYCHAIN_SERVICE = "ai.micuapi.mcp"
 MICU_KEYCHAIN_ACCOUNT = "your-macos-account"
+MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
+MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 ```
 
-Codex 桌面、CLI 和 IDE 扩展共享 `~/.codex/config.toml`；保存后需重启客户端，使 MCP 子进程重新读取配置。
+Codex 桌面、CLI 和 IDE 扩展共享 `~/.codex/config.toml`；修改后重启客户端。
 
-常用选项：
+### 验证与回滚
+
+安装后让客户端调用 `server_info`，确认 `available_models`、base URL、save root 和
+`api_key_configured`。Rust 还可先运行：
 
 ```bash
-python install.py --no-codex
-python install.py --no-claude
-python install.py --mirror tsinghua
-python install.py --baseurl https://www.micuapi.ai
+micu-image-mcp doctor
+python tests/smoke_local.py --proto \
+  --server-command '/absolute/path/micu-image-mcp'
 ```
 
-卸载/重置（仅删 MCP 配置节，不动 pip 包）：
+明确回滚到 Python：
 
 ```bash
-python install.py --reset
-# 想顺手卸 pip 包再加:
-python -m pip uninstall -y micu-image-mcp
+MICU_API_KEY=sk-... \
+MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
+python install.py --yes --runtime python
 ```
 
-`--reset` 会备份原配置后，从 `~/.claude.json` 移除 `mcpServers.micu-image`、从 `~/.codex/config.toml` 移除 `[mcp_servers.micu-image]` 整节，其他 MCP server 节点保持不动。
-
-安装完成后会自动跑一次 `initialize` 握手 + `tools/list`，预期能看到 5 个 tool：`image_generate / image_edit / image_batch_edit / image_multi_reference / server_info`。安装日志里看到这 5 个名字才算装好。然后重启 Claude Code / Codex，让 LLM 调 `server_info` 验证。
+完整迁移/backup 恢复说明见 [docs/migration-from-python.md](docs/migration-from-python.md)。
 
 ---
 
@@ -183,7 +201,11 @@ image2 路径：
 | `MICU_MODEL` | `gpt-image-2` | image2 默认模型 |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同输出目录 | 输出安全根目录 |
+| `MICU_INPUT_ROOT` | 空（不限制） | 可选输入图片白名单根；启用后阻止路径/符号链接逃逸 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取 shell 代理 |
+| `MICU_RESPONSE_FORMAT` | `auto` | `auto`（url→b64）、`url` 或 `b64_json` |
+| `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | 可信 CDN host，逗号分隔 |
+| `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | 仅 trusted host 可放行 198.18.0.0/15 fake-ip |
 
 ## 手动配置
 
@@ -193,8 +215,8 @@ Claude Code:
 {
   "mcpServers": {
     "micu-image": {
-      "command": "/path/to/python",
-      "args": ["/absolute/path/to/micu-image-mcp/server.py"],
+      "command": "/absolute/path/micu-image-mcp",
+      "args": [],
       "env": {
         "MICU_API_KEY": "sk-...",
         "MICU_SAVE_DIR": "/Users/you/Pictures/micu-out",
@@ -209,8 +231,8 @@ Codex:
 
 ```toml
 [mcp_servers.micu-image]
-command = "/path/to/python"
-args = ["/absolute/path/to/micu-image-mcp/server.py"]
+command = "/absolute/path/micu-image-mcp"
+args = []
 
 [mcp_servers.micu-image.env]
 MICU_API_KEY = "sk-..."
@@ -218,11 +240,18 @@ MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
 MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 ```
 
+迁移期若要手动使用 Python reference，把 command 改为 Python、args 改为绝对
+`server.py` 路径即可；五工具 schema 保持相同。
+
 ---
 
 ## 性能 / 压力测试
 
-`tests/` 下两个独立脚本，直接 in-process import `server.py` 调 `image_generate`，不走 stdio MCP（避免子进程开销污染样本）。需要至少一个有效 key 才能跑真实请求；不带 key 用 `--dry-run` 也能验证脚本/导入/校验链路。
+Rust/Python 同机启动与 RSS 原始数据见 [docs/rust-benchmark.md](docs/rust-benchmark.md)。当前 arm64
+Mac 的 Rust idle RSS 中位数为 9,392 KiB，Python 为 66,192 KiB；该结果不代替尚未运行的
+跨平台 release CI。
+
+`tests/` 下两个独立脚本，直接 in-process import `server.py` 调 `image_generate`，不走 stdio MCP（避免子进程开销污染样本）。真实请求需要有效 key，并且只有精确设置 `MICU_RUN_LIVE_TESTS=1` 才会启动；不带 key 用 `--dry-run` 也能验证脚本/导入/校验链路。
 
 报告默认落到 `tests/reports/<title>_<ts>.{json,md}`，已被 `.gitignore` 排除。生成的图扔到 `/tmp/micu-bench/<label>/`，不会污染你的 `~/Pictures/micu-out`。
 
@@ -231,11 +260,11 @@ MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 串行跑 `gpt-image-2` / `gpt-image-2-openai` 在不同 `size` 下的 `image_generate`，记录单次延迟、actual_size 偏差、保存后字节数。
 
 ```bash
-# smoke（默认）：两个 Image2 模型各 1 张
-python tests/perf_bench.py
+# smoke（默认）：两个 Image2 模型各 1 张；必须显式允许 live/付费请求
+MICU_RUN_LIVE_TESTS=1 python tests/perf_bench.py
 
 # 完整 sweep, 每组重复 3 次
-python tests/perf_bench.py --full --repeat 3
+MICU_RUN_LIVE_TESTS=1 python tests/perf_bench.py --full --repeat 3
 
 # 干跑 (不打 API, 只验证脚本链路)
 python tests/perf_bench.py --dry-run
@@ -253,13 +282,13 @@ python tests/perf_bench.py --dry-run
 
 ```bash
 # in-process 并发 (默认 smoke, image2 1K x 3)
-python tests/stress_concurrent.py
+MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py
 
 # 验证 ≥2K 锁串行
-python tests/stress_concurrent.py --size 2048x2048 --concurrency 4
+MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --size 2048x2048 --concurrency 4
 
 # 跨进程模式 (spawn N 个子进程, 模拟多 Claude Code 窗口)
-python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
+MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
 
 ```
 
@@ -273,3 +302,24 @@ python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 204
 | `lock_wait_observed` | notes 里出现 “等待跨进程 ≥2K 锁” 的请求数（>2s 才记） |
 
 > 提醒：Image2 真实并发会按米醋后台线路限流计费，跑 `--concurrency` ≥ 3 之前先确认账户额度。dry-run / 401 路径不计费。
+
+### 离线 contract / 差分测试
+
+先构建 Rust，然后运行相同 MCP STDIO 与本地 mock Micu API 矩阵：
+
+```bash
+cargo build
+MICU_RUN_LIVE_TESTS=0 MICU_RUN_CONTRACT_TESTS=1 \
+  .venv/bin/python -m pytest -q \
+  tests/contract/test_python_rust_differential.py \
+  tests/contract/test_latest_protocol.py
+```
+
+当前矩阵包含 36 个场景，比较 tools schema、HTTP JSON/multipart、retry 顺序、URL/b64/data URL、
+SSRF、损坏图片、body cap、并发、文件冲突和实际落盘内容。mock 只监听 `127.0.0.1`，不调用
+真实生图 API。安全与兼容细节见：
+
+- [docs/rust-rewrite-design.md](docs/rust-rewrite-design.md)
+- [docs/rust-compatibility-matrix.md](docs/rust-compatibility-matrix.md)
+- [docs/rust-security-review.md](docs/rust-security-review.md)
+- [docs/migration-from-python.md](docs/migration-from-python.md)

@@ -169,6 +169,14 @@ class TestErrorDetail:
         result = S._error_detail(text)
         assert len(result) <= 400
 
+    def test_redacts_explicit_key_bearer_and_large_base64(self):
+        secret = "contract-secret-key"
+        text = '{"error":{"message":"Authorization: Bearer ' + secret + '; image=iVBORw0KGgo' + "A" * 200 + '"}}'
+        result = S._error_detail(text, [secret])
+        assert secret not in result
+        assert "iVBORw0KGgo" not in result
+        assert "[REDACTED]" in result
+
 
 # ---------- _extract_image_payload ----------
 

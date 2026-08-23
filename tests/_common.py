@@ -186,6 +186,11 @@ def has_image2_key() -> bool:
     return bool(os.environ.get("MICU_API_KEY", "").strip())
 
 
+def live_tests_enabled() -> bool:
+    """Paid/live benchmark calls require an explicit, exact opt-in."""
+    return os.environ.get("MICU_RUN_LIVE_TESTS", "").strip() == "1"
+
+
 def has_grok_key() -> bool:
     return bool(
         os.environ.get("MICU_GROK_API_KEY", "").strip()

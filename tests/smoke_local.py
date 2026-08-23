@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -50,14 +51,11 @@ def info(msg: str) -> None:
 
 # ---------- 1. MCP 协议层握手 ----------
 
-async def test_proto() -> None:
-    print("\n[1] MCP stdio 协议层握手（spawn server.py）")
-    server_path = REPO / "server.py"
-    if not server_path.exists():
-        fail(f"server.py 不存在: {server_path}")
+async def test_proto(server_command: list[str]) -> None:
+    print(f"\n[1] MCP stdio 协议层握手（spawn {server_command!r}）")
 
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(server_path),
+        *server_command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -240,11 +238,22 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--proto", action="store_true")
     ap.add_argument("--entry", action="store_true")
+    ap.add_argument(
+        "--server-command",
+        default=f"{shlex.quote(sys.executable)} {shlex.quote(str(REPO / 'server.py'))}",
+        help=(
+            "STDIO server command；默认使用当前 Python reference。"
+            "例如 --server-command './target/debug/micu-image-mcp serve'"
+        ),
+    )
     args = ap.parse_args()
     do_all = not (args.proto or args.entry)
+    server_command = shlex.split(args.server_command)
+    if not server_command:
+        fail("--server-command 不能为空")
 
     if args.proto or do_all:
-        await test_proto()
+        await test_proto(server_command)
     if args.entry or do_all:
         await test_entries()
 

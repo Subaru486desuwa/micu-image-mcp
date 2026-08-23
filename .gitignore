@@ -7,6 +7,9 @@ build/
 dist/
 .eggs/
 
+# Rust
+target/
+
 # Virtualenv / conda
 .venv/
 venv/

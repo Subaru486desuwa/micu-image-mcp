@@ -132,6 +132,28 @@ class TestValidateImagePath:
         _, _, _, err = S._validate_image_path(str(path))
         assert err is not None and "PNG、JPEG 或 WebP" in err
 
+    def test_declared_decompression_bomb_rejected_before_decode(self, tmp_path):
+        path = tmp_path / "bomb.png"
+        path.write_bytes(_make_png(100_000, 100_000))
+        _, _, _, err = S._validate_image_path(str(path))
+        assert err is not None and "防解压炸弹" in err
+
+
+class TestValidateDecodedImageBytes:
+    def test_truncated_png_is_rejected_even_when_magic_and_header_match(self):
+        raw = _make_png(64, 64)[:40]
+        assert S._validate_image_bytes(raw) is None
+        _size, _format, err = S._validate_decoded_image_bytes(raw)
+        assert err is not None and "完整解码" in err
+
+    def test_real_png_is_fully_decoded(self, tmp_path):
+        path = tmp_path / "valid.png"
+        Image.new("RGB", (64, 48), (30, 90, 180)).save(path, format="PNG")
+        actual, decoded_format, err = S._validate_decoded_image_bytes(path.read_bytes())
+        assert err is None
+        assert actual == (64, 48)
+        assert decoded_format == "PNG"
+
 
 # ---------- _detect_actual_size ----------
 

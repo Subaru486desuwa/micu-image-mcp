@@ -11,6 +11,8 @@ from .config import (
     _SAVE_ROOT, DEFAULT_SAVE_DIR, _INPUT_ROOT,
     _SAFE_BASENAME_RE,
     MAX_INPUT_FILE_BYTES,
+    MAX_DECODED_IMAGE_PIXELS,
+    MAX_DECODED_IMAGE_EDGE,
 )
 
 
@@ -76,6 +78,62 @@ def _validate_image_bytes(raw: bytes, label: str = "image") -> str | None:
     return f"{label} 不是受支持的图片格式（PNG/JPEG/WebP/GIF magic 不匹配）"
 
 
+def _validate_decoded_image_bytes(
+    raw: bytes,
+    label: str = "image",
+    *,
+    allowed_formats: frozenset[str] = frozenset({"PNG", "JPEG", "WEBP", "GIF"}),
+) -> tuple[tuple[int, int] | None, str, str | None]:
+    """Magic + allocation guards + integrity verification + full pixel decode.
+
+    返回 (actual_size, decoded_format, error)。先从 header 拒绝极端尺寸，再让 Pillow verify，
+    最后重新打开并 load 全部像素，避免只验证 magic/header 就接收截断图片。
+    """
+    magic_err = _validate_image_bytes(raw, label)
+    if magic_err:
+        return None, "", magic_err
+    header_size = _detect_actual_size(raw)
+    if header_size is not None:
+        width, height = header_size
+        if width > MAX_DECODED_IMAGE_EDGE or height > MAX_DECODED_IMAGE_EDGE:
+            return None, "", (
+                f"{label} 尺寸 {width}x{height} 的边长超过解码上限 "
+                f"{MAX_DECODED_IMAGE_EDGE}，已拒绝（防解压炸弹）"
+            )
+        if width * height > MAX_DECODED_IMAGE_PIXELS:
+            return None, "", (
+                f"{label} 尺寸 {width}x{height} 的总像素超过解码上限 "
+                f"{MAX_DECODED_IMAGE_PIXELS:,}，已拒绝（防解压炸弹）"
+            )
+    try:
+        with Image.open(io.BytesIO(raw)) as verified:
+            actual = verified.size
+            decoded_format = (verified.format or "").upper()
+            if actual[0] > MAX_DECODED_IMAGE_EDGE or actual[1] > MAX_DECODED_IMAGE_EDGE:
+                return None, "", (
+                    f"{label} 尺寸 {actual[0]}x{actual[1]} 的边长超过解码上限 "
+                    f"{MAX_DECODED_IMAGE_EDGE}，已拒绝（防解压炸弹）"
+                )
+            if actual[0] * actual[1] > MAX_DECODED_IMAGE_PIXELS:
+                return None, "", (
+                    f"{label} 尺寸 {actual[0]}x{actual[1]} 的总像素超过解码上限 "
+                    f"{MAX_DECODED_IMAGE_PIXELS:,}，已拒绝（防解压炸弹）"
+                )
+            verified.verify()
+        with Image.open(io.BytesIO(raw)) as decoded:
+            decoded.load()
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError):
+        return None, "", f"{label} 无法完整解码（文件可能截断、损坏或格式标记错误）"
+    if decoded_format not in allowed_formats:
+        choices = "、".join(sorted(allowed_formats))
+        return actual, decoded_format, (
+            f"{label} 格式 {decoded_format or '未知'} 不受上游支持；请转换为 {choices}"
+        )
+    if actual[0] < 16 or actual[1] < 16:
+        return actual, decoded_format, f"{label} 尺寸 {actual[0]}x{actual[1]} 太小，不像正常图片"
+    return actual, decoded_format, None
+
+
 def _validate_image_path(image_path: str, label: str = "image_path") -> tuple[Path, bytes, str, str | None]:
     """读图 + 校验（大小 + magic）。返回 (path, bytes, mime, error_message)。
     error 非 None 时其他字段不可用。
@@ -106,22 +164,16 @@ def _validate_image_path(image_path: str, label: str = "image_path") -> tuple[Pa
         raw = p.read_bytes()
     except OSError as e:
         return p, b"", "", f"{label} 读取失败: {e}"
-    err = _validate_image_bytes(raw, label)
+    _actual, decoded_format, err = _validate_decoded_image_bytes(
+        raw,
+        label,
+        allowed_formats=frozenset({"PNG", "JPEG", "WEBP"}),
+    )
     if err:
+        # 保留现有公开格式枚举的中文次序。
+        if "请转换为 JPEG、PNG、WEBP" in err:
+            err = err.replace("JPEG、PNG、WEBP", "PNG、JPEG 或 WebP")
         return p, raw, "", err
-    # 完整解码校验：只检查 magic/宽高会放过“保留头部、像素数据已截断”的文件，
-    # 随后上游只能返回 invalid_file。Pillow 已是项目依赖，这里用 verify() 在请求前拦截。
-    try:
-        with Image.open(io.BytesIO(raw)) as decoded:
-            actual = decoded.size
-            decoded_format = (decoded.format or "").upper()
-            decoded.verify()
-    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError):
-        return p, raw, "", f"{label} 无法完整解码（文件可能截断、损坏或格式标记错误）"
-    if decoded_format not in {"PNG", "JPEG", "WEBP"}:
-        return p, raw, "", f"{label} 格式 {decoded_format or '未知'} 不受上游支持；请转换为 PNG、JPEG 或 WebP"
-    if actual[0] < 16 or actual[1] < 16:
-        return p, raw, "", f"{label} 尺寸 {actual[0]}x{actual[1]} 太小，不像正常图片"
     # 由实际解码格式决定 MIME（不信扩展名，也不信调用方传入的 Content-Type）。
     mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[decoded_format]
     return p, raw, mime, None
@@ -227,7 +279,7 @@ def _detect_actual_size(raw: bytes) -> tuple[int, int] | None:
 
 __all__ = [
     "_safe_basename", "_resolve_save_dir",
-    "_validate_image_bytes", "_validate_image_path",
+    "_validate_image_bytes", "_validate_decoded_image_bytes", "_validate_image_path",
     "_png_color_type", "_validate_mask_against_image",
     "_default_basename", "_detect_actual_size",
 ]

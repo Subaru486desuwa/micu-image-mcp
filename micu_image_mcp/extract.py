@@ -12,18 +12,32 @@ def _parse_response(text: str) -> dict | str:
         return text
 
 
-def _error_detail(text: str) -> str:
+def _sanitize_sensitive(text: str, secrets: tuple[str, ...] | list[str] = ()) -> str:
+    sanitized = text
+    for secret in secrets:
+        if secret:
+            sanitized = sanitized.replace(secret, "[REDACTED]")
+    sanitized = re.sub(
+        r"(?i)(Bearer\s+)([^\s;,\"'\)\]]+)",
+        lambda match: match.group(1) + "[REDACTED]",
+        sanitized,
+    )
+    sanitized = re.sub(r"[A-Za-z0-9+/=]{64,}", "[REDACTED_BASE64]", sanitized)
+    return sanitized
+
+
+def _error_detail(text: str, secrets: tuple[str, ...] | list[str] = ()) -> str:
     try:
         j = json.loads(text)
         if isinstance(j, dict):
             err = j.get("error")
             if isinstance(err, dict) and err.get("message"):
-                return str(err["message"])[:400]
+                return _sanitize_sensitive(str(err["message"]), secrets)[:400]
             if j.get("message"):
-                return str(j["message"])[:400]
-        return text[:400]
+                return _sanitize_sensitive(str(j["message"]), secrets)[:400]
+        return _sanitize_sensitive(text, secrets)[:400]
     except Exception:  # noqa: BLE001
-        return (text or "")[:400]
+        return _sanitize_sensitive(text or "", secrets)[:400]
 
 
 def _extract_image_payload(resp: dict | str) -> tuple[str | None, str | None]:
@@ -86,6 +100,6 @@ def _extract_image_payloads(resp: dict | str) -> list[tuple[str | None, str | No
 
 
 __all__ = [
-    "_parse_response", "_error_detail",
+    "_parse_response", "_sanitize_sensitive", "_error_detail",
     "_extract_image_payload", "_extract_image_payloads",
 ]

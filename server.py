@@ -38,10 +38,12 @@ from micu_image_mcp.config import (
     MAX_N, MIN_SIZE_EDGE, MAX_SIZE_EDGE, SIZE_ALIGNMENT,
     MIN_IMAGE_PIXELS, MAX_IMAGE_PIXELS, MAX_IMAGE_ASPECT_RATIO,
     MAX_INPUT_FILE_BYTES, MAX_TOTAL_INPUT_BYTES, MAX_RESPONSE_BYTES,
+    MAX_DECODED_IMAGE_PIXELS, MAX_DECODED_IMAGE_EDGE,
     _SAFE_BASENAME_RE,
     RETRYABLE_STATUS, FALLBACK_STATUS, RETRY_AFTER_STATUSES, BIG_SIZE_FAIL_FAST_STATUS,
     MAX_RETRY_AFTER_SECONDS, NETWORK_RETRY_DELAY_SECONDS,
     SMALL_RETRY_DELAYS_SECONDS, BIG_RETRY_DELAY_SECONDS, RETRY_JITTER_SECONDS,
+    API_REQUEST_TIMEOUT_SECONDS,
 )
 from micu_image_mcp.sizes import (
     _parse_size, _max_edge, _size_tier, _grok_size_mode,
@@ -56,7 +58,7 @@ from micu_image_mcp.routing import (
 )
 from micu_image_mcp.io_safety import (
     _safe_basename, _resolve_save_dir,
-    _validate_image_bytes, _validate_image_path,
+    _validate_image_bytes, _validate_decoded_image_bytes, _validate_image_path,
     _png_color_type, _validate_mask_against_image,
     _default_basename, _detect_actual_size,
 )
@@ -148,7 +150,7 @@ async def _call_and_save_with_format_fallback(
             big_size_lock=big_size_lock, notes_out=notes,
         )
         if not (200 <= status < 300):
-            last_err = f"HTTP {status}: {_error_detail(text)}"
+            last_err = f"HTTP {status}: {_error_detail(text, [key])}"
             break
         saved_info, save_err = await _save_first_payload_from_response(
             text,
@@ -338,7 +340,7 @@ async def image_generate(
                 big_size_lock=False, notes_out=notes,
             )
             if not (200 <= status < 300):
-                last_grok_err = f"HTTP {status}: {_error_detail(text)}"
+                last_grok_err = f"HTTP {status}: {_error_detail(text, [key])}"
                 break
 
             resp = _parse_response(text)
@@ -434,7 +436,7 @@ async def image_generate(
                 big_size_lock=big_size_lock, notes_out=notes,
             )
             if not (200 <= status < 300):
-                last_err = f"#{idx + 1} HTTP {status}: {_error_detail(text)}"
+                last_err = f"#{idx + 1} HTTP {status}: {_error_detail(text, [key])}"
                 break
             resp = _parse_response(text)
             b64, url = _extract_image_payload(resp)
@@ -703,7 +705,7 @@ async def image_edit(
             big_size_lock=big_size_lock, notes_out=notes,
         )
         if not (200 <= status < 300):
-            last_err = f"HTTP {status}: {_error_detail(text)}"
+            last_err = f"HTTP {status}: {_error_detail(text, [key])}"
             break
         saved_info, save_err = await _save_first_payload_from_response(
             text, out_dir, stem, notes, size,
@@ -1107,7 +1109,7 @@ async def image_multi_reference(
             big_size_lock=big_size_lock, notes_out=notes,
         )
         if not (200 <= status < 300):
-            last_err = f"HTTP {status}: {_error_detail(text)}"
+            last_err = f"HTTP {status}: {_error_detail(text, [key])}"
             break
         saved_info, save_err = await _save_first_payload_from_response(
             text, out_dir, stem, notes, size,
@@ -1186,7 +1188,7 @@ def server_info() -> dict[str, Any]:
                 f"单输入图 ≤{MAX_INPUT_FILE_BYTES//1024//1024}MB；"
                 f"image_multi_reference 总和 ≤{MAX_TOTAL_INPUT_BYTES//1024//1024}MB"
             ),
-            "input_image_validation": "所有输入图先按 magic bytes 识别，再用 Pillow verify() 完整解码；仅允许 PNG/JPEG/WebP，截断、损坏、伪装格式会在请求前拒绝",
+            "input_image_validation": "所有输入图先检查文件大小与 magic，再以 allocation/像素/边长硬上限执行完整解码；仅允许 PNG/JPEG/WebP，截断、损坏、伪装格式和解压炸弹会在请求前拒绝",
             "response_size_limit": f"远端响应 ≤{MAX_RESPONSE_BYTES//1024//1024}MB；超过中断不落盘",
             "base_url_locked": "base_url 锁在启动期 MICU_BASEURL env，运行期 tool 不接受参数（防 key 外泄到攻击者 host）",
         },

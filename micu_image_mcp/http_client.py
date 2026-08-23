@@ -22,6 +22,7 @@ from .config import (
     BIG_RETRY_DELAY_SECONDS,
     RETRY_JITTER_SECONDS,
     MAX_RESPONSE_BYTES,
+    API_REQUEST_TIMEOUT_SECONDS,
 )
 
 # 响应体超过上限时返回的状态码（不在 RETRYABLE_STATUS 内，不会重试）。
@@ -81,12 +82,13 @@ async def _read_body_capped(r: httpx.Response) -> tuple[bool, str]:
     return True, b"".join(chunks).decode("utf-8", errors="replace")
 
 
-async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str, dict[str, str]]:
+async def _call_endpoint(ep: Endpoint, key: str, timeout: float | None = None) -> tuple[int, str, dict[str, str]]:
     """非 stream 调用。timeout 拉到 600s 给慢 origin 留余地（CF 120s 仍可能拦）。
 
     用 cx.stream 而非 cx.post：先看 Content-Length / 边读边截断，超 MAX_RESPONSE_BYTES 即中止，
     避免把超大响应体全量缓冲进内存。
     """
+    timeout = API_REQUEST_TIMEOUT_SECONDS if timeout is None else timeout
     headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
     cx = _get_http_client()
     if ep.multipart is not None:
@@ -121,12 +123,13 @@ async def _call_endpoint(ep: Endpoint, key: str, timeout: float = 600.0) -> tupl
         return r.status_code, text, resp_headers
 
 
-async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float = 600.0) -> tuple[int, str, dict[str, str]]:
+async def _call_endpoint_stream(ep: Endpoint, key: str, timeout: float | None = None) -> tuple[int, str, dict[str, str]]:
     """SSE stream 调用（chat/completions 专用）。把 delta.content 累加成完整 content，
     再包装成与非 stream 等价的 chat completion JSON 结构返回，让上层 _extract_image_payload 复用。
 
     关键：stream 模式下 CF 看到首字节就放行，不再撞 120s upstream timeout。
     """
+    timeout = API_REQUEST_TIMEOUT_SECONDS if timeout is None else timeout
     if ep.json_body is None or ep.multipart is not None:
         # 只对 JSON body 端点开 stream
         return await _call_endpoint(ep, key, timeout=timeout)
@@ -266,10 +269,11 @@ def _append_retry_note(
     delay: float,
     next_attempt: int,
     text: str,
+    secrets: tuple[str, ...] | list[str] = (),
 ) -> None:
     if notes_out is None:
         return
-    detail = _error_detail(text)
+    detail = _error_detail(text, secrets)
     if detail:
         detail = f"；原因：{detail}"
     notes_out.append(f"HTTP {status} 可重试，等待 {delay:.1f}s 后第 {next_attempt} 次尝试{detail}")
@@ -319,6 +323,7 @@ async def _call_with_retry(
                 delay=NETWORK_RETRY_DELAY_SECONDS,
                 next_attempt=attempt_number + 1,
                 text=text,
+                secrets=[key],
             )
             await asyncio.sleep(NETWORK_RETRY_DELAY_SECONDS)
             status, text, headers = await _attempt()
@@ -344,6 +349,7 @@ async def _call_with_retry(
                 delay=delay,
                 next_attempt=attempt_number + 1,
                 text=text,
+                secrets=[key],
             )
             await asyncio.sleep(delay)
             retry_attempt += 1

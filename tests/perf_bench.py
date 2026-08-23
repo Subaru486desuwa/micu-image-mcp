@@ -5,10 +5,10 @@
 
 用法：
     # smoke（默认）
-    python tests/perf_bench.py
+    MICU_RUN_LIVE_TESTS=1 python tests/perf_bench.py
 
     # 跑完整 sweep, 每组重复 3 次
-    python tests/perf_bench.py --full --repeat 3
+    MICU_RUN_LIVE_TESTS=1 python tests/perf_bench.py --full --repeat 3
 
     # 干跑（不打 API，只验证导入 / 校验链路通）
     python tests/perf_bench.py --dry-run
@@ -27,6 +27,7 @@ from _common import (
     ensure_save_dir,
     has_image2_key,
     import_server,
+    live_tests_enabled,
     parse_actual_size,
     summarize,
     write_report,
@@ -55,6 +56,9 @@ PROMPT = (
 
 def select_combinations(args) -> list[tuple[str, str, str]]:
     src_image2 = IMAGE2_FULL if args.full else IMAGE2_SMOKE
+    if not args.dry_run and not live_tests_enabled():
+        print("[!!] 真实压测默认关闭；仅 MICU_RUN_LIVE_TESTS=1 时允许发出付费请求")
+        return []
     if not has_image2_key() and not args.dry_run:
         print("[!!] MICU_API_KEY 未配置，无法运行 Image2 压测")
         return []

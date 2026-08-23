@@ -1,0 +1,24 @@
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "result": {
+    "capabilities": {
+      "experimental": {},
+      "prompts": {
+        "listChanged": false
+      },
+      "resources": {
+        "listChanged": false,
+        "subscribe": false
+      },
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "protocolVersion": "2024-11-05",
+    "serverInfo": {
+      "name": "micu-image",
+      "version": "1.28.0"
+    }
+  }
+}

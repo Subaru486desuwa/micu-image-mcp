@@ -10,6 +10,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -180,6 +181,20 @@ def test_benchmark_cli_does_not_offer_grok(script):
     assert "gpt-image-2-openai" in result.stdout
 
 
+@pytest.mark.parametrize("script", ["perf_bench.py", "stress_concurrent.py"])
+def test_live_benchmark_requires_explicit_gate_even_when_key_exists(script):
+    env = os.environ.copy()
+    env["MICU_API_KEY"] = "sk-test-only"
+    env.pop("MICU_RUN_LIVE_TESTS", None)
+    command = [sys.executable, str(REPO_ROOT / "tests" / script)]
+    if script == "perf_bench.py":
+        command.append("--out-dir")
+        command.append(str(REPO_ROOT / "tests" / "reports"))
+    result = subprocess.run(command, check=False, capture_output=True, text=True, env=env)
+    assert result.returncode != 0
+    assert "MICU_RUN_LIVE_TESTS=1" in result.stdout + result.stderr
+
+
 def test_image_generate_uses_url_first_response_format(monkeypatch):
     """auto 模式默认先请求 response_format=url。"""
     captured: dict = {}
@@ -272,6 +287,17 @@ def test_save_image_b64_rejects_oversized(monkeypatch, tmp_path):
     b64 = base64.b64encode(_png_bytes()).decode()  # 远大于 100 字节
     with pytest.raises(ImageSaveError, match="超过单图上限"):
         asyncio.run(save._save_image_b64(b64, tmp_path, "x"))
+
+
+def test_save_validated_bytes_rejects_truncated_output(tmp_path):
+    from micu_image_mcp import config
+
+    raw = _png_bytes()[:40]
+    save_dir = config._SAVE_ROOT / "truncated_output"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ImageSaveError, match="完整解码"):
+        asyncio.run(save._save_validated_bytes(raw, save_dir, "truncated", source_label="远端图"))
+    assert not list(save_dir.glob("truncated*"))
 
 
 # ---------- H1：_call_endpoint 流式读取 + cap ----------

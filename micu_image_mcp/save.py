@@ -19,7 +19,7 @@ from .config import (
     FAKE_IP_NETWORK,
 )
 from .extract import _extract_image_payload, _parse_response
-from .io_safety import _detect_actual_size, _validate_image_bytes
+from .io_safety import _detect_actual_size, _validate_decoded_image_bytes
 from .routing import _size_note
 from .sizes import _parse_size
 from .http_client import _get_http_client
@@ -200,20 +200,13 @@ async def _save_validated_bytes(raw: bytes, save_dir: Path, basename: str, *, so
             f"{source_label} 响应 {len(raw)/1024/1024:.1f}MB 超过单图上限 "
             f"{MAX_RESPONSE_BYTES/1024/1024:.0f}MB；可能是代理返回了错误内容"
         )
-    err = _validate_image_bytes(raw, source_label)
+    actual, decoded_format, err = _validate_decoded_image_bytes(raw, source_label)
     if err:
         raise ImageSaveError(err)
-    # 由 magic 决定 ext
-    if raw[:8] == b"\x89PNG\r\n\x1a\n":
-        ext = "png"
-    elif raw[:3] == b"\xff\xd8\xff":
-        ext = "jpg"
-    elif raw[:6] in (b"GIF87a", b"GIF89a"):
-        ext = "gif"
-    elif raw[:4] == b"RIFF":
-        ext = "webp"
-    else:
-        ext = "png"  # 不该到这（_validate_image_bytes 应已拒）
+    ext = {"PNG": "png", "JPEG": "jpg", "GIF": "gif", "WEBP": "webp"}.get(
+        decoded_format,
+        "png",
+    )
 
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -247,7 +240,7 @@ async def _save_validated_bytes(raw: bytes, save_dir: Path, basename: str, *, so
             return candidate
 
     path = await asyncio.to_thread(_atomic_write)
-    return path, _detect_actual_size(raw), len(raw)
+    return path, actual, len(raw)
 
 
 async def _save_image_b64(

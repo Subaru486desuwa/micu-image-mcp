@@ -15,13 +15,13 @@
 
 用法:
   # 默认 smoke: inprocess, concurrency=3, image2 1024² × 3
-  python tests/stress_concurrent.py
+  MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py
 
   # 验证 2K 锁串行
-  python tests/stress_concurrent.py --size 2048x2048 --concurrency 4
+  MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --size 2048x2048 --concurrency 4
 
   # 跨进程模式 (开多窗口模拟)
-  python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
+  MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
 
 """
 from __future__ import annotations
@@ -41,6 +41,7 @@ from _common import (
     ensure_save_dir,
     has_image2_key,
     import_server,
+    live_tests_enabled,
     parse_actual_size,
     percentile,
     summarize,
@@ -290,7 +291,10 @@ def main() -> None:
     save_root = ensure_save_dir(f"stress_{args.mode}")
     print(f"[..] 沙箱根: {save_root}")
 
-    # key 校验
+    # live/key 双重门禁
+    if not live_tests_enabled():
+        print("[ERR] 真实压力测试默认关闭；仅 MICU_RUN_LIVE_TESTS=1 时允许发出付费请求")
+        sys.exit(1)
     if not has_image2_key():
         print("[ERR] MICU_API_KEY 未配置")
         sys.exit(1)

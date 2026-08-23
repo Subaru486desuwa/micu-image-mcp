@@ -144,6 +144,10 @@ MAX_IMAGE_ASPECT_RATIO = 3.0
 MAX_INPUT_FILE_BYTES = 4 * 1024 * 1024     # 单张输入图 4MB
 MAX_TOTAL_INPUT_BYTES = 8 * 1024 * 1024    # 多图原始字节总和 8MB，给代理请求体编码留余量
 MAX_RESPONSE_BYTES = 25 * 1024 * 1024      # 单张输出图最大 25MB（4K 实测最高 ~12MB）
+# 完整解码前的独立 allocation guard。当前最大请求为 8.3MP；16MP 给后端尺寸漂移留余量，
+# 同时把 RGBA 解码峰值限制在约 64MiB。edge guard 拦截极端长边 header。
+MAX_DECODED_IMAGE_PIXELS = 16 * 1024 * 1024
+MAX_DECODED_IMAGE_EDGE = 8192
 
 # 安全 basename 字符集（保留点号给扩展名等）
 _SAFE_BASENAME_RE = re.compile(r"^[A-Za-z0-9_\-.]+$")
@@ -159,6 +163,16 @@ NETWORK_RETRY_DELAY_SECONDS = 2.0
 SMALL_RETRY_DELAYS_SECONDS = (4.0, 8.0)
 BIG_RETRY_DELAY_SECONDS = 60.0
 RETRY_JITTER_SECONDS = 2.0
+
+# 仅离线 contract harness 可缩短超时；生产环境忽略 MICU_TEST_API_TIMEOUT_MS。
+_CONTRACT_TESTING = os.environ.get("MICU_CONTRACT_TESTING", "").strip() == "1"
+try:
+    _contract_timeout_ms = float(os.environ.get("MICU_TEST_API_TIMEOUT_MS", "600000"))
+except ValueError:
+    _contract_timeout_ms = 600_000.0
+API_REQUEST_TIMEOUT_SECONDS = (
+    max(0.01, _contract_timeout_ms / 1000.0) if _CONTRACT_TESTING else 600.0
+)
 
 __all__ = [
     "_LOCK_BACKEND", "_FILE_LOCK_AVAILABLE",
@@ -176,8 +190,10 @@ __all__ = [
     "MAX_N", "MIN_SIZE_EDGE", "MAX_SIZE_EDGE", "SIZE_ALIGNMENT",
     "MIN_IMAGE_PIXELS", "MAX_IMAGE_PIXELS", "MAX_IMAGE_ASPECT_RATIO",
     "MAX_INPUT_FILE_BYTES", "MAX_TOTAL_INPUT_BYTES", "MAX_RESPONSE_BYTES",
+    "MAX_DECODED_IMAGE_PIXELS", "MAX_DECODED_IMAGE_EDGE",
     "_SAFE_BASENAME_RE",
     "RETRYABLE_STATUS", "FALLBACK_STATUS", "RETRY_AFTER_STATUSES", "BIG_SIZE_FAIL_FAST_STATUS",
     "MAX_RETRY_AFTER_SECONDS", "NETWORK_RETRY_DELAY_SECONDS",
     "SMALL_RETRY_DELAYS_SECONDS", "BIG_RETRY_DELAY_SECONDS", "RETRY_JITTER_SECONDS",
+    "API_REQUEST_TIMEOUT_SECONDS",
 ]

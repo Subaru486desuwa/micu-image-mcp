@@ -1,0 +1,3167 @@
+{
+  "atomic_filename_collision": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "collision [scenario:b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "b64"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "collision [scenario:b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "b64"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/same_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/same_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      },
+      {
+        "id": 11,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/same_1_2.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/same_1_2.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "same_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "same_1_2.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 3
+  },
+  "batch_quality_serial_gap": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": true
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2-openai",
+          "prompt": "批量串行 [scenario:b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-0.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+            "size": 93
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "b64"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2-openai",
+          "prompt": "批量串行 [scenario:b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-1.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "04dfba183252781afe1e9d0ce446469c557cd03d70fe8a9b18fde9f8e8fc214f",
+            "size": 94
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "b64"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2-openai\",\n  \"size\": \"1024x1024\",\n  \"concurrency\": 1,\n  \"total\": 2,\n  \"succeeded\": 2,\n  \"failed\": 0,\n  \"results\": [\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2-openai\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_1.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 1,\n      \"input\": \"<CASE_ROOT>/input/batch-0.png\"\n    },\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2-openai\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_2.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 2,\n      \"input\": \"<CASE_ROOT>/input/batch-1.png\"\n    }\n  ],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "concurrency": 1,
+            "failed": 0,
+            "model": "gpt-image-2-openai",
+            "notes": [],
+            "ok": true,
+            "results": [
+              {
+                "index": 1,
+                "input": "<CASE_ROOT>/input/batch-0.png",
+                "model": "gpt-image-2-openai",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_1.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              },
+              {
+                "index": 2,
+                "input": "<CASE_ROOT>/input/batch-1.png",
+                "model": "gpt-image-2-openai",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_2.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              }
+            ],
+            "size": "1024x1024",
+            "succeeded": 2,
+            "total": 2
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "batch_<TIMESTAMP>_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "batch_<TIMESTAMP>_2.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "batch_standard_concurrency_six": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 5,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "批量并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-0.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+            "size": 93
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "批量并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-1.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "04dfba183252781afe1e9d0ce446469c557cd03d70fe8a9b18fde9f8e8fc214f",
+            "size": 94
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "批量并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-2.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "ee64de31a2d9f333129c2b31757e607a26a7b3edbb5ed153ca1f0e9a9ff37411",
+            "size": 95
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "批量并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-3.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "15a03e2c11ca940508f6a36724f7b95ab3eac38165bd472276ff21dca7ea1014",
+            "size": 97
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "批量并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-4.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "77663fc6a317a60625709d2925e7271a1fbda6644ead83253436883a960ef6ad",
+            "size": 97
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "批量并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "batch-5.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "5f5f8db1c3dd1aaf68d2acf46ab88af172cb64248a4feafc2345aec81520b89c",
+            "size": 99
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "concurrency_probe"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"concurrency\": 5,\n  \"total\": 6,\n  \"succeeded\": 6,\n  \"failed\": 0,\n  \"results\": [\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_1.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 1,\n      \"input\": \"<CASE_ROOT>/input/batch-0.png\"\n    },\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_2.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 2,\n      \"input\": \"<CASE_ROOT>/input/batch-1.png\"\n    },\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_3.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 3,\n      \"input\": \"<CASE_ROOT>/input/batch-2.png\"\n    },\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_4.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 4,\n      \"input\": \"<CASE_ROOT>/input/batch-3.png\"\n    },\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_5.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 5,\n      \"input\": \"<CASE_ROOT>/input/batch-4.png\"\n    },\n    {\n      \"ok\": true,\n      \"model\": \"gpt-image-2\",\n      \"size\": \"1024x1024\",\n      \"used_fallback\": false,\n      \"saved\": {\n        \"path\": \"<CASE_ROOT>/out/batch_<TIMESTAMP>_6.png\",\n        \"size_bytes\": 93,\n        \"actual_size\": \"32x24\",\n        \"actual_megapixels\": 0.0\n      },\n      \"notes\": [\n        \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n      ],\n      \"index\": 6,\n      \"input\": \"<CASE_ROOT>/input/batch-5.png\"\n    }\n  ],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "concurrency": 5,
+            "failed": 0,
+            "model": "gpt-image-2",
+            "notes": [],
+            "ok": true,
+            "results": [
+              {
+                "index": 1,
+                "input": "<CASE_ROOT>/input/batch-0.png",
+                "model": "gpt-image-2",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_1.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              },
+              {
+                "index": 2,
+                "input": "<CASE_ROOT>/input/batch-1.png",
+                "model": "gpt-image-2",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_2.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              },
+              {
+                "index": 3,
+                "input": "<CASE_ROOT>/input/batch-2.png",
+                "model": "gpt-image-2",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_3.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              },
+              {
+                "index": 4,
+                "input": "<CASE_ROOT>/input/batch-3.png",
+                "model": "gpt-image-2",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_4.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              },
+              {
+                "index": 5,
+                "input": "<CASE_ROOT>/input/batch-4.png",
+                "model": "gpt-image-2",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_5.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              },
+              {
+                "index": 6,
+                "input": "<CASE_ROOT>/input/batch-5.png",
+                "model": "gpt-image-2",
+                "notes": [
+                  "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+                ],
+                "ok": true,
+                "saved": {
+                  "actual_megapixels": 0.0,
+                  "actual_size": "32x24",
+                  "path": "<CASE_ROOT>/out/batch_<TIMESTAMP>_6.png",
+                  "size_bytes": 93
+                },
+                "size": "1024x1024",
+                "used_fallback": false
+              }
+            ],
+            "size": "1024x1024",
+            "succeeded": 6,
+            "total": 6
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "batch_<TIMESTAMP>_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "batch_<TIMESTAMP>_2.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "batch_<TIMESTAMP>_3.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "batch_<TIMESTAMP>_4.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "batch_<TIMESTAMP>_5.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "batch_<TIMESTAMP>_6.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "edit_decompression_bomb": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"image_path 尺寸 100000x100000 的边长超过解码上限 8192，已拒绝（防解压炸弹）\",\n  \"errors\": [\n    \"image_path 尺寸 100000x100000 的边长超过解码上限 8192，已拒绝（防解压炸弹）\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "image_path 尺寸 100000x100000 的边长超过解码上限 8192，已拒绝（防解压炸弹）",
+            "errors": [
+              "image_path 尺寸 100000x100000 的边长超过解码上限 8192，已拒绝（防解压炸弹）"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "edit_input_over_4mib": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"image_path 文件 4.0MB 超过单文件上限 4MB；请先压缩\",\n  \"errors\": [\n    \"image_path 文件 4.0MB 超过单文件上限 4MB；请先压缩\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "image_path 文件 4.0MB 超过单文件上限 4MB；请先压缩",
+            "errors": [
+              "image_path 文件 4.0MB 超过单文件上限 4MB；请先压缩"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "edit_input_root_symlink_escape": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"image_path 必须在 MICU_INPUT_ROOT=<CASE_ROOT>/input 之下（已启用输入路径白名单）；收到 '<CASE_ROOT>/input/escape.png'\",\n  \"errors\": [\n    \"image_path 必须在 MICU_INPUT_ROOT=<CASE_ROOT>/input 之下（已启用输入路径白名单）；收到 '<CASE_ROOT>/input/escape.png'\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "image_path 必须在 MICU_INPUT_ROOT=<CASE_ROOT>/input 之下（已启用输入路径白名单）；收到 '<CASE_ROOT>/input/escape.png'",
+            "errors": [
+              "image_path 必须在 MICU_INPUT_ROOT=<CASE_ROOT>/input 之下（已启用输入路径白名单）；收到 '<CASE_ROOT>/input/escape.png'"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "edit_mask_without_alpha": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"mask PNG color_type=2（RGB），缺 alpha 通道；必须用 GA(4) 或 RGBA(6) 格式，alpha=0 标记编辑区\",\n  \"errors\": [\n    \"mask PNG color_type=2（RGB），缺 alpha 通道；必须用 GA(4) 或 RGBA(6) 格式，alpha=0 标记编辑区\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "mask PNG color_type=2（RGB），缺 alpha 通道；必须用 GA(4) 或 RGBA(6) 格式，alpha=0 标记编辑区",
+            "errors": [
+              "mask PNG color_type=2（RGB），缺 alpha 通道；必须用 GA(4) 或 RGBA(6) 格式，alpha=0 标记编辑区"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "edit_mask_wrong_size": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"mask 尺寸 64x48 必须与原图 32x24 一致\",\n  \"errors\": [\n    \"mask 尺寸 64x48 必须与原图 32x24 一致\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "mask 尺寸 64x48 必须与原图 32x24 一致",
+            "errors": [
+              "mask 尺寸 64x48 必须与原图 32x24 一致"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "edit_multipart_with_mask": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "编辑中文 [scenario:b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "source.png",
+            "mime": "image/png",
+            "name": "image",
+            "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+            "size": 93
+          },
+          {
+            "filename": "mask.png",
+            "mime": "image/png",
+            "name": "mask",
+            "sha256": "e3848b8c6056c8a7370567d3fac3bbd9d9d0c8b71d59bbd02c18266592361908",
+            "size": 100
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "b64"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"used_fallback\": false,\n  \"saved\": {\n    \"path\": \"<CASE_ROOT>/out/edit_contract.png\",\n    \"size_bytes\": 93,\n    \"actual_size\": \"32x24\",\n    \"actual_megapixels\": 0.0\n  },\n  \"notes\": [\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "model": "gpt-image-2",
+            "notes": [
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "saved": {
+              "actual_megapixels": 0.0,
+              "actual_size": "32x24",
+              "path": "<CASE_ROOT>/out/edit_contract.png",
+              "size_bytes": 93
+            },
+            "size": "1024x1024",
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "edit_contract.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "edit_truncated_input": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"image_path 无法完整解码（文件可能截断、损坏或格式标记错误）\",\n  \"errors\": [\n    \"image_path 无法完整解码（文件可能截断、损坏或格式标记错误）\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "image_path 无法完整解码（文件可能截断、损坏或格式标记错误）",
+            "errors": [
+              "image_path 无法完整解码（文件可能截断、损坏或格式标记错误）"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_400_too_many_retry": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_400_too_many]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_400_too_many"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_400_too_many]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_400_too_many"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2-openai\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/retry400_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"HTTP 429 可重试，等待 0.0s 后第 2 次尝试；原因：Too Many Requests\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2-openai",
+            "notes": [
+              "HTTP 429 可重试，等待 0.0s 后第 2 次尝试；原因：Too Many Requests",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/retry400_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "retry400_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_408_retry": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_408]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_408"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_408]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_408"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2-openai\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/retry408_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"HTTP 408 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 408\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2-openai",
+            "notes": [
+              "HTTP 408 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 408",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/retry408_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "retry408_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_429_retry_after_seconds": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_after_seconds]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_after_seconds"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_after_seconds]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_after_seconds"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2-openai\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/retry429_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"HTTP 429 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 429\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2-openai",
+            "notes": [
+              "HTTP 429 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 429",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/retry429_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "retry429_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_500_retry": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_500]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_500"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_500]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_500"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2-openai\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/retry500_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"HTTP 500 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 500\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2-openai",
+            "notes": [
+              "HTTP 500 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 500",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/retry500_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "retry500_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_524_large_fail_fast": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "timeout [scenario:http_524]",
+          "response_format": "url",
+          "size": "2048x2048"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "http_524"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2-openai\",\n  \"size\": \"2048x2048\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 HTTP 524: fixture timeout\"\n  ],\n  \"notes\": [\n    \"size=2048x2048 (2k) 已自动切到高质量线路 gpt-image-2-openai\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 HTTP 524: fixture timeout"
+            ],
+            "model": "gpt-image-2-openai",
+            "notes": [
+              "size=2048x2048 (2k) 已自动切到高质量线路 gpt-image-2-openai"
+            ],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "2048x2048",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_api_timeout_free_retry": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "timeout [scenario:api_timeout]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "api_timeout"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "timeout [scenario:api_timeout]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "api_timeout"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 HTTP 0: ReadTimeout: \"\n  ],\n  \"notes\": [\n    \"HTTP 0 可重试，等待 2.0s 后第 2 次尝试；原因：ReadTimeout: \"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 HTTP 0: ReadTimeout: "
+            ],
+            "model": "gpt-image-2",
+            "notes": [
+              "HTTP 0 可重试，等待 2.0s 后第 2 次尝试；原因：ReadTimeout: "
+            ],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_content_length_cap": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "oversize [scenario:content_length_too_large]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "content_length_too_large"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 HTTP 413: 响应 Content-Length=25.0MB 超过 25MB 上限\"\n  ],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 HTTP 413: 响应 Content-Length=25.0MB 超过 25MB 上限"
+            ],
+            "model": "gpt-image-2",
+            "notes": [],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_data_url": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "data URL [scenario:data_url]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "data_url"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/data_url_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/data_url_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "data_url_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_error_redacts_key_and_base64": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "secret [scenario:secret_error]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "secret_error"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 HTTP 400: Authorization: Bearer [REDACTED]]; [REDACTED_BASE64]\"\n  ],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 HTTP 400: Authorization: Bearer [REDACTED]]; [REDACTED_BASE64]"
+            ],
+            "model": "gpt-image-2",
+            "notes": [],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_exact_b64": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "精确尺寸 [scenario:exact_b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "exact_b64"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": true,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/exact_1.png\",\n      \"size_bytes\": 4555,\n      \"actual_size\": \"1024x1024\",\n      \"actual_megapixels\": 1.05\n    }\n  ],\n  \"errors\": [],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 1.05,
+                "actual_size": "1024x1024",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/exact_1.png",
+                "size_bytes": 4555
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": true,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "exact_1.png",
+        "sha256": "77668f958f7b2c566ce2224c1879e5cc99638f8a5b004373f21ee9d2526f3c9e",
+        "size": 4555
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_invalid_json": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "invalid [scenario:invalid_json]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "invalid_json"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "invalid [scenario:invalid_json]",
+          "response_format": "b64_json",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "invalid_json"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 保存失败: 响应中未识别到图片\"\n  ],\n  \"notes\": [\n    \"URL 落盘失败（#1 保存失败: 响应中未识别到图片）→ 重试 API response_format=b64_json\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 保存失败: 响应中未识别到图片"
+            ],
+            "model": "gpt-image-2",
+            "notes": [
+              "URL 落盘失败（#1 保存失败: 响应中未识别到图片）→ 重试 API response_format=b64_json"
+            ],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_mid_body_disconnect_free_retry": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "disconnect [scenario:disconnect_body_once]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "disconnect_body_once"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "disconnect [scenario:disconnect_body_once]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "disconnect_body_once"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/disconnect_body_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"HTTP 0 可重试，等待 2.0s 后第 2 次尝试；原因：RemoteProtocolError: peer closed connection without sending complete message body (received 1 bytes, expected 1000)\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "HTTP 0 可重试，等待 2.0s 后第 2 次尝试；原因：RemoteProtocolError: peer closed connection without sending complete message body (received 1 bytes, expected 1000)",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/disconnect_body_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "disconnect_body_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_missing_payload": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "empty [scenario:no_image]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "no_image"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "empty [scenario:no_image]",
+          "response_format": "b64_json",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "no_image"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 保存失败: 响应中未识别到图片\"\n  ],\n  \"notes\": [\n    \"URL 落盘失败（#1 保存失败: 响应中未识别到图片）→ 重试 API response_format=b64_json\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 保存失败: 响应中未识别到图片"
+            ],
+            "model": "gpt-image-2",
+            "notes": [
+              "URL 落盘失败（#1 保存失败: 响应中未识别到图片）→ 重试 API response_format=b64_json"
+            ],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_network_disconnect_free_retry": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "disconnect [scenario:disconnect_once]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "disconnect_once"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "disconnect [scenario:disconnect_once]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "disconnect_once"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/disconnect_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"HTTP 0 可重试，等待 2.0s 后第 2 次尝试；原因：RemoteProtocolError: Server disconnected without sending a response.\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "HTTP 0 可重试，等待 2.0s 后第 2 次尝试；原因：RemoteProtocolError: Server disconnected without sending a response.",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/disconnect_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "disconnect_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_private_redirect_fallback": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "redirect [scenario:url_redirect_private_then_b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_redirect_private_then_b64"
+      },
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "*/*",
+          "authorization_scheme": null,
+          "authorization_valid": null,
+          "content_type": null
+        },
+        "json": null,
+        "method": "GET",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/redirect-private.png",
+        "scenario": "download:/redirect-private.png"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "redirect [scenario:url_redirect_private_then_b64]",
+          "response_format": "b64_json",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_redirect_private_then_b64"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/redirect_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"URL 落盘失败（#1 保存失败: Redirect response '302 Found' for url 'http://<PUBLIC_DOWNLOAD>/redirect-private.png'\\nRedirect location: 'http://127.0.0.1/private.png'\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/302）→ 重试 API response_format=b64_json\",\n    \"已通过 response_format=b64_json 成功落盘\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "URL 落盘失败（#1 保存失败: Redirect response '302 Found' for url 'http://<PUBLIC_DOWNLOAD>/redirect-private.png'\nRedirect location: 'http://127.0.0.1/private.png'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/302）→ 重试 API response_format=b64_json",
+              "已通过 response_format=b64_json 成功落盘",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/redirect_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "redirect_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_retry_after_http_date": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_after_http_date]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_after_http_date"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2-openai",
+          "n": 1,
+          "prompt": "retry [scenario:retry_after_http_date]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "retry_after_http_date"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2-openai\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/retrydate_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"HTTP 429 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 429\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2-openai",
+            "notes": [
+              "HTTP 429 可重试，等待 0.0s 后第 2 次尝试；原因：fixture HTTP 429",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/retrydate_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "retrydate_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_save_dir_symlink_escape": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"save_dir 必须在安全根目录 <CASE_ROOT>/out 之下；收到 '<CASE_ROOT>/out/escape'。留空让 MCP 用默认目录，或先把 MICU_SAVE_DIR_ROOT 改到你想要的位置。\",\n  \"errors\": [\n    \"save_dir 必须在安全根目录 <CASE_ROOT>/out 之下；收到 '<CASE_ROOT>/out/escape'。留空让 MCP 用默认目录，或先把 MICU_SAVE_DIR_ROOT 改到你想要的位置。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "save_dir 必须在安全根目录 <CASE_ROOT>/out 之下；收到 '<CASE_ROOT>/out/escape'。留空让 MCP 用默认目录，或先把 MICU_SAVE_DIR_ROOT 改到你想要的位置。",
+            "errors": [
+              "save_dir 必须在安全根目录 <CASE_ROOT>/out 之下；收到 '<CASE_ROOT>/out/escape'。留空让 MCP 用默认目录，或先把 MICU_SAVE_DIR_ROOT 改到你想要的位置。"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_ssrf_loopback_rejected": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "ssrf [scenario:url_loopback]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_loopback"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 保存失败: 下载 URL host '127.0.0.1' 指向受限地址 127.0.0.1（私网/环回/链路本地/保留），已拒绝（SSRF 防护）\"\n  ],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 保存失败: 下载 URL host '127.0.0.1' 指向受限地址 127.0.0.1（私网/环回/链路本地/保留），已拒绝（SSRF 防护）"
+            ],
+            "model": "gpt-image-2",
+            "notes": [],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_ssrf_mapped_ipv6_rejected": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "ssrf [scenario:url_mapped_loopback]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_mapped_loopback"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 保存失败: 下载 URL host '::ffff:127.0.0.1' 指向受限地址 ::ffff:127.0.0.1（私网/环回/链路本地/保留），已拒绝（SSRF 防护）\"\n  ],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 保存失败: 下载 URL host '::ffff:127.0.0.1' 指向受限地址 ::ffff:127.0.0.1（私网/环回/链路本地/保留），已拒绝（SSRF 防护）"
+            ],
+            "model": "gpt-image-2",
+            "notes": [],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_standard_concurrency_six": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 5,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "concurrency_probe"
+      },
+      {
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "并发 [scenario:concurrency_probe]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "concurrency_probe"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 6,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/generate_concurrent_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    },\n    {\n      \"index\": 2,\n      \"path\": \"<CASE_ROOT>/out/generate_concurrent_2.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    },\n    {\n      \"index\": 3,\n      \"path\": \"<CASE_ROOT>/out/generate_concurrent_3.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    },\n    {\n      \"index\": 4,\n      \"path\": \"<CASE_ROOT>/out/generate_concurrent_4.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    },\n    {\n      \"index\": 5,\n      \"path\": \"<CASE_ROOT>/out/generate_concurrent_5.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    },\n    {\n      \"index\": 6,\n      \"path\": \"<CASE_ROOT>/out/generate_concurrent_6.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"1K + 标准线路 + N=6 已 5 并发\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "1K + 标准线路 + N=6 已 5 并发",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 6,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/generate_concurrent_1.png",
+                "size_bytes": 93
+              },
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 2,
+                "path": "<CASE_ROOT>/out/generate_concurrent_2.png",
+                "size_bytes": 93
+              },
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 3,
+                "path": "<CASE_ROOT>/out/generate_concurrent_3.png",
+                "size_bytes": 93
+              },
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 4,
+                "path": "<CASE_ROOT>/out/generate_concurrent_4.png",
+                "size_bytes": 93
+              },
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 5,
+                "path": "<CASE_ROOT>/out/generate_concurrent_5.png",
+                "size_bytes": 93
+              },
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 6,
+                "path": "<CASE_ROOT>/out/generate_concurrent_6.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "generate_concurrent_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "generate_concurrent_2.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "generate_concurrent_3.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "generate_concurrent_4.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "generate_concurrent_5.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      },
+      {
+        "path": "generate_concurrent_6.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_stream_cap": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "oversize [scenario:stream_too_large]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "stream_too_large"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [],\n  \"errors\": [\n    \"#1 HTTP 413: 响应体超过 25MB 上限，已中断\"\n  ],\n  \"notes\": []\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [
+              "#1 HTTP 413: 响应体超过 25MB 上限，已中断"
+            ],
+            "model": "gpt-image-2",
+            "notes": [],
+            "ok": false,
+            "requested_n": 1,
+            "saved": [],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_truncated_url_fallback": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "truncated [scenario:url_truncated_then_b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_truncated_then_b64"
+      },
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "*/*",
+          "authorization_scheme": null,
+          "authorization_valid": null,
+          "content_type": null
+        },
+        "json": null,
+        "method": "GET",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/truncated.png",
+        "scenario": "download:/truncated.png"
+      },
+      {
+        "attempt": 2,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "truncated [scenario:url_truncated_then_b64]",
+          "response_format": "b64_json",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_truncated_then_b64"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/truncated_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"URL 落盘失败（#1 保存失败: 远端图 http://<PUBLIC_DOWNLOAD>/truncated.png 无法完整解码（文件可能截断、损坏或格式标记错误））→ 重试 API response_format=b64_json\",\n    \"已通过 response_format=b64_json 成功落盘\",\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "URL 落盘失败（#1 保存失败: 远端图 http://<PUBLIC_DOWNLOAD>/truncated.png 无法完整解码（文件可能截断、损坏或格式标记错误））→ 重试 API response_format=b64_json",
+              "已通过 response_format=b64_json 成功落盘",
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/truncated_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "truncated_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_url": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "URL [scenario:url_success]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_success"
+      },
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "*/*",
+          "authorization_scheme": null,
+          "authorization_valid": null,
+          "content_type": null
+        },
+        "json": null,
+        "method": "GET",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/asset.png",
+        "scenario": "download:/asset.png"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/url_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/url_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "url_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "generate_url_without_content_length": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "application/json"
+        },
+        "json": {
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "URL stream [scenario:url_no_content_length]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "method": "POST",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/v1/images/generations",
+        "scenario": "url_no_content_length"
+      },
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "*/*",
+          "authorization_scheme": null,
+          "authorization_valid": null,
+          "content_type": null
+        },
+        "json": null,
+        "method": "GET",
+        "multipart_fields": {},
+        "multipart_files": [],
+        "path": "/asset-no-length.png",
+        "scenario": "download:/asset-no-length.png"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"requested_n\": 1,\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"saved\": [\n    {\n      \"index\": 1,\n      \"path\": \"<CASE_ROOT>/out/url_stream_1.png\",\n      \"size_bytes\": 93,\n      \"actual_size\": \"32x24\",\n      \"actual_megapixels\": 0.0\n    }\n  ],\n  \"errors\": [],\n  \"notes\": [\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "errors": [],
+            "model": "gpt-image-2",
+            "notes": [
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "requested_n": 1,
+            "saved": [
+              {
+                "actual_megapixels": 0.0,
+                "actual_size": "32x24",
+                "index": 1,
+                "path": "<CASE_ROOT>/out/url_stream_1.png",
+                "size_bytes": 93
+              }
+            ],
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "url_stream_1.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "multi_reference_image_array": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 1,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [
+      {
+        "attempt": 1,
+        "headers": {
+          "accept": "application/json",
+          "authorization_scheme": "Bearer",
+          "authorization_valid": true,
+          "content_type": "multipart/form-data"
+        },
+        "json": null,
+        "method": "POST",
+        "multipart_fields": {
+          "model": "gpt-image-2",
+          "prompt": "Reference images are provided. Synthesize their visual elements (style, palette, composition, subjects) into ONE single new image per the instruction below. Do NOT collage, tile, or montage the references side-by-side unless explicitly asked.\n\nInstruction:\n融合中文 [scenario:b64]",
+          "response_format": "url",
+          "size": "1024x1024"
+        },
+        "multipart_files": [
+          {
+            "filename": "ref-a.png",
+            "mime": "image/png",
+            "name": "image[]",
+            "sha256": "b74f2fa05e72e0f763b850699f8bf86d128a979c9550da2f457bf1a166edcaf6",
+            "size": 100
+          },
+          {
+            "filename": "ref-b.webp",
+            "mime": "image/png",
+            "name": "image[]",
+            "sha256": "c69d5d2b86b1146f7fc30c1219a1ab832d28d046708f23a5dd550c6ed47ae5fd",
+            "size": 106
+          }
+        ],
+        "path": "/v1/images/edits",
+        "scenario": "b64"
+      }
+    ],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": true,\n  \"model\": \"gpt-image-2\",\n  \"size\": \"1024x1024\",\n  \"used_fallback\": false,\n  \"size_honored\": false,\n  \"n_references\": 2,\n  \"saved\": {\n    \"path\": \"<CASE_ROOT>/out/multi_contract.png\",\n    \"size_bytes\": 93,\n    \"actual_size\": \"32x24\",\n    \"actual_megapixels\": 0.0\n  },\n  \"notes\": [\n    \"⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "model": "gpt-image-2",
+            "n_references": 2,
+            "notes": [
+              "⚠ 实际 32×24 (0.00MP) ≠ 请求 1024×1024 (1.05MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+            ],
+            "ok": true,
+            "saved": {
+              "actual_megapixels": 0.0,
+              "actual_size": "32x24",
+              "path": "<CASE_ROOT>/out/multi_contract.png",
+              "size_bytes": 93
+            },
+            "size": "1024x1024",
+            "size_honored": false,
+            "used_fallback": false
+          }
+        }
+      }
+    ],
+    "saved_files": [
+      {
+        "path": "multi_contract.png",
+        "sha256": "416bca42dfede2a6aa1b6edd967dbe45626ba17ddb00b327b1a64eccaf046d86",
+        "size": 93
+      }
+    ],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  },
+  "multi_reference_total_over_8mib": {
+    "initialize_protocol": "2024-11-05",
+    "metrics": {
+      "max_active_api_requests": 0,
+      "serial_gap_at_least_1_4_seconds": false
+    },
+    "requests": [],
+    "responses": [
+      {
+        "id": 10,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\n  \"ok\": false,\n  \"error\": \"参考图累计 9.0MB 超过总量上限 8MB。请压缩或减少。\",\n  \"errors\": [\n    \"参考图累计 9.0MB 超过总量上限 8MB。请压缩或减少。\"\n  ]\n}",
+              "type": "text"
+            }
+          ],
+          "isError": false,
+          "structuredContent": {
+            "error": "参考图累计 9.0MB 超过总量上限 8MB。请压缩或减少。",
+            "errors": [
+              "参考图累计 9.0MB 超过总量上限 8MB。请压缩或减少。"
+            ],
+            "ok": false
+          }
+        }
+      }
+    ],
+    "saved_files": [],
+    "stderr_contains_image_base64": false,
+    "stderr_contains_secret": false,
+    "stdout_frames": 2
+  }
+}
