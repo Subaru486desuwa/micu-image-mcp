@@ -9,6 +9,8 @@
 - 自检 server 能不能起来 + 给出脱敏摘要
 - 检测 Claude Code / Codex 进程并提示先关再启
 - 当前仅配置 gpt-image-2 / gpt-image-2-openai；Grok 渠道暂时关闭
+- 系统 Python 被发行版标记为 externally-managed（PEP 668，Arch/Debian/Fedora 等）时，
+  自动改用仓库内 .venv 装依赖，并把 venv 的 python 写进客户端配置
 
 用法：
     python install.py
@@ -16,6 +18,8 @@
     python install.py --baseurl https://...        # 高级: 覆盖 baseurl
     python install.py --no-codex                   # 不写 Codex 配置
     python install.py --no-claude                  # 不写 Claude 配置
+    python install.py --venv-dir ~/venvs/micu      # 自定义虚拟环境位置
+    python install.py --break-system-packages      # 硬装进系统 Python (有风险)
     python install.py --yes                        # 非交互, 全用环境变量
         MICU_API_KEY=... MICU_SAVE_DIR=... python install.py --yes
         MICU_API_KEY=... python install.py --yes
@@ -29,12 +33,16 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
 PY_MIN = (3, 10)
+
+VENV_DIR_NAME = ".venv"
 
 PIP_MIRRORS = {
     "tsinghua": "https://pypi.tuna.tsinghua.edu.cn/simple",
@@ -64,13 +72,33 @@ class RuntimeCommand:
     args: list[str]
 
 
-def resolve_runtime_command(args: argparse.Namespace, repo_root: Path) -> RuntimeCommand:
+@dataclass(frozen=True)
+class PythonEnv:
+    """Python runtime 下装依赖 / 跑 server 用哪个解释器。
+
+    command       : 解释器路径（会写进 Claude/Codex 配置的 command）
+    pip_cmd       : 装包命令前缀，后面接 "install ..."
+    install_extra : 追加给 install 的 flag（--python / --break-system-packages）
+    version_cmd   : 探测包管理器可用性
+    venv          : 项目虚拟环境目录（直接用系统 Python 时为 None）
+    """
+
+    command: str
+    pip_cmd: tuple[str, ...]
+    install_extra: tuple[str, ...]
+    version_cmd: tuple[str, ...]
+    venv: Path | None
+
+
+def resolve_runtime_command(args: argparse.Namespace, repo_root: Path,
+                            python_env: PythonEnv | None = None) -> RuntimeCommand:
     """Resolve the explicit migration runtime without changing the default prematurely."""
     if args.runtime == "python":
         server_path = repo_root / "server.py"
         if not server_path.is_file():
             err(f"找不到 server.py: {server_path}")
-        return RuntimeCommand("python", sys.executable, [str(server_path)])
+        python_exe = python_env.command if python_env else sys.executable
+        return RuntimeCommand("python", python_exe, [str(server_path)])
 
     binary_name = "micu-image-mcp.exe" if sys.platform == "win32" else "micu-image-mcp"
     candidate = (
@@ -178,12 +206,138 @@ def check_python() -> None:
     ok(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
 
 
-def check_pip() -> None:
-    p = subprocess.run([sys.executable, "-m", "pip", "--version"],
-                       capture_output=True, text=True)
-    if p.returncode != 0:
+def _run_quiet(cmd: Sequence[str], timeout: int = 60) -> subprocess.CompletedProcess | None:
+    """跑一条探测命令；不存在 / 超时 / 不可执行都返回 None，不抛。"""
+    try:
+        return subprocess.run(list(cmd), capture_output=True, text=True, timeout=timeout,
+                              check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _venv_python(venv_dir: Path) -> Path:
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def _probe_python(py: Path | str) -> tuple[int, ...] | None:
+    """跑一下解释器拿版本号；不可用（不存在 / base python 被删）返回 None。"""
+    p = _run_quiet([str(py), "-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"])
+    if p is None or p.returncode != 0:
+        return None
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", p.stdout.strip())
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def _in_virtualenv() -> bool:
+    """当前解释器是否已经在 venv / conda 里（那就不必再套一层）。
+
+    只看解释器自身的 prefix：VIRTUAL_ENV / CONDA_PREFIX 可能是别的目录残留的
+    （例如 IDE 自动激活过另一个 venv），信它会把系统 Python 误判成虚拟环境，
+    然后 pip 又撞上 PEP 668。
+    """
+    if getattr(sys, "base_prefix", sys.prefix) != sys.prefix:
+        return True
+    if getattr(sys, "real_prefix", None):  # 老版 virtualenv
+        return True
+    return (Path(sys.prefix) / "conda-meta").is_dir()
+
+
+def _is_externally_managed() -> bool:
+    """PEP 668：发行版是否禁止往系统 Python 里 pip install（Arch/Debian/Fedora 等）。"""
+    try:
+        stdlib = Path(sysconfig.get_paths()["stdlib"])
+    except Exception:  # noqa: BLE001 - sysconfig 异常时按“没被管”处理，后面 pip 自己会报错
+        return False
+    return (stdlib / "EXTERNALLY-MANAGED").exists()
+
+
+def _create_venv(venv_dir: Path) -> Path | None:
+    """建虚拟环境：先 stdlib venv（自带 pip），失败再退回 uv（--seed 会带 pip）。"""
+    attempts: list[list[str]] = [[sys.executable, "-m", "venv", str(venv_dir)]]
+    uv = shutil.which("uv")
+    if uv:
+        attempts.append([uv, "venv", "--seed", str(venv_dir)])
+        attempts.append([uv, "venv", str(venv_dir)])
+    for cmd in attempts:
+        info(" ".join(cmd))
+        try:
+            rc = subprocess.run(cmd, check=False).returncode
+        except OSError as e:
+            warn(f"{cmd[0]} 跑不起来: {e}")
+            continue
+        if rc == 0 and _venv_python(venv_dir).exists():
+            return _venv_python(venv_dir)
+        warn("创建失败, 换下一种方式")
+    return None
+
+
+def resolve_python_env(repo_root: Path, *, non_interactive: bool, venv_dir: Path | None,
+                       break_system: bool) -> PythonEnv:
+    """决定 Python runtime 的依赖装到哪、server 用哪个解释器跑。"""
+    step("选择 Python 环境")
+    sys_pip = (sys.executable, "-m", "pip")
+    system_env = PythonEnv(sys.executable, sys_pip, (), (*sys_pip, "--version"), None)
+
+    if _in_virtualenv():
+        ok(f"已在虚拟环境中, 直接用它: {sys.executable}")
+        return system_env
+    if not _is_externally_managed():
+        ok(f"系统 Python 可直接装包: {sys.executable}")
+        return system_env
+    if break_system:
+        warn("系统 Python 被发行版标记为 externally-managed (PEP 668)")
+        warn("--break-system-packages 有可能弄坏发行版自带的 Python 包, 风险自担")
+        return PythonEnv(sys.executable, sys_pip, ("--break-system-packages",),
+                         (*sys_pip, "--version"), None)
+
+    vdir = (venv_dir or repo_root / VENV_DIR_NAME).expanduser()
+    info("系统 Python 受 PEP 668 保护 (externally-managed), 改用虚拟环境装依赖")
+    py = _venv_python(vdir)
+    ver = _probe_python(py)
+
+    if ver is None and vdir.exists():
+        warn(f"{vdir} 已存在但解释器跑不起来 (可能是上次创建中断)")
+        if non_interactive:
+            err(f"请手动删除 {vdir} 后重跑, 或用 --venv-dir 指定别的位置")
+        if ask_yes_no(f"删除 {vdir} 并重建?", default=True):
+            shutil.rmtree(vdir, ignore_errors=True)
+        else:
+            err("已取消. 你可以手动删除后用 --venv-dir 指定别的位置")
+
+    if ver is None:
+        created = _create_venv(vdir)
+        if created is None:
+            err(f"创建虚拟环境失败: {vdir}\n"
+                f"      手动兜底: {sys.executable} -m venv {vdir} 后重跑\n"
+                "      或 (有风险) 加 --break-system-packages 直接装进系统 Python")
+        py, ver = created, _probe_python(created)
+
+    if ver is None or ver[:2] < PY_MIN:
+        cur = ".".join(str(v) for v in ver) if ver else "unknown"
+        err(f"{py} 不可用或版本过低 (需 >= {PY_MIN[0]}.{PY_MIN[1]}, 当前 {cur}); "
+            f"删掉 {vdir} 重跑, 或用 --venv-dir 指定别的位置")
+
+    ok(f"虚拟环境: {vdir} (Python {'.'.join(str(v) for v in ver)})")
+    pip_cmd = (str(py), "-m", "pip")
+    pip_probe = _run_quiet((*pip_cmd, "--version"))
+    if pip_probe is not None and pip_probe.returncode == 0:
+        return PythonEnv(str(py), pip_cmd, (), (*pip_cmd, "--version"), vdir)
+    uv = shutil.which("uv")
+    if uv is None:
+        err(f"{vdir} 里没有 pip, 也没找到 uv.\n"
+            f"      兜底: {py} -m ensurepip --upgrade 后重跑")
+    warn("虚拟环境里没有 pip, 改用 uv 装依赖")
+    return PythonEnv(str(py), (uv, "pip"), ("--python", str(py)), (uv, "--version"), vdir)
+
+
+def check_pip(python_env: PythonEnv) -> None:
+    p = _run_quiet(python_env.version_cmd)
+    if p is None or p.returncode != 0:
         err("pip 不可用. 请先装 pip: https://pip.pypa.io/en/stable/installation/")
-    ok(f"pip 可用: {p.stdout.strip()}")
+    first = (p.stdout or p.stderr or "").strip().splitlines()
+    ok(f"包管理器可用: {first[0] if first else ' '.join(python_env.version_cmd)}")
 
 
 def check_running_clients() -> None:
@@ -219,23 +373,28 @@ def check_running_clients() -> None:
 
 # ---------- 依赖安装 ----------
 
-def install_deps(repo_root: Path, mirror_url: str | None) -> None:
+def install_deps(python_env: PythonEnv, repo_root: Path, mirror_url: str | None) -> None:
     step("安装依赖")
-    extra = ["-i", mirror_url] if mirror_url else []
+    extra: list[str] = list(python_env.install_extra)
     if mirror_url:
         info(f"使用镜像: {mirror_url}")
-    cmd = [sys.executable, "-m", "pip", "install", *extra, "-e", str(repo_root)]
+        extra += ["-i", mirror_url]
+    cmd = [*python_env.pip_cmd, "install", *extra, "-e", str(repo_root)]
     info(" ".join(cmd))
-    rc = subprocess.run(cmd).returncode
+    rc = subprocess.run(cmd, check=False).returncode
     if rc != 0:
         warn("editable install 失败, 改装顶层依赖")
-        cmd2 = [sys.executable, "-m", "pip", "install", *extra,
+        cmd2 = [*python_env.pip_cmd, "install", *extra,
                 "mcp[cli]>=1.0.0", "httpx>=0.27.0", "Pillow>=10.0.0"]
         info(" ".join(cmd2))
-        rc2 = subprocess.run(cmd2).returncode
+        rc2 = subprocess.run(cmd2, check=False).returncode
         if rc2 != 0:
-            err("pip install 失败. 国内用户可加 --mirror tsinghua 重试")
-    ok("依赖就绪")
+            hints = ["国内用户可加 --mirror tsinghua 重试"]
+            if python_env.venv is None and _is_externally_managed():
+                hints.insert(0, "系统 Python 受 PEP 668 保护, 可加 --venv-dir 指定虚拟环境位置, "
+                                "或加 --break-system-packages 硬装 (有风险)")
+            err("依赖安装失败. " + "; ".join(hints))
+    ok(f"依赖就绪 (解释器: {python_env.command})")
 
 
 # ---------- 收集配置 ----------
@@ -269,14 +428,62 @@ def _format_model_list(models: list[str], limit: int = 8) -> str:
     return head + (f", ... +{len(models) - limit}" if len(models) > limit else "")
 
 
-def _model_ids_for_key(baseurl: str, api_key: str) -> tuple[list[str] | None, str | None, int | None]:
-    """Best-effort /v1/models probe. Returns (ids, error, status_code)."""
-    try:
-        import httpx
-    except ImportError:
-        warn("httpx 不可用，跳过 key 分组校验")
-        return None, "httpx unavailable", None
+_PROBE_SNIPPET = r'''
+import json, sys
+import httpx
 
+url = sys.argv[1]
+api_key = sys.stdin.read().strip()
+try:
+    r = httpx.get(url, headers={"Authorization": "Bearer " + api_key}, timeout=20, trust_env=False)
+except BaseException as e:
+    print(json.dumps({"error": "%s: %s" % (type(e).__name__, e)}))
+    raise SystemExit(0)
+out = {"status": r.status_code}
+if r.status_code != 200:
+    out["error"] = "HTTP %s: %s" % (r.status_code, r.text.replace("\n", " ")[:240])
+else:
+    try:
+        data = r.json()
+    except ValueError as e:
+        out["error"] = "invalid JSON: %s" % (e,)
+    else:
+        out["ids"] = [i.get("id", "") for i in data.get("data", [])
+                      if isinstance(i, dict) and isinstance(i.get("id"), str)]
+print(json.dumps(out))
+'''
+
+
+def _model_ids_via_subprocess(python_exe: str, url: str,
+                              api_key: str) -> tuple[list[str] | None, str | None, int | None]:
+    """借目标环境（venv）的解释器跑 /v1/models 探测。
+
+    安装脚本自己跑在系统 Python 上时通常没装 httpx，所以把探测交给装好依赖的那个解释器。
+    key 走 stdin 不进 argv，避免被 ps 看到；子进程只输出一行 JSON。
+    """
+    try:
+        p = subprocess.run([python_exe, "-c", _PROBE_SNIPPET, url],
+                           input=api_key + "\n", capture_output=True, text=True, timeout=40,
+                           check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, f"{type(e).__name__}: {e}", None
+    lines = (p.stdout or "").strip().splitlines()
+    line = next((ln for ln in reversed(lines) if ln.startswith("{")), None)
+    if line is None:
+        tail = ((p.stderr or "") + (p.stdout or "")).strip()[-240:]
+        return None, f"探测子进程没有输出 (rc={p.returncode}): {tail}", None
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        return None, "探测子进程输出不是合法 JSON", None
+    if not isinstance(obj.get("ids"), list):
+        return None, obj.get("error") or "unknown probe error", obj.get("status")
+    return obj["ids"], None, obj.get("status")
+
+
+def _model_ids_for_key(baseurl: str, api_key: str,
+                       python_exe: str | None = None) -> tuple[list[str] | None, str | None, int | None]:
+    """Best-effort /v1/models probe. Returns (ids, error, status_code)."""
     url = baseurl.rstrip("/") + "/v1/models"
     # KEYLEAK-1：拒绝把 key 发往非 https 且非本地的 baseurl（防误把 key 发到攻击者 host）。
     _parts = urlsplit(baseurl)
@@ -287,6 +494,17 @@ def _model_ids_for_key(baseurl: str, api_key: str) -> tuple[list[str] | None, st
             f"拒绝把 key 发往非 https 且非本地的 baseurl（scheme={_parts.scheme!r} host={_host!r}）；"
             f"自定义代理请用 https，本地调试可用 http://localhost"
         ), None
+
+    target = python_exe or sys.executable
+    if target != sys.executable:
+        return _model_ids_via_subprocess(target, url, api_key)
+
+    try:
+        import httpx
+    except ImportError:
+        warn("httpx 不可用，跳过 key 分组校验")
+        return None, "httpx unavailable", None
+
     try:
         r = httpx.get(
             url,
@@ -320,8 +538,9 @@ def _validate_key_group(
     api_key: str,
     expected_models: tuple[str, ...],
     non_interactive: bool,
+    python_exe: str | None = None,
 ) -> bool:
-    ids, error, status_code = _model_ids_for_key(baseurl, api_key)
+    ids, error, status_code = _model_ids_for_key(baseurl, api_key, python_exe)
     if error:
         msg = f"{label} key 分组校验失败: {error}"
         if non_interactive and status_code in (401, 403):
@@ -423,7 +642,8 @@ def _clean_grok_size_mode(value: str) -> str:
     return mode
 
 
-def collect_config(non_interactive: bool, baseurl: str) -> tuple[dict[str, str], str, str]:
+def collect_config(non_interactive: bool, baseurl: str,
+                   python_exe: str | None = None) -> tuple[dict[str, str], str, str]:
     """返回 (env_dict, save_dir, save_dir_root)."""
     home = Path.home()
     default_save = home / "Pictures" / "micu-out"
@@ -439,6 +659,7 @@ def collect_config(non_interactive: bool, baseurl: str) -> tuple[dict[str, str],
             api_key=api_key,
             expected_models=IMAGE2_MODELS,
             non_interactive=True,
+            python_exe=python_exe,
         )
     else:
         print("\n=== 配置米醋 MCP ===")
@@ -463,6 +684,7 @@ def collect_config(non_interactive: bool, baseurl: str) -> tuple[dict[str, str],
                 api_key=api_key,
                 expected_models=IMAGE2_MODELS,
                 non_interactive=False,
+                python_exe=python_exe,
             ):
                 break
             if ask_yes_no("仍然使用这个 Image2 key?", default=False):
@@ -749,8 +971,13 @@ def do_reset(args: argparse.Namespace) -> None:
         info("没有任何文件被改动")
     else:
         ok(f"已处理: {touched}")
-    print("\n注意: pip 安装的包仍保留. 如需彻底卸载, 运行:")
-    print(f"  {sys.executable} -m pip uninstall -y micu-image-mcp")
+    vdir = Path(__file__).resolve().parent / VENV_DIR_NAME
+    if _probe_python(_venv_python(vdir)) is not None:
+        print("\n注意: 依赖装在项目虚拟环境里. 彻底卸载直接删目录即可:")
+        print(f"  rm -rf {vdir}")
+    else:
+        print("\n注意: pip 安装的包仍保留. 如需彻底卸载, 运行:")
+        print(f"  {sys.executable} -m pip uninstall -y micu-image-mcp")
 
 
 # ---------- main ----------
@@ -778,6 +1005,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="已编译/下载的 Rust binary 路径（配合 --runtime rust）",
     )
+    p.add_argument(
+        "--venv-dir",
+        default=None,
+        help=f"虚拟环境位置 (默认: 仓库内 {VENV_DIR_NAME}; 仅系统 Python 受 PEP 668 保护时用到)",
+    )
+    p.add_argument(
+        "--break-system-packages",
+        action="store_true",
+        help="跳过虚拟环境, 用 --break-system-packages 硬装进系统 Python (有风险)",
+    )
     p.add_argument("--reset", action="store_true",
                    help="移除已写入的 micu-image MCP 配置 (Claude + Codex), 不动 pip 包")
     return p.parse_args()
@@ -795,21 +1032,34 @@ def main() -> None:
     check_running_clients()
 
     repo_root = Path(__file__).resolve().parent
-    runtime_command = resolve_runtime_command(args, repo_root)
     info(f"仓库: {repo_root}")
+
+    # Rust runtime 不装 Python 依赖，也就不需要碰虚拟环境
+    python_env = (
+        resolve_python_env(
+            repo_root,
+            non_interactive=args.yes,
+            venv_dir=Path(args.venv_dir).expanduser() if args.venv_dir else None,
+            break_system=args.break_system_packages,
+        )
+        if args.runtime == "python" else None
+    )
+    runtime_command = resolve_runtime_command(args, repo_root, python_env)
     info(
         f"运行时: {runtime_command.runtime} -> "
         f"{[runtime_command.command, *runtime_command.args]}"
     )
 
-    if runtime_command.runtime == "python":
-        check_pip()
+    if runtime_command.runtime == "python" and python_env is not None:
+        check_pip(python_env)
         mirror_url = args.pypi_index or PIP_MIRRORS.get(args.mirror)
-        install_deps(repo_root, mirror_url)
+        install_deps(python_env, repo_root, mirror_url)
     else:
         ok("Rust binary 已就绪；跳过 pip/Python server 依赖安装")
 
-    env_dict, save_dir, save_root = collect_config(args.yes, args.baseurl)
+    env_dict, save_dir, save_root = collect_config(
+        args.yes, args.baseurl, python_env.command if python_env else None
+    )
 
     claude_cfg = (
         write_claude(runtime_command.command, runtime_command.args, env_dict)

@@ -110,8 +110,21 @@ MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
 python install.py --yes --runtime python
 ```
 
+Arch / Debian / Fedora 等发行版把系统 Python 标记为 `externally-managed`（PEP 668），
+直接 `pip install` 会失败。`--runtime python` 时 installer 会自动改用仓库内 `.venv`：
+已存在就复用，不存在就创建（优先 `python -m venv`，失败退回 `uv venv --seed`，
+venv 内没有 pip 再退回 `uv pip install --python`），依赖装进 venv，写进 Claude/Codex
+配置的 `command` 与自检用的也是 venv 里的 python。已经在 venv/conda 里跑，或系统
+Python 没被发行版锁住时，行为与之前一致。
+
+```bash
+python install.py --venv-dir ~/venvs/micu     # 虚拟环境放别处
+python install.py --break-system-packages     # 坚持装进系统 Python（有风险）
+```
+
 main 中的 `install.py` 只作为兼容/回滚工具；新安装应使用 Rust binary 自带的 `install`。
 Python installer 会备份并合并 Claude/Codex 配置，`--reset` 只删除 `micu-image` 节。
+`--runtime rust` 不装 Python 依赖，也不会创建 `.venv`。
 
 ### macOS Keychain
 

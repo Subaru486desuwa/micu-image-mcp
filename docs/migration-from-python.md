@@ -27,6 +27,11 @@ release workflow 产出：
 python install.py --runtime python
 ```
 
+Python 模式下，如果系统 Python 被发行版标记为 externally-managed（PEP 668，Arch/Debian/Fedora
+等），脚本会改用仓库内 `.venv`（已存在则复用，否则 `python -m venv` 创建，失败退回
+`uv venv --seed`），依赖装进 venv，写入配置的 `command` 与自检也用 venv 的 python。位置可用
+`--venv-dir` 指定；`--break-system-packages` 则跳过 venv 硬装进系统 Python（有风险）。
+
 试用已有 Rust binary：
 
 ```bash
@@ -188,8 +193,8 @@ MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
 python install.py --yes --runtime python
 ```
 
-该命令会再次备份当前配置，然后只把 `micu-image` command 改回当前 Python + `server.py`；其他
-MCP server 不动。
+该命令会再次备份当前配置，然后只把 `micu-image` command 改回 Python + `server.py`（系统 Python
+受 PEP 668 保护时是 `.venv/bin/python`，否则是运行 installer 的那个 Python）；其他 MCP server 不动。
 
 ### 完全移除 micu-image 节
 
