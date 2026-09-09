@@ -1,15 +1,75 @@
-name: Release binaries
+name: Release Rust binaries
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*"]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MICU_RUN_LIVE_TESTS: "0"
 
 jobs:
+  validate:
+    name: Validate Rust main release
+    runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.release.outputs.notes }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Require a commit from main
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Manual release builds must run from main." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD || {
+            echo "Release commit must be part of main; legacy branches cannot release." >&2
+            exit 1
+          }
+      - name: Validate package version and version-specific release notes
+        id: release
+        shell: python
+        run: |
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          package = tomllib.loads(Path("Cargo.toml").read_text())["package"]
+          if package["name"] != "micu-image-mcp" or not Path("src/main.rs").is_file():
+              raise SystemExit("Only the root Rust package may be released.")
+          notes = ""
+          prerelease = "false"
+          if os.environ["GITHUB_REF"].startswith("refs/tags/"):
+              tag = os.environ["GITHUB_REF_NAME"]
+              if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", tag):
+                  raise SystemExit("Expected vMAJOR.MINOR.PATCH[-prerelease].")
+              if tag != "v" + package["version"]:
+                  raise SystemExit("Tag must match Cargo.toml package.version.")
+              notes = f"docs/releases/{tag}.md"
+              if not Path(notes).is_file():
+                  raise SystemExit(f"Missing release notes: {notes}")
+              prerelease = str("-" in tag).lower()
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"notes={notes}\nprerelease={prerelease}\n")
+
   build:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -29,12 +89,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # Transition only: Python is a test fixture for the cross-runtime lock
+      # contract, not a runtime dependency or a published release artifact.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: python -m pip install -e .
+      - name: Install legacy reference for compatibility tests only
+        run: python -m pip install -e .
       - run: cargo test --locked --all-targets --all-features
       - run: cargo build --locked --release --all-features
       - uses: actions/upload-artifact@v4
@@ -44,14 +107,17 @@ jobs:
           if-no-files-found: error
 
   checksums:
-    needs: build
+    needs: [validate, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: micu-image-mcp-*
           path: artifacts
-      - name: Rename artifacts and generate SHA-256 checksums
+      - name: Stage only Rust binaries and generate SHA-256 checksums
         shell: bash
         run: |
           mkdir dist
@@ -60,15 +126,22 @@ jobs:
           cp artifacts/micu-image-mcp-macos-arm64/micu-image-mcp dist/micu-image-mcp-macos-arm64
           cp artifacts/micu-image-mcp-windows-x86_64/micu-image-mcp.exe dist/micu-image-mcp-windows-x86_64.exe
           cd dist
-          sha256sum * > SHA256SUMS
+          sha256sum micu-image-mcp-* > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: micu-image-mcp-release
           path: dist/*
           if-no-files-found: error
-      - name: Attach files to GitHub release
+      - name: Publish Rust-only release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
-          body_path: docs/releases/v0.3.0.md
+          fail_on_unmatched_files: true
+          files: |
+            dist/micu-image-mcp-linux-x86_64
+            dist/micu-image-mcp-macos-x86_64
+            dist/micu-image-mcp-macos-arm64
+            dist/micu-image-mcp-windows-x86_64.exe
+            dist/SHA256SUMS
+          body_path: ${{ needs.validate.outputs.notes }}
+          prerelease: ${{ needs.validate.outputs.prerelease == 'true' }}
