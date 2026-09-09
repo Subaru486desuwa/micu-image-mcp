@@ -26,18 +26,15 @@ jobs:
       contents: write
       pull-requests: read
     steps:
-      - name: Archive audited tips before deleting obsolete branches
+      - name: Remove audited branches only after their history is retained on main
         uses: actions/github-script@v7
         with:
           script: |
             const repo = context.repo;
-            const snapshots = [
-              {name: 'main', sha: '29a965267f81725962b1481c3a7e01288ddd0d6e'},
-              {name: 'ts-port', sha: '192d0b362de0df47478fc31cbfb8199761cc5e8c'},
-              {name: 'python-reference', sha: '578b32ace77bbc732462b4d6483f2259969668ef'},
-              {name: 'codex/add-diving-kitten', sha: 'f5f04773e868206e96e10c3c7a6e8b6f11903e5f', retire: true, merged: true},
-              {name: 'codex/line-compat-update', sha: 'eb743099a66836f1a1ec3d848f5164f1b9958105', retire: true, merged: true},
-              {name: 'rust-port', sha: 'bfda7956e0dd7c4ac3d55ce7ae7f6d845f191f6b', retire: true},
+            const retired = [
+              {name: 'codex/add-diving-kitten', sha: 'f5f04773e868206e96e10c3c7a6e8b6f11903e5f'},
+              {name: 'codex/line-compat-update', sha: 'eb743099a66836f1a1ec3d848f5164f1b9958105'},
+              {name: 'rust-port', sha: 'bfda7956e0dd7c4ac3d55ce7ae7f6d845f191f6b'},
             ];
             async function getRef(ref) {
               try { return (await github.rest.git.getRef({...repo, ref})).data; }
@@ -46,16 +43,16 @@ jobs:
             async function requireAncestor(base, head) {
               const {data} = await github.rest.repos.compareCommitsWithBasehead({...repo, basehead: `${base}...${head}`});
               if (!['ahead', 'identical'].includes(data.status)) {
-                throw new Error(`${base} is not an ancestor of main; refusing cleanup.`);
+                throw new Error(`${base} is not retained in main; refusing cleanup.`);
               }
             }
             const {data: metadata} = await github.rest.repos.get(repo);
             if (metadata.default_branch !== 'main') throw new Error('Default branch must remain main.');
             const main = await getRef('heads/main');
-            await requireAncestor(snapshots[0].sha, main.object.sha);
+            await requireAncestor('29a965267f81725962b1481c3a7e01288ddd0d6e', main.object.sha);
             const pulls = await github.paginate(github.rest.pulls.list, {...repo, state: 'open', per_page: 100});
             const pending = [];
-            for (const item of snapshots.filter(item => item.retire)) {
+            for (const item of retired) {
               const ref = await getRef(`heads/${item.name}`);
               if (!ref) { core.info(`${item.name}: already absent`); continue; }
               if (ref.object.sha !== item.sha) throw new Error(`${item.name} changed since the audit; review it again.`);
@@ -65,29 +62,23 @@ jobs:
                   (pr.head.repo?.full_name === `${repo.owner}/${repo.repo}` && pr.head.ref === item.name))) {
                 throw new Error(`${item.name} is used by an open pull request.`);
               }
-              if (item.merged) await requireAncestor(item.sha, main.object.sha);
+              // rust-port must first be retained by the explicit history-only
+              // merge. This workflow never merges code or rewrites main.
+              await requireAncestor(item.sha, main.object.sha);
               pending.push(item);
-            }
-            // Save all six audited tips. archive/* never matches the v* release trigger.
-            for (const item of snapshots) {
-              const ref = `tags/archive/2026-09-rust-main/${item.name}`;
-              let archive = await getRef(ref);
-              if (!archive) {
-                await github.rest.git.createRef({...repo, ref: `refs/${ref}`, sha: item.sha});
-                archive = await getRef(ref);
-              }
-              if (archive.object.sha !== item.sha) throw new Error(`Archive mismatch: ${ref}`);
             }
             for (const item of pending) {
               const current = await getRef(`heads/${item.name}`);
               if (!current || current.object.sha !== item.sha) throw new Error(`${item.name} moved during cleanup.`);
+              const currentMain = await getRef('heads/main');
+              await requireAncestor(item.sha, currentMain.object.sha);
               await github.rest.git.deleteRef({...repo, ref: `heads/${item.name}`});
-              core.info(`Archived and deleted ${item.name}`);
+              core.info(`History retained in main; deleted ${item.name}`);
             }
             const branches = await github.paginate(github.rest.repos.listBranches, {...repo, per_page: 100});
             await core.summary.addHeading('Branch consolidation')
               .addRaw(`Remaining branches: ${branches.map(branch => branch.name).join(', ')}`)
-              .addRaw('\nAudited tips are preserved under archive/2026-09-rust-main/.')
+              .addRaw('\nRestore audited tips by SHA using docs/branch-release-policy.md.')
               .write();
 
   delete-merged-codex-branch:
@@ -101,7 +92,7 @@ jobs:
       contents: write
       pull-requests: read
     steps:
-      - name: Archive and remove a merged temporary Codex branch
+      - name: Remove a temporary Codex branch whose history is retained on main
         uses: actions/github-script@v7
         with:
           script: |
@@ -120,13 +111,13 @@ jobs:
             const pulls = await github.paginate(github.rest.pulls.list, {...repo, state: 'open', per_page: 100});
             if (pulls.some(other => other.base.ref === name ||
                 (other.head.repo?.full_name === `${repo.owner}/${repo.repo}` && other.head.ref === name))) return;
-            const ref = `tags/archive/merged-pr-${pr.number}`;
-            try {
-              const {data} = await github.rest.git.getRef({...repo, ref});
-              if (data.object.sha !== pr.head.sha) throw new Error('Existing archive does not match the merged head.');
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              await github.rest.git.createRef({...repo, ref: `refs/${ref}`, sha: pr.head.sha});
+            const {data: main} = await github.rest.git.getRef({...repo, ref: 'heads/main'});
+            const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
+              ...repo, basehead: `${pr.head.sha}...${main.object.sha}`
+            });
+            if (!['ahead', 'identical'].includes(comparison.status)) {
+              core.warning('Exact branch history is not retained on main (for example after squash/rebase); keep it for manual review.');
+              return;
             }
             const {data: current} = await github.rest.git.getRef({...repo, ref: `heads/${name}`});
             if (current.object.sha !== pr.head.sha) return;

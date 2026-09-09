@@ -8,12 +8,14 @@ and release changes to `main`. Do not recreate a long-lived `rust-port` branch.
 `ts-port` and `python-reference` preserve the legacy TypeScript and Python versions.
 Keep those rollback/reference branches separate from the Rust release train. Legacy
 compatibility fixes may be reviewed during the transition; do not merge a whole old
-runtime branch into `main` merely to synchronize it.
+runtime implementation into `main` merely to synchronize it. The retired Rust port
+has a documented history-only archival merge; its old implementation is not adopted.
 
 Temporary feature branches are welcome. Same-repository `codex/*` branches merged
-into `main` are archived and removed by branch maintenance when they have no newer
-commits, protection rules, or other open pull requests depending on them. Other
-feature branches should be removed after merge by their maintainer.
+into `main` are removed only when their exact tip is retained in main's ancestry and
+they have no newer commits, protection rules, or other open PRs depending on them.
+After squash/rebase, an original tip that is not an ancestor stays for manual review.
+Other feature branches should be removed after merge by their maintainer.
 
 ## Releases
 
