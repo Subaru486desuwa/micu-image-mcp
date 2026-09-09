@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -154,7 +155,7 @@ def test_server_info_reports_only_image2_models():
     assert "无需两步" in r["recommended_sizes"]["two_step_tip"]
 
 
-def test_version_surfaces_stay_in_sync():
+def test_python_version_stays_in_sync_and_banner_is_release_agnostic():
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     banner = (REPO_ROOT / "assets" / "banner.svg").read_text(encoding="utf-8")
     project_version = next(
@@ -164,7 +165,7 @@ def test_version_surfaces_stay_in_sync():
     )
 
     assert server.__version__ == project_version
-    assert f"v{project_version}" in banner
+    assert re.search(r">v\d+\.\d+\.\d+<", banner) is None
 
 
 @pytest.mark.parametrize("script", ["perf_bench.py", "stress_concurrent.py"])
