@@ -47,22 +47,6 @@ impl ToolEngine {
             );
             return Ok(validation_error(message));
         }
-        let quality_value = params
-            .quality
-            .as_ref()
-            .map(|value| Value::String(value.clone()));
-        let (quality, quality_error) = validate_quality(quality_value.as_ref());
-        if let Some(error) = quality_error {
-            return Ok(validation_error(error));
-        }
-        let location = match self
-            .output_store
-            .resolve_save_dir(params.save_dir.as_deref())
-        {
-            Ok(location) => location,
-            Err(error) => return Ok(validation_error(error)),
-        };
-
         let (requested_size, inferred_note) = match params.size {
             Some(size) => (size, None),
             None => match infer_size_from_prompt(&params.prompt) {
@@ -84,6 +68,21 @@ impl ToolEngine {
         };
         let (effective_model, mut notes) =
             resolve_model(params.model.as_deref(), &self.config.default_model, &size);
+        let quality_value = params
+            .quality
+            .as_ref()
+            .map(|value| Value::String(value.clone()));
+        let (quality, quality_error) = validate_quality(quality_value.as_ref(), &effective_model);
+        if let Some(error) = quality_error {
+            return Ok(validation_error(error));
+        }
+        let location = match self
+            .output_store
+            .resolve_save_dir(params.save_dir.as_deref())
+        {
+            Ok(location) => location,
+            Err(error) => return Ok(validation_error(error)),
+        };
         if let Some(note) = inferred_note {
             notes.insert(0, note);
         }
@@ -442,12 +441,16 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result["ok"], true, "{result}");
-        assert_eq!(result["model"], "gpt-image-2");
+        assert_eq!(result["model"], "gpt-image-2.5-flare");
         assert_eq!(result["requested_n"], 1);
         assert_eq!(result["saved"][0]["actual_size"], "32x24");
         assert_eq!(
             provider.calls.lock().await.as_slice(),
-            &[("gpt-image-2".into(), "1024x1024".into(), "url".into())]
+            &[(
+                "gpt-image-2.5-flare".into(),
+                "1024x1024".into(),
+                "url".into()
+            )]
         );
     }
 
@@ -456,6 +459,7 @@ mod tests {
         let (_temp, engine, provider) = fixture();
         let mut request = params();
         request.size = Some("2048x2048".into());
+        request.model = Some("gpt-image-2".into());
         request.n = 4;
         let result = engine
             .image_generate(request)

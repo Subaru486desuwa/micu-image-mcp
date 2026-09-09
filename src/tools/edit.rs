@@ -5,7 +5,7 @@ use crate::{
     domain::{
         basename::safe_basename,
         routing::{is_large_tier, is_quality_model, model_error, resolve_model, size_note},
-        size::{size_tier, validate_size},
+        size::{size_tier, validate_quality, validate_size},
     },
     fs::input::validate_mask,
     http::client::RetryOptions,
@@ -26,7 +26,7 @@ impl ToolEngine {
         if params.prompt.trim().is_empty() {
             return Ok(validation_error("prompt 不能为空"));
         }
-        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_model) {
+        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_edit_model) {
             return Ok(validation_error(error));
         }
         let (cleaned_size, size_error) = validate_size(Some(&params.size), false);
@@ -35,6 +35,19 @@ impl ToolEngine {
                 size_error.unwrap_or_else(|| "size 校验失败".into()),
             ));
         };
+        let (effective_model, mut notes) = resolve_model(
+            params.model.as_deref(),
+            &self.config.default_edit_model,
+            &size,
+        );
+        let quality_value = params
+            .quality
+            .as_ref()
+            .map(|value| Value::String(value.clone()));
+        let (quality, quality_error) = validate_quality(quality_value.as_ref(), &effective_model);
+        if let Some(error) = quality_error {
+            return Ok(validation_error(error));
+        }
         let safe_stem = params
             .basename
             .as_deref()
@@ -59,8 +72,6 @@ impl ToolEngine {
             Ok(image) => image,
             Err(error) => return Ok(validation_error(error)),
         };
-        let (effective_model, mut notes) =
-            resolve_model(params.model.as_deref(), &self.config.default_model, &size);
         let key = resolve_key(self.config.as_ref(), params.api_key)?;
         let mask = if let Some(mask_path) = params.mask_path {
             let mask = match self.input_store.validate_image(&mask_path, "mask_path") {
@@ -99,6 +110,7 @@ impl ToolEngine {
                         model: &effective_model,
                         prompt: &params.prompt,
                         size: &size,
+                        quality: quality.as_deref(),
                         response_format,
                         images: &images,
                         mask: mask.as_ref(),
@@ -190,7 +202,7 @@ mod tests {
 
     use super::*;
 
-    type CapturedEdit = (String, String, Vec<String>, bool);
+    type CapturedEdit = (String, String, Option<String>, Vec<String>, bool);
 
     struct FakeProvider {
         body: Vec<u8>,
@@ -225,6 +237,7 @@ mod tests {
             self.edits.lock().await.push((
                 request.model.into(),
                 request.size.into(),
+                request.quality.map(str::to_owned),
                 request
                     .images
                     .iter()
@@ -305,6 +318,7 @@ mod tests {
                 mask_path: Some(mask.to_string_lossy().into_owned()),
                 size: "1024x1024".into(),
                 model: None,
+                quality: Some("max".into()),
                 save_dir: None,
                 basename: Some("edited".into()),
                 api_key: None,
@@ -316,8 +330,9 @@ mod tests {
         assert_eq!(
             provider.edits.lock().await.as_slice(),
             &[(
-                "gpt-image-2".into(),
+                "gpt-image-2.5-sunburst".into(),
                 "1024x1024".into(),
+                Some("max".into()),
                 vec!["image".into()],
                 true
             )]
@@ -333,7 +348,8 @@ mod tests {
                 image_path: source.to_string_lossy().into_owned(),
                 mask_path: None,
                 size: "3840x2160".into(),
-                model: None,
+                model: Some("gpt-image-2".into()),
+                quality: None,
                 save_dir: None,
                 basename: Some("high".into()),
                 api_key: None,
@@ -348,6 +364,7 @@ mod tests {
                 mask_path: None,
                 size: "1024x1024".into(),
                 model: None,
+                quality: None,
                 save_dir: None,
                 basename: None,
                 api_key: None,

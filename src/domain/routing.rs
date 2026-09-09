@@ -2,7 +2,10 @@ use super::size::{SizeTier, parse_size, round_to_alignment, size_tier, validate_
 
 pub const STANDARD_MODEL: &str = "gpt-image-2";
 pub const QUALITY_MODEL: &str = "gpt-image-2-openai";
-pub const SUPPORTED_IMAGE_MODELS: [&str; 2] = [STANDARD_MODEL, QUALITY_MODEL];
+pub const FLARE_MODEL: &str = "gpt-image-2.5-flare";
+pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
+pub const SUPPORTED_IMAGE_MODELS: [&str; 4] =
+    [STANDARD_MODEL, QUALITY_MODEL, FLARE_MODEL, SUNBURST_MODEL];
 
 pub fn is_grok_model(model: Option<&str>) -> bool {
     model.is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("grok-"))
@@ -33,7 +36,7 @@ pub fn resolve_model(
     let mut model = requested.unwrap_or(default_model).to_owned();
     let tier = size_tier(size);
     let mut notes = Vec::new();
-    if is_large_tier(tier) && !is_quality_model(&model) && !is_grok_model(Some(&model)) {
+    if is_large_tier(tier) && model == STANDARD_MODEL {
         notes.push(format!(
             "size={size} ({}) 已自动切到高质量线路 {QUALITY_MODEL}",
             tier_label(tier)
@@ -178,7 +181,7 @@ pub fn size_note(requested: &str, actual: Option<(u32, u32)>) -> Option<String> 
 }
 
 pub fn is_quality_model(model: &str) -> bool {
-    model == QUALITY_MODEL
+    matches!(model, QUALITY_MODEL | SUNBURST_MODEL)
 }
 
 pub fn is_large_tier(tier: SizeTier) -> bool {
@@ -265,6 +268,8 @@ mod tests {
     fn model_contract_is_exact_and_preserves_grok_public_error() {
         assert_eq!(model_error(Some(STANDARD_MODEL), STANDARD_MODEL), None);
         assert_eq!(model_error(Some(QUALITY_MODEL), STANDARD_MODEL), None);
+        assert_eq!(model_error(Some(FLARE_MODEL), STANDARD_MODEL), None);
+        assert_eq!(model_error(Some(SUNBURST_MODEL), STANDARD_MODEL), None);
         assert!(
             model_error(Some(" gpt-image-2 "), STANDARD_MODEL)
                 .is_some_and(|text| text.contains("不支持 model=' gpt-image-2 '"))

@@ -132,7 +132,10 @@ pub fn validate_n(n: &serde_json::Value) -> Option<String> {
     None
 }
 
-pub fn validate_quality(quality: Option<&serde_json::Value>) -> (Option<String>, Option<String>) {
+pub fn validate_quality(
+    quality: Option<&serde_json::Value>,
+    model: &str,
+) -> (Option<String>, Option<String>) {
     let Some(value) = quality else {
         return (None, None);
     };
@@ -152,12 +155,23 @@ pub fn validate_quality(quality: Option<&serde_json::Value>) -> (Option<String>,
     if cleaned.is_empty() {
         return (None, None);
     }
-    if !matches!(cleaned.as_str(), "auto" | "low" | "medium" | "high") {
+    let is_25 = matches!(
+        model,
+        crate::domain::routing::FLARE_MODEL | crate::domain::routing::SUNBURST_MODEL
+    );
+    let allowed = matches!(cleaned.as_str(), "auto" | "low" | "medium" | "high")
+        || (is_25 && matches!(cleaned.as_str(), "xhigh" | "max"));
+    if !allowed {
+        let choices = if is_25 {
+            "auto / high / low / max / medium / xhigh"
+        } else {
+            "auto / high / low / medium"
+        };
         return (
             None,
             Some(format!(
-                "quality 不支持 {}；可选 auto / high / low / medium",
-                python_string_repr(raw)
+                "quality 不支持 {}；可选 {choices}",
+                python_string_repr(raw),
             )),
         );
     }
@@ -255,10 +269,23 @@ mod tests {
         );
         assert_eq!(validate_n(&json!(5)), None);
         assert_eq!(
-            validate_quality(Some(&json!(" HIGH "))),
+            validate_quality(Some(&json!(" HIGH ")), crate::domain::routing::FLARE_MODEL),
             (Some("high".into()), None)
         );
-        assert!(validate_quality(Some(&json!("ultra"))).1.is_some());
+        assert!(
+            validate_quality(Some(&json!("ultra")), crate::domain::routing::FLARE_MODEL)
+                .1
+                .is_some()
+        );
+        assert_eq!(
+            validate_quality(Some(&json!("MAX")), crate::domain::routing::SUNBURST_MODEL),
+            (Some("max".into()), None)
+        );
+        assert!(
+            validate_quality(Some(&json!("max")), crate::domain::routing::STANDARD_MODEL)
+                .1
+                .is_some()
+        );
         assert_eq!(round_to_alignment(1080), 1088);
         assert_eq!(round_to_alignment(1000), 992);
     }

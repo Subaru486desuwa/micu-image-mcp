@@ -69,12 +69,15 @@ impl ImageProvider for Image2Provider {
         retry: RetryOptions,
         notes: &mut Vec<String>,
     ) -> ApiResponse {
-        let fields = vec![
+        let mut fields = vec![
             ("model".into(), request.model.into()),
             ("prompt".into(), request.prompt.into()),
             ("size".into(), request.size.into()),
             ("response_format".into(), request.response_format.into()),
         ];
+        if let Some(quality) = request.quality {
+            fields.push(("quality".into(), quality.into()));
+        }
         let mut files = request
             .images
             .iter()

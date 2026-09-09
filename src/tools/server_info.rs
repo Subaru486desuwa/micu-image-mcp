@@ -7,16 +7,12 @@ use super::{ToolEngine, ToolFailure};
 
 impl ToolEngine {
     pub fn server_info(&self) -> Result<Value, ToolFailure> {
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../tests/contract/fixtures/python/server-info.json"
-        ))
-        .map_err(|error| ToolFailure(format!("server_info contract fixture 无法解析: {error}")))?;
+        let fixture: Value = serde_json::from_str(include_str!("../contracts/server-info.json"))
+            .map_err(|error| ToolFailure(format!("Rust server_info contract 无法解析: {error}")))?;
         let mut info = fixture
             .pointer("/result/structuredContent")
             .cloned()
-            .ok_or_else(|| {
-                ToolFailure("server_info contract fixture 缺 structuredContent".into())
-            })?;
+            .ok_or_else(|| ToolFailure("Rust server_info contract 缺 structuredContent".into()))?;
         set_top(
             &mut info,
             "version",
@@ -37,6 +33,20 @@ impl ToolEngine {
             "default_model",
             Value::String(self.config.default_model.clone()),
         )?;
+        set_nested(
+            &mut info,
+            "default_models",
+            "image_generate",
+            Value::String(self.config.default_model.clone()),
+        )?;
+        for tool in ["image_edit", "image_batch_edit", "image_multi_reference"] {
+            set_nested(
+                &mut info,
+                "default_models",
+                tool,
+                Value::String(self.config.default_edit_model.clone()),
+            )?;
+        }
         set_top(
             &mut info,
             "grok_default_model",
@@ -245,7 +255,20 @@ mod tests {
         assert_eq!(info["version"], "0.3.0");
         assert_eq!(
             info["available_models"],
-            serde_json::json!(["gpt-image-2", "gpt-image-2-openai"])
+            serde_json::json!([
+                "gpt-image-2",
+                "gpt-image-2-openai",
+                "gpt-image-2.5-flare",
+                "gpt-image-2.5-sunburst"
+            ])
+        );
+        assert_eq!(
+            info["default_models"]["image_generate"],
+            "gpt-image-2.5-flare"
+        );
+        assert_eq!(
+            info["default_models"]["image_edit"],
+            "gpt-image-2.5-sunburst"
         );
         assert_eq!(info["grok_channel_enabled"], false);
         assert_eq!(info["api_key_configured"], true);

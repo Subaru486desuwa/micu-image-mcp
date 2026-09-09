@@ -5,7 +5,7 @@ use crate::{
     domain::{
         basename::safe_basename,
         routing::{is_large_tier, is_quality_model, model_error, resolve_model, size_note},
-        size::{parse_size, size_tier, validate_size},
+        size::{parse_size, size_tier, validate_quality, validate_size},
     },
     fs::input::MAX_TOTAL_INPUT_BYTES,
     http::client::RetryOptions,
@@ -40,7 +40,7 @@ impl ToolEngine {
                 "参考图最多 10 张，当前 {reference_count} 张。请减少或分批。"
             )));
         }
-        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_model) {
+        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_edit_model) {
             return Ok(validation_error(error));
         }
         let (cleaned_size, size_error) = validate_size(Some(&params.size), false);
@@ -49,6 +49,19 @@ impl ToolEngine {
                 size_error.unwrap_or_else(|| "size 校验失败".into()),
             ));
         };
+        let (effective_model, mut notes) = resolve_model(
+            params.model.as_deref(),
+            &self.config.default_edit_model,
+            &size,
+        );
+        let quality_value = params
+            .quality
+            .as_ref()
+            .map(|value| Value::String(value.clone()));
+        let (quality, quality_error) = validate_quality(quality_value.as_ref(), &effective_model);
+        if let Some(error) = quality_error {
+            return Ok(validation_error(error));
+        }
         let safe_stem = params
             .basename
             .as_deref()
@@ -66,8 +79,6 @@ impl ToolEngine {
             Ok(location) => location,
             Err(error) => return Ok(validation_error(error)),
         };
-        let (effective_model, mut notes) =
-            resolve_model(params.model.as_deref(), &self.config.default_model, &size);
         let key = resolve_key(self.config.as_ref(), params.api_key)?;
         let stem = safe_stem.unwrap_or_else(|| default_basename("multiref"));
         let mut images = Vec::with_capacity(reference_count);
@@ -121,6 +132,7 @@ impl ToolEngine {
                         model: &effective_model,
                         prompt: &full_prompt,
                         size: &size,
+                        quality: quality.as_deref(),
                         response_format,
                         images: &image_fields,
                         mask: None,
@@ -217,7 +229,7 @@ mod tests {
     use super::*;
 
     type CapturedReference = (String, String, String);
-    type CapturedEdit = (String, String, Vec<CapturedReference>);
+    type CapturedEdit = (String, String, Option<String>, Vec<CapturedReference>);
 
     struct FakeProvider {
         body: Vec<u8>,
@@ -252,6 +264,7 @@ mod tests {
             self.captured.lock().await.push((
                 request.model.into(),
                 request.prompt.into(),
+                request.quality.map(str::to_owned),
                 request
                     .images
                     .iter()
@@ -336,6 +349,7 @@ mod tests {
                 image_paths: paths,
                 size: "1024x1024".into(),
                 model: None,
+                quality: Some("max".into()),
                 save_dir: None,
                 basename: Some("multi".into()),
                 api_key: None,
@@ -346,16 +360,17 @@ mod tests {
         assert_eq!(result["n_references"], 2);
         let captured = provider.captured.lock().await;
         assert!(captured[0].1.contains("Instruction:\n融合成海报"));
+        assert_eq!(captured[0].2.as_deref(), Some("max"));
         assert_eq!(
             captured[0]
-                .2
+                .3
                 .iter()
                 .map(|item| item.0.as_str())
                 .collect::<Vec<_>>(),
             ["image[]", "image[]"]
         );
-        assert_eq!(captured[0].2[1].1, "ref-1.webp");
-        assert_eq!(captured[0].2[1].2, "image/png");
+        assert_eq!(captured[0].3[1].1, "ref-1.webp");
+        assert_eq!(captured[0].3[1].2, "image/png");
     }
 
     #[tokio::test]
@@ -367,6 +382,7 @@ mod tests {
                 image_paths: paths[..1].to_vec(),
                 size: "1024x1024".into(),
                 model: None,
+                quality: None,
                 save_dir: None,
                 basename: None,
                 api_key: None,

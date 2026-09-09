@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 
 use crate::domain::{
     routing::{is_quality_model, model_error, resolve_model},
-    size::validate_size,
+    size::{validate_quality, validate_size},
 };
 
 use super::{
@@ -26,7 +26,7 @@ impl ToolEngine {
                 total,
             ));
         }
-        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_model) {
+        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_edit_model) {
             return Ok(batch_validation_error(error, total));
         }
         let (cleaned_size, size_error) = validate_size(Some(&params.size), false);
@@ -36,6 +36,19 @@ impl ToolEngine {
                 total,
             ));
         };
+        let (effective_model, notes) = resolve_model(
+            params.model.as_deref(),
+            &self.config.default_edit_model,
+            &size,
+        );
+        let quality_value = params
+            .quality
+            .as_ref()
+            .map(|value| Value::String(value.clone()));
+        let (quality, quality_error) = validate_quality(quality_value.as_ref(), &effective_model);
+        if let Some(error) = quality_error {
+            return Ok(batch_validation_error(error, total));
+        }
         let location = match self
             .output_store
             .resolve_save_dir(params.save_dir.as_deref())
@@ -43,8 +56,6 @@ impl ToolEngine {
             Ok(location) => location,
             Err(error) => return Ok(batch_validation_error(error, total)),
         };
-        let (effective_model, notes) =
-            resolve_model(params.model.as_deref(), &self.config.default_model, &size);
         let concurrency = if is_quality_model(&effective_model) {
             1
         } else {
@@ -72,6 +83,7 @@ impl ToolEngine {
                         prompt.clone(),
                         size.clone(),
                         effective_model.clone(),
+                        quality.clone(),
                         output_dir.clone(),
                         key.clone(),
                     )
@@ -86,11 +98,12 @@ impl ToolEngine {
                     let prompt = prompt.clone();
                     let size = size.clone();
                     let model = effective_model.clone();
+                    let quality = quality.clone();
                     let output_dir = output_dir.clone();
                     let key = key.clone();
                     async move {
                         engine
-                            .batch_one(index, input, prompt, size, model, output_dir, key)
+                            .batch_one(index, input, prompt, size, model, quality, output_dir, key)
                             .await
                     }
                 })
@@ -130,6 +143,7 @@ impl ToolEngine {
         prompt: String,
         size: String,
         model: String,
+        quality: Option<String>,
         output_dir: String,
         api_key: Option<SecretArg>,
     ) -> (usize, Value) {
@@ -140,6 +154,7 @@ impl ToolEngine {
                 mask_path: None,
                 size,
                 model: Some(model),
+                quality,
                 save_dir: Some(output_dir),
                 basename: Some(format!("{}_{}", default_basename("batch"), index + 1)),
                 api_key,
@@ -314,7 +329,8 @@ mod tests {
                 prompt: "sketch".into(),
                 image_paths: paths,
                 size: "1024x1024".into(),
-                model: None,
+                model: Some("gpt-image-2".into()),
+                quality: None,
                 save_dir: None,
                 api_key: None,
             })
@@ -336,6 +352,7 @@ mod tests {
                 image_paths: paths[..2].to_vec(),
                 size: "1024x1024".into(),
                 model: Some("gpt-image-2-openai".into()),
+                quality: None,
                 save_dir: None,
                 api_key: None,
             })

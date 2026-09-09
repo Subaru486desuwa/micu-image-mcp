@@ -6,7 +6,8 @@
 
 把 [米醋](https://www.micuapi.ai) 的图像接口包装成 MCP server，让 Claude Code / Codex / Cursor 等 MCP 客户端直接生图、改图、批处理、多图参考。
 
-当前仅支持 `gpt-image-2` / `gpt-image-2-openai`，`MICU_API_KEY` 必须能看到这两个模型。
+当前支持 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
+`gpt-image-2-openai`。文生图默认使用 Flare，编辑、批量编辑和多图参考默认使用 Sunburst。
 Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧的 Grok 环境变量，安装器也不会写入，工具调用会在发出请求前拒绝 Grok 模型。
 
 ---
@@ -15,10 +16,10 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 | Tool | 说明 |
 |---|---|
-| `image_generate` | 文生图。米醋 image2 支持 1K / 2K / 4K |
-| `image_edit` | 单图参考/编辑。走 `/v1/images/edits`，支持 1K / 2K / 4K |
-| `image_batch_edit` | 多张图逐张同指令处理；1K 并发，2K / 4K 串行 |
-| `image_multi_reference` | 2-10 张参考图融合成 1 张新图，支持 1K / 2K / 4K |
+| `image_generate` | 文生图；默认 Flare，2.5 支持 quality 到 `max` |
+| `image_edit` | 单图参考/编辑；默认 Sunburst，走 `/v1/images/edits` |
+| `image_batch_edit` | 多张图逐张同指令处理；默认 Sunburst 串行 |
+| `image_multi_reference` | 2-10 张参考图融合成 1 张新图；默认 Sunburst |
 | `server_info` | 查看 base URL、模型、size 规则、重试策略、安全约束 |
 
 第一次使用前，让 LLM 调一次 `server_info`，可以看到当前运行时配置和可用能力。
@@ -34,7 +35,11 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 ## 当前模型范围
 
-所有工具与压测脚本仅接受 `gpt-image-2` 和 `gpt-image-2-openai`。2K/4K 会自动切换到高质量线路 `gpt-image-2-openai`；Grok 相关实现暂时保留为休眠代码，服务器恢复支持后可重新开放。
+四个图像工具都接受上述四个模型。GPT Image 2.5 支持
+`auto / low / medium / high / xhigh / max`；旧模型最高支持 `high`。旧 `gpt-image-2`
+的 2K/4K 请求仍自动切换到 `gpt-image-2-openai`；Flare 与 Sunburst 的 2K/4K
+会保持所选模型并进入高分辨率串行队列。
+Grok 相关实现继续保持休眠。
 
 ---
 
@@ -51,7 +56,7 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 - 提供 `install/reset/doctor/version`；
 - Python v0.2.0 reference 永久保留在
   [`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) 分支，
-  main 中的兼容源码与差分测试也继续保留。
+  main 中的兼容源码保持冻结；新模型与新参数只在 Rust 实现维护。
 
 ### Rust binary（推荐）
 
@@ -164,13 +169,16 @@ python install.py --yes --runtime python
 
 ## Size 规则
 
-image2 路径：
+旧 GPT Image 2 路径：
 
 - W/H 必须是 16 的倍数
 - 最长边不超过 3840；长宽比不超过 3:1
 - 总像素必须在 655,360 到 8,294,400 之间
 - 2K/4K 自动切 `gpt-image-2-openai`
 - 2K/4K 强制 `n=1` 并加跨进程锁，避免多个 MCP 同时打爆高质量队列
+
+GPT Image 2.5 的 Flare 与 Sunburst 已实测支持 `1024x1024`、`2048x1152` 和
+`3840x2160`，且返回像素与请求一致。2K/4K 保持所选 2.5 模型，强制 `n=1` 并使用跨进程锁。
 
 推荐 size：
 
@@ -206,7 +214,7 @@ image2 路径：
 |---|---|---|
 | `MICU_API_KEY` | 空 | 米醋 image2 token |
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 base URL |
-| `MICU_MODEL` | `gpt-image-2` | image2 默认模型 |
+| `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 Flare，编辑类默认 Sunburst |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同输出目录 | 输出安全根目录 |
 | `MICU_INPUT_ROOT` | 空（不限制） | 可选输入图片白名单根；启用后阻止路径/符号链接逃逸 |

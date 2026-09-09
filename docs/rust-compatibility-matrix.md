@@ -1,8 +1,8 @@
-# Python / Rust 兼容性矩阵
+# Rust 契约与历史兼容性矩阵
 
-更新时间：2026-08-23  
-Python reference：仓库 HEAD `578b32a` 上保留的 `server.py` / `micu_image_mcp/`  
-Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
+更新时间：2026-09-09
+Python reference：冻结在旧 `gpt-image-2` 契约，不再随 Rust 新功能更新
+Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`，当前唯一维护实现
 
 状态定义：
 
@@ -18,25 +18,25 @@ Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
 | STDIO transport | Exact | Python/Rust smoke 均通过，stdout 每行均为 JSON-RPC |
 | 2024-11-05 initialize lifecycle | Semantic | protocol/capabilities/name 相同；`serverInfo.version` 是 Python FastMCP `1.28.0` vs Rust 项目 `0.3.0` |
 | 2026-07-28 stateless lifecycle | Rust 通过 | `server/discover`、带完整 `_meta` 的 tools/list/tools/call 通过；Python 仅作为 legacy reference，不要求支持该修订 |
-| 五个 tool 名称与顺序 | Exact | `image_generate`, `image_edit`, `image_batch_edit`, `image_multi_reference`, `server_info` |
-| tools/list descriptions | Exact | Rust binary 编译进冻结 catalog；完整字符串相等 |
-| tools/list inputSchema | Exact | properties、type/null、required、default、title 全部相等 |
-| tools/list outputSchema | Exact | 五个工具均保持 Python `additionalProperties: true` contract |
+| 五个 tool 名称与顺序 | Rust stable | `image_generate`, `image_edit`, `image_batch_edit`, `image_multi_reference`, `server_info` |
+| tools/list descriptions | Rust contract | Rust binary 编译进 `src/contracts/tool_contract.json` |
+| tools/list inputSchema | Rust contract | 2.5 质量参数由 Rust-owned schema 定义；Python 快照保持冻结 |
+| tools/list outputSchema | Rust stable | 五个工具均保持 `additionalProperties: true` contract |
 | JSON text + structuredContent | Exact/Semantic | 同时返回 pretty JSON text 与 structuredContent；比较时只忽略 object key 顺序 |
 | 参数类型 validator 诊断 | Semantic | 错误均为 MCP `isError=true`；Pydantic URL/行文与 serde 诊断不同，因此差分只规范化 validator 文案，不忽略字段或错误状态 |
-| 未知 tool 参数 | Exact | Python/Pydantic 与 Rust/serde 均忽略未知字段，便于 MCP 客户端前向兼容；五工具协议差分覆盖 |
+| 未知 tool 参数 | Rust verified | Rust/serde 忽略未知字段，便于 MCP 客户端前向兼容 |
 | `n=true` 历史 coercion | Exact | Rust custom deserializer 保留 Pydantic `true -> 1` 行为，然后到达相同缺-key/执行路径 |
 
-`tests/contract/fixtures/python/tools-list.json` 与 Rust `tools-list.json` 的 `result.tools` 当前直接
-相等，不需要白名单。
+Rust 的工具与 `server_info` 模板位于 `src/contracts/`；`tests/contract/fixtures/python/` 仅用于
+防止冻结的 Python reference 意外漂移，不再作为 Rust 运行时输入。
 
 ## 公共业务行为
 
 | 行为 | 状态 | 说明 |
 |---|---|---|
-| 支持模型 allowlist | Exact | 仅 `gpt-image-2` / `gpt-image-2-openai`，精确字符串，空白包裹也拒绝 |
+| 支持模型 allowlist | Rust verified | `gpt-image-2` / `gpt-image-2-openai` / `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst`，精确字符串，空白包裹也拒绝 |
 | Grok 公共错误与 server_info 状态 | Exact | 调用前、文件读取前拒绝；channel disabled/status/compatibility keys 保留 |
-| ≥1600 自动高质量线路 | Exact + live | route note、effective model 相同；5 种真实 2K/4K 尺寸均切到 `gpt-image-2-openai` |
+| ≥1600 路由 | Rust + live | 仅旧 `gpt-image-2` 自动切 `gpt-image-2-openai`；2.5 保持 Flare/Sunburst，2K/4K 实测精确返回 |
 | 2K/4K generate 强制 n=1 | Exact + live | requested_n 与中文 note 相同；5 个真实请求的 `n=3` 均只生成 1 张 |
 | 1K 标准 generate n>1 | Exact | 最多 5 in-flight，结果按 index 排序；6 请求实测 max active=5 |
 | 高质量 generate 串行 | Exact | concurrency=1 |
@@ -56,7 +56,7 @@ Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`
 |---|---|---|
 | WxH、边长、16 对齐、像素、3:1 | Exact | 纯逻辑 literals 与入口差分均通过 |
 | prompt size inference 与优先级 | Exact | 明确像素 > K > shape；含 Python banker rounding 的 1000→992 |
-| quality enum | Exact | auto/low/medium/high；非法值公共错误相同 |
+| quality enum | Rust verified | 2.5 支持 auto/low/medium/high/xhigh/max；旧模型最高 high；非法值在网络前拒绝 |
 | n 1..10 | Exact | bool/coercion、上限和 burn-quota 文本已覆盖 |
 | 单图 4 MiB / 多图 8 MiB | Exact | 无 HTTP 请求即拒；多图使用合法 padding fixture |
 | 输出/API body 25 MiB | Exact | Content-Length 与 streamed overflow 都中断；接近 cap fixture 已测 RSS |

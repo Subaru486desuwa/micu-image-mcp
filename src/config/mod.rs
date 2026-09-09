@@ -4,7 +4,7 @@ use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
-use crate::domain::routing::STANDARD_MODEL;
+use crate::domain::routing::{FLARE_MODEL, SUNBURST_MODEL};
 
 mod env;
 mod paths;
@@ -55,6 +55,7 @@ pub struct Config {
     pub base_url: Url,
     pub api_key: SecretString,
     pub default_model: String,
+    pub default_edit_model: String,
     pub use_shell_proxy: bool,
     pub response_format: ResponseFormat,
     pub response_formats_to_try: Vec<&'static str>,
@@ -155,6 +156,11 @@ impl Config {
             Duration::from_secs(600)
         };
 
+        let model_override = environment
+            .get("MICU_MODEL")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+
         Ok(Self {
             base_url,
             api_key: environment
@@ -162,10 +168,8 @@ impl Config {
                 .cloned()
                 .unwrap_or_default()
                 .into(),
-            default_model: environment
-                .get("MICU_MODEL")
-                .cloned()
-                .unwrap_or_else(|| STANDARD_MODEL.to_owned()),
+            default_model: model_override.unwrap_or(FLARE_MODEL).to_owned(),
+            default_edit_model: model_override.unwrap_or(SUNBURST_MODEL).to_owned(),
             use_shell_proxy: env_truthy(environment.get("MICU_USE_SHELL_PROXY"), false),
             response_format,
             response_formats_to_try,
@@ -204,7 +208,7 @@ pub fn is_safe_base_url(url: &Url) -> bool {
 }
 
 pub fn default_model() -> &'static str {
-    STANDARD_MODEL
+    FLARE_MODEL
 }
 
 fn first_non_empty(environment: &BTreeMap<String, String>, names: &[&str]) -> Option<String> {
@@ -247,7 +251,8 @@ mod tests {
     fn config_freezes_current_environment_and_redacts_secrets() {
         let config = Config::from_map(&base_env()).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(config.base_url.as_str(), "https://www.micuapi.ai/");
-        assert_eq!(config.default_model, "gpt-image-2");
+        assert_eq!(config.default_model, FLARE_MODEL);
+        assert_eq!(config.default_edit_model, SUNBURST_MODEL);
         assert_eq!(config.api_key.expose_secret(), "sk-super-secret");
         assert!(!format!("{config:?}").contains("sk-super-secret"));
         assert_eq!(config.response_formats_to_try, ["url", "b64_json"]);

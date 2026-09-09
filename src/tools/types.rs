@@ -68,6 +68,8 @@ pub struct EditParams {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
+    pub quality: Option<String>,
+    #[serde(default)]
     pub save_dir: Option<String>,
     #[serde(default)]
     pub basename: Option<String>,
@@ -84,6 +86,8 @@ pub struct BatchParams {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
+    pub quality: Option<String>,
+    #[serde(default)]
     pub save_dir: Option<String>,
     #[serde(default)]
     pub api_key: Option<SecretArg>,
@@ -97,6 +101,8 @@ pub struct MultiReferenceParams {
     pub size: String,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub quality: Option<String>,
     #[serde(default)]
     pub save_dir: Option<String>,
     #[serde(default)]

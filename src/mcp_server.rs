@@ -122,14 +122,12 @@ fn structured_result(value: Value) -> Result<CallToolResult, String> {
 }
 
 fn load_tool_catalog() -> Result<Vec<Tool>, String> {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../tests/contract/fixtures/python/tools-list.json"
-    ))
-    .map_err(|error| format!("tools/list contract fixture 无法解析: {error}"))?;
+    let fixture: Value = serde_json::from_str(include_str!("contracts/tool_contract.json"))
+        .map_err(|error| format!("Rust tools/list contract 无法解析: {error}"))?;
     let tools = fixture
         .pointer("/result/tools")
         .cloned()
-        .ok_or_else(|| "tools/list contract fixture 缺 result.tools".to_owned())?;
+        .ok_or_else(|| "Rust tools/list contract 缺 result.tools".to_owned())?;
     serde_json::from_value(tools)
         .map_err(|error| format!("tools/list contract 无法转换为 rmcp Tool: {error}"))
 }
@@ -139,13 +137,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_tool_catalog_is_semantically_identical_to_python_snapshot() {
+    fn embedded_tool_catalog_matches_the_rust_contract() {
         let catalog = load_tool_catalog().unwrap_or_else(|error| panic!("{error}"));
         let actual = serde_json::to_value(&catalog).unwrap_or_else(|error| panic!("{error}"));
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../tests/contract/fixtures/python/tools-list.json"
-        ))
-        .unwrap_or_else(|error| panic!("{error}"));
+        let fixture: Value = serde_json::from_str(include_str!("contracts/tool_contract.json"))
+            .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(actual, fixture["result"]["tools"]);
         assert_eq!(catalog.len(), 5);
     }

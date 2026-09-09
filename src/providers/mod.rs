@@ -22,6 +22,7 @@ pub struct EditRequest<'a> {
     pub model: &'a str,
     pub prompt: &'a str,
     pub size: &'a str,
+    pub quality: Option<&'a str>,
     pub response_format: &'a str,
     pub images: &'a [(&'a str, &'a ValidatedImage)],
     pub mask: Option<&'a ValidatedImage>,

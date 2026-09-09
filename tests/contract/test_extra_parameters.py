@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import sys
 import tempfile
+import sys
 from pathlib import Path
 
 import pytest
 
 from tests.contract.contract_cases import REPO_ROOT
-from tests.contract.differential import assert_equal, normalize, normalize_stdio
-from tests.contract.stdio_driver import StdioSession, isolated_server_env
+from tests.contract.stdio_driver import StdioSession, isolated_server_env, text_content_json
 
 
 RUST_BINARY = REPO_ROOT / "target" / "debug" / (
@@ -17,7 +16,7 @@ RUST_BINARY = REPO_ROOT / "target" / "debug" / (
 
 
 @pytest.mark.skipif(not RUST_BINARY.is_file(), reason="cargo build is required")
-def test_python_and_rust_both_ignore_unknown_tool_arguments() -> None:
+def test_rust_ignores_unknown_tool_arguments() -> None:
     cases = [
         ("image_generate", {"prompt": "", "future_field": "ignored"}),
         (
@@ -41,25 +40,15 @@ def test_python_and_rust_both_ignore_unknown_tool_arguments() -> None:
     with tempfile.TemporaryDirectory(prefix="micu-extra-args-") as temp_dir:
         root = Path(temp_dir).resolve()
         env = isolated_server_env(root)
-        with (
-            StdioSession(
-                [sys.executable, str(REPO_ROOT / "server.py")], env, REPO_ROOT
-            ) as python,
-            StdioSession([str(RUST_BINARY)], env, REPO_ROOT) as rust,
-        ):
-            python.initialize()
+        with StdioSession([str(RUST_BINARY)], env, REPO_ROOT) as rust:
             rust.initialize()
             for request_id, (tool, arguments) in enumerate(cases, start=10):
                 params = {"name": tool, "arguments": arguments}
-                expected = python.request(request_id, "tools/call", params)
                 actual = rust.request(request_id, "tools/call", params)
-                normalize_response = (
-                    (lambda value: normalize_stdio("server-info.json", value))
-                    if tool == "server_info"
-                    else normalize
-                )
-                assert_equal(
-                    normalize_response(expected),
-                    normalize_response(actual),
-                    f"unknown arguments for {tool}",
-                )
+                assert "error" not in actual, actual
+                payload = text_content_json(actual)
+                assert isinstance(payload, dict), actual
+                if tool == "server_info":
+                    assert payload["default_models"]["image_generate"] == "gpt-image-2.5-flare"
+                else:
+                    assert payload["ok"] is False
