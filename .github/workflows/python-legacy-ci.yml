@@ -5,6 +5,7 @@ on:
     branches: [python-reference, codex/issue-5-pep668-python]
   pull_request:
     branches: [python-reference]
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +22,7 @@ env:
 
 jobs:
   reference-tests:
+    if: github.event.action != 'closed'
     name: Python ${{ matrix.python }} full reference
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -38,6 +40,7 @@ jobs:
       - run: python tests/smoke_local.py
 
   installer-platforms:
+    if: github.event.action != 'closed'
     name: Installer on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -54,6 +57,7 @@ jobs:
       - run: python -m pytest -q tests/unit/test_installer_env.py tests/unit/test_install.py
 
   pep668-system:
+    if: github.event.action != 'closed'
     name: Real distro PEP 668 install
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -63,3 +67,55 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
       - name: Real dependencies, loopback model probe, MCP stdio and reset
         run: /usr/bin/python3 tests/smoke_pep668.py
+
+  cleanup-merged-branch:
+    name: Remove merged temporary legacy branch
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'python-reference' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'codex/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const branch = pr.head.ref;
+            let tip;
+            try {
+              tip = (await github.rest.repos.getBranch({ owner, repo, branch })).data;
+            } catch (error) {
+              if (error.status === 404) return;
+              throw error;
+            }
+            if (tip.protected || tip.commit.sha !== pr.head.sha) {
+              core.info('Retained: branch is protected or has newer commits.');
+              return;
+            }
+            const base = (await github.rest.repos.getBranch({ owner, repo, branch: pr.base.ref })).data;
+            const comparison = (await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: `${pr.head.sha}...${base.commit.sha}`
+            })).data;
+            if (!['ahead', 'identical'].includes(comparison.status)) {
+              core.info('Retained: exact tip is not in target ancestry.');
+              return;
+            }
+            const open = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'open', per_page: 100
+            });
+            if (open.some(p => p.base.ref === branch ||
+                (p.head.repo?.full_name === context.payload.repository.full_name && p.head.ref === branch))) {
+              core.info('Retained: an open PR depends on the branch.');
+              return;
+            }
+            const current = (await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` })).data;
+            if (current.object.sha !== pr.head.sha) return;
+            await github.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` });
+            core.info(`Deleted merged temporary branch: ${branch}`);

@@ -61,7 +61,10 @@ def main() -> None:
     clean_env = {key: value for key, value in os.environ.items()
                  if not key.startswith(("MICU_", "PIP_", "PYTHON"))
                  and key not in {"VIRTUAL_ENV", "CONDA_PREFIX"}}
-    clean_env.update(PYTHONUTF8="1", PIP_DISABLE_PIP_VERSION_CHECK="1")
+    # Hosted runners may globally configure pip to break system packages.
+    # Disable config loading so this exercises the distro's default protection.
+    clean_env.update(PYTHONUTF8="1", PIP_DISABLE_PIP_VERSION_CHECK="1",
+                     PIP_CONFIG_FILE=os.devnull)
     # A nonexistent package and --no-index ensure this cannot install anything,
     # even if an unexpected pip configuration disables the PEP 668 protection.
     blocked = subprocess.run(
@@ -70,7 +73,8 @@ def main() -> None:
         capture_output=True, text=True, timeout=30, check=False,
     )
     assert blocked.returncode != 0
-    assert "externally-managed-environment" in blocked.stdout + blocked.stderr
+    assert "externally-managed-environment" in blocked.stdout + blocked.stderr, (
+        blocked.stdout + blocked.stderr)
     print("Confirmed: system pip refuses installation under PEP 668", flush=True)
     probe = "import importlib.util;print(importlib.util.find_spec('mcp'))"
     before = subprocess.check_output([sys.executable, "-I", "-c", probe], env=clean_env)
