@@ -16,6 +16,8 @@
     python install.py --baseurl https://...        # 高级: 覆盖 baseurl
     python install.py --no-codex                   # 不写 Codex 配置
     python install.py --no-claude                  # 不写 Claude 配置
+    python install.py --venv-dir ~/venvs/micu      # 指定 Python 虚拟环境
+    python install.py --break-system-packages      # 显式绕过 PEP 668 (有风险)
     python install.py --yes                        # 非交互, 全用环境变量
         MICU_API_KEY=... MICU_SAVE_DIR=... python install.py --yes
         MICU_API_KEY=... python install.py --yes
@@ -33,6 +35,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from installer_env import prepare_python
 
 PY_MIN = (3, 10)
 
@@ -219,9 +223,12 @@ def check_running_clients() -> None:
 
 # ---------- 依赖安装 ----------
 
-def install_deps(repo_root: Path, mirror_url: str | None) -> None:
+def install_deps(repo_root: Path, mirror_url: str | None, *,
+                 break_system_packages: bool = False) -> None:
     step("安装依赖")
     extra = ["-i", mirror_url] if mirror_url else []
+    if break_system_packages:
+        extra.append("--break-system-packages")
     if mirror_url:
         info(f"使用镜像: {mirror_url}")
     cmd = [sys.executable, "-m", "pip", "install", *extra, "-e", str(repo_root)]
@@ -234,7 +241,8 @@ def install_deps(repo_root: Path, mirror_url: str | None) -> None:
         info(" ".join(cmd2))
         rc2 = subprocess.run(cmd2).returncode
         if rc2 != 0:
-            err("pip install 失败. 国内用户可加 --mirror tsinghua 重试")
+            err("pip install 失败，请检查上方错误。网络问题可尝试 --mirror tsinghua；"
+                "环境或权限问题请使用 --venv-dir 指定可写的新目录。")
     ok("依赖就绪")
 
 
@@ -749,8 +757,7 @@ def do_reset(args: argparse.Namespace) -> None:
         info("没有任何文件被改动")
     else:
         ok(f"已处理: {touched}")
-    print("\n注意: pip 安装的包仍保留. 如需彻底卸载, 运行:")
-    print(f"  {sys.executable} -m pip uninstall -y micu-image-mcp")
+    print("\n注意: 虚拟环境和 pip 包仍保留；卸载时请使用原客户端配置 command 对应的 Python。")
 
 
 # ---------- main ----------
@@ -778,6 +785,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="已编译/下载的 Rust binary 路径（配合 --runtime rust）",
     )
+    environment = p.add_mutually_exclusive_group()
+    environment.add_argument("--venv-dir", default=None,
+                             help="指定 Python 虚拟环境目录；默认仅在 PEP 668 系统上使用仓库 .venv")
+    environment.add_argument("--break-system-packages", action="store_true",
+                             help="显式允许 pip 修改受保护的系统 Python (有风险)")
     p.add_argument("--reset", action="store_true",
                    help="移除已写入的 micu-image MCP 配置 (Claude + Codex), 不动 pip 包")
     return p.parse_args()
@@ -795,6 +807,12 @@ def main() -> None:
     check_running_clients()
 
     repo_root = Path(__file__).resolve().parent
+    if args.runtime == "python":
+        prepare_python(
+            repo_root, venv_dir=args.venv_dir,
+            break_system_packages=args.break_system_packages,
+            mirror_url=args.pypi_index or PIP_MIRRORS.get(args.mirror),
+        )
     runtime_command = resolve_runtime_command(args, repo_root)
     info(f"仓库: {repo_root}")
     info(
@@ -805,7 +823,7 @@ def main() -> None:
     if runtime_command.runtime == "python":
         check_pip()
         mirror_url = args.pypi_index or PIP_MIRRORS.get(args.mirror)
-        install_deps(repo_root, mirror_url)
+        install_deps(repo_root, mirror_url, break_system_packages=args.break_system_packages)
     else:
         ok("Rust binary 已就绪；跳过 pip/Python server 依赖安装")
 
