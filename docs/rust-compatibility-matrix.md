@@ -2,7 +2,7 @@
 
 更新时间：2026-09-09
 Python reference：冻结在旧 `gpt-image-2` 契约，不再随 Rust 新功能更新
-Rust：`micu-image-mcp 0.3.0` + 官方 `rmcp 3.1.4`，当前唯一维护实现
+Rust：`micu-image-mcp 0.3.1` + 官方 `rmcp 3.1.4`，当前唯一维护实现
 
 状态定义：
 
