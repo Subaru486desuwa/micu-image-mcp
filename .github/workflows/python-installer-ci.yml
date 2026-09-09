@@ -1,0 +1,60 @@
+name: Python installer CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - install.py
+      - installer_env.py
+      - tests/unit/test_install*.py
+      - tests/smoke_pep668.py
+      - .github/workflows/python-installer-ci.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - install.py
+      - installer_env.py
+      - tests/unit/test_install*.py
+      - tests/smoke_pep668.py
+      - .github/workflows/python-installer-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-installer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  MICU_RUN_LIVE_TESTS: "0"
+  MICU_RUN_CONTRACT_TESTS: "0"
+  PYTHONUTF8: "1"
+
+jobs:
+  installer-platforms:
+    name: Installer on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install pytest
+      - run: python -m pytest -q tests/unit/test_installer_env.py tests/unit/test_install.py
+
+  pep668-system:
+    name: Real distro PEP 668 rollback install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install distro venv and pip support
+        run: sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
+      - name: Real dependencies, loopback model probe, MCP stdio and reset
+        run: /usr/bin/python3 tests/smoke_pep668.py

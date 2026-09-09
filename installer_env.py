@@ -41,6 +41,14 @@ def _venv_environ(python: Path) -> dict[str, str]:
     return env
 
 
+def _exec_installer(executable: str, command: list[str], env: dict[str, str]) -> None:
+    if sys.platform == "win32":
+        # Windows execv* uses CRT argument joining, which loses space quoting.
+        # subprocess uses CreateProcess with proper quoting; propagate its status.
+        raise SystemExit(subprocess.run(command, env=env, check=False).returncode)
+    os.execve(executable, command, env)
+
+
 def _succeeds(command: list[str], *, quiet: bool = False,
               env: dict[str, str] | None = None) -> bool:
     try:
@@ -158,6 +166,6 @@ def prepare_python(repo_root: Path, *, venv_dir: str | None = None,
     sys.stderr.flush()
     command = [str(python), str(repo_root / "install.py"), *sys.argv[1:]]
     try:
-        os.execve(str(python), command, _venv_environ(python))
+        _exec_installer(str(python), command, _venv_environ(python))
     except OSError as exc:
         raise SystemExit(f"[ERR] 无法启动虚拟环境 Python {python}: {exc}") from exc

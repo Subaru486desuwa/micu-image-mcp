@@ -64,7 +64,7 @@ def test_selects_absolute_target_and_reexecs(monkeypatch, tmp_path, managed, exp
     monkeypatch.setattr(bootstrap, "_create_venv", create)
     monkeypatch.setattr(bootstrap, "_validate_venv", bootstrap.venv_python)
     monkeypatch.setattr(bootstrap, "_ensure_pip", ensure)
-    monkeypatch.setattr(bootstrap.os, "execve", execute)
+    monkeypatch.setattr(bootstrap, "_exec_installer", execute)
     monkeypatch.setattr(sys, "argv", ["install.py", "--yes"])
     monkeypatch.setenv("MICU_API_KEY", "sk-test-fixture")
     monkeypatch.setenv("PYTHONHOME", "/stale-python-home")
@@ -97,7 +97,7 @@ def test_explicit_target_can_switch_from_active_venv(monkeypatch, tmp_path):
     monkeypatch.setattr(bootstrap, "_validate_venv", bootstrap.venv_python)
     monkeypatch.setattr(bootstrap, "_ensure_pip", Mock())
     execute = Mock()
-    monkeypatch.setattr(bootstrap.os, "execve", execute)
+    monkeypatch.setattr(bootstrap, "_exec_installer", execute)
     bootstrap.prepare_python(tmp_path, venv_dir=str(tmp_path / "new"))
     assert execute.call_args.args[0] == str(bootstrap.venv_python(tmp_path / "new"))
 
@@ -106,7 +106,7 @@ def test_already_in_explicit_target_does_not_loop(monkeypatch, tmp_path):
     monkeypatch.setattr(bootstrap, "in_virtual_environment", lambda: True)
     monkeypatch.setattr(bootstrap.sys, "prefix", str(tmp_path))
     execute = Mock(side_effect=AssertionError("re-exec loop"))
-    monkeypatch.setattr(bootstrap.os, "execve", execute)
+    monkeypatch.setattr(bootstrap, "_exec_installer", execute)
     bootstrap.prepare_python(tmp_path, venv_dir=str(tmp_path))
     execute.assert_not_called()
 
@@ -336,3 +336,26 @@ def test_real_reexec_routes_pip_http_and_stdio_to_one_venv(tmp_path):
     codex = (home / ".codex/config.toml").read_text()
     assert 'command = "keep"' in codex
     assert json.dumps(str(python)) in codex
+
+
+@pytest.mark.parametrize("returncode", [0, 7])
+def test_windows_restart_quotes_arguments_and_propagates_status(monkeypatch, returncode):
+    monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+    command = ["C:/env with spaces/python.exe", "C:/repo with spaces/install.py", "--yes"]
+    env = {"VIRTUAL_ENV": "C:/env with spaces"}
+    run = Mock(return_value=SimpleNamespace(returncode=returncode))
+    monkeypatch.setattr(bootstrap.subprocess, "run", run)
+    with pytest.raises(SystemExit) as exc:
+        bootstrap._exec_installer(command[0], command, env)
+    assert exc.value.code == returncode
+    run.assert_called_once_with(command, env=env, check=False)
+
+
+def test_posix_restart_replaces_current_process(monkeypatch):
+    monkeypatch.setattr(bootstrap.sys, "platform", "linux")
+    command = ["/env with spaces/bin/python", "/repo with spaces/install.py"]
+    env = {"VIRTUAL_ENV": "/env with spaces"}
+    execute = Mock()
+    monkeypatch.setattr(bootstrap.os, "execve", execute)
+    bootstrap._exec_installer(command[0], command, env)
+    execute.assert_called_once_with(command[0], command, env)
