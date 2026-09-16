@@ -43,8 +43,6 @@ Grok 相关实现继续保持休眠。
 
 ---
 
-> **2026-08-14 当前线路更新**：`gpt-image-2` / `gpt-image-2-openai` 的生成与编辑统一走当前 Images API；参考图 4K 的旧线路硬阻断已经移除。2K / 4K 会自动切到 `gpt-image-2-openai` 并串行进入高质量队列，不再需要先做 1K/2K、再文生图升 4K 的绕行步骤。同时保留对 `HTTP 400 + Too Many Requests` 与 `data:image/...;base64,...` 返回的兼容处理。
-
 > **Windows 中文提示词**：MCP 会以原生 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，不要把含中文的 here-string 直接通过管道喂给 `python -`；Windows PowerShell 的 `$OutputEncoding` 可能是 ASCII，导致中文在进入 MCP 前已变成 `?`。请将脚本保存为 UTF-8 文件后执行，或先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`。
 
 ## 安装
@@ -58,7 +56,35 @@ Grok 相关实现继续保持休眠。
   [`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) 分支，
   main 中的兼容源码保持冻结；新模型与新参数只在 Rust 实现维护。
 
-### Rust binary（推荐）
+### 一键安装（推荐）
+
+macOS / Linux：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.ps1 | iex
+```
+
+一键脚本会识别当前平台，从最新 GitHub Release 下载 Rust binary，使用 Release 中的
+`SHA256SUMS` 校验后调用 binary 自带的 `install --yes`。默认自动写入 Codex 与 Claude 的
+`micu-image` MCP 配置；API key 不会写入配置文件。
+
+macOS / Linux 需要只配置某个客户端时，可把参数传给内置 installer：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.sh \
+  | sh -s -- --no-claude
+```
+
+脚本源码在 [`scripts/install.sh`](scripts/install.sh) 和
+[`scripts/install.ps1`](scripts/install.ps1)，可先审阅再执行。
+
+### 手动下载 Rust binary
 
 从 [最新 Release](https://github.com/Subaru486desuwa/micu-image-mcp/releases/latest) 下载平台对应文件并
 核对 `SHA256SUMS`：
@@ -188,23 +214,13 @@ GPT Image 2.5 的 Flare 与 Sunburst 已实测支持 `1024x1024`、`2048x1152` �
 | 2K | `2048x2048`, `2048x1152`, `1152x2048` |
 | 4K | `3840x2160`, `2160x3840` |
 
-## 尺寸能力矩阵 / Size capability
+## 尺寸与路由行为
 
-2026-08-14 实测确认：两条当前 Image2 线路均可生成与编辑；高质量线路在 1536×1024、2048×1152、3840×2160 精确返回，标准线路的部分自定义尺寸会被后端重映射。当前 MCP 已同步开放参考图 4K，不再执行旧线路的本地拒绝。
-
-| 场景 | 可靠性 | 实际输出 |
-|---|---|---|
-| 1K 纯文生图/编辑 | 可用 | 两模型 1024² 均已实测；实际像素见 `saved.actual_size` |
-| 2K/4K 纯文生图（`image_generate`） | 可用 | 自动切 `gpt-image-2-openai`；实测 2048×1152 / 3840×2160 精确返回 |
-| 单张参考图 2K/4K（`image_edit`） | 可用 | 统一走 `/v1/images/edits`；实测 2048×1152 / 3840×2160 精确返回 |
-| 多图参考 1K/2K/4K（`image_multi_reference`） | 可用 | 走 `/v1/images/edits` + `image[]`；≥2K 自动切高质量线路，核对 `saved.actual_size` |
-| 批量编辑 1K/2K/4K（`image_batch_edit`） | 可用 | 标准 1K 最多 5 并发；高质量线路逐张串行，避免队列拥塞 |
-
-说明：
-
-- `/v1/images/edits` 是米醋真正消费输入图的端点。当前单图参考的 1024²、2048×1152、3840×2160 edits 已通过实测。
-- 旧的 `generations + reference_image` 和 `generations + image_urls` 路径已经废弃；所有 Image2 参考图请求都不会再转回旧路径或 `/v1/chat/completions`。
-- 参考图 4K 可直接请求；2K/4K 自动切 `gpt-image-2-openai`，并使用进程内 + 跨进程双层锁串行访问高质量队列。
+- `/v1/images/edits` 负责单图编辑、多图参考与批量编辑。
+- `gpt-image-2` 的 2K/4K 请求会自动切换到 `gpt-image-2-openai`。
+- GPT Image 2.5 的 2K/4K 请求保持所选 Flare / Sunburst 模型。
+- ≥2K 请求强制 `n=1`，并通过进程内与跨进程锁串行访问高质量队列。
+- 返回的真实像素以响应中的 `saved.actual_size` 为准。
 
 ---
 
@@ -269,107 +285,17 @@ JSON/TOML；由客户端进程环境、macOS Keychain 或 tool 的既有 `api_ke
 
 ---
 
-## 性能 / 压力测试
+## 工程与验证文档
 
-Rust/Python 同机启动与 RSS 原始数据见 [docs/rust-benchmark.md](docs/rust-benchmark.md)。当前 arm64
-Mac 的 Rust idle RSS 中位数为 9,504 KiB，Python 为 66,080 KiB。Linux x86_64、macOS
-x86_64/arm64 与 Windows x86_64 的原生构建和测试已在
-[CI run 32631626392](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/32631626392)
-通过；本机 RSS 数据仍只代表报告所列的 Apple Silicon 测试环境。
+README 只保留用户安装、配置和调用所需内容。实现细节、兼容性矩阵和测试数据统一放在 `docs/`
+与 CI 中：
 
-`tests/` 下两个独立脚本，直接 in-process import `server.py` 调 `image_generate`，不走 stdio MCP（避免子进程开销污染样本）。真实请求需要有效 key，并且只有精确设置 `MICU_RUN_LIVE_TESTS=1` 才会启动；不带 key 用 `--dry-run` 也能验证脚本/导入/校验链路。
+- [Rust / Python 性能基准](docs/rust-benchmark.md)
+- [Rust 兼容性矩阵](docs/rust-compatibility-matrix.md)
+- [安全审计](docs/rust-security-review.md)
+- [Python → Rust 迁移与回滚](docs/migration-from-python.md)
+- [贡献与本地验证](CONTRIBUTING.md)
 
-报告默认落到 `tests/reports/<title>_<ts>.{json,md}`，已被 `.gitignore` 排除。生成的图扔到 `/tmp/micu-bench/<label>/`，不会污染你的 `~/Pictures/micu-out`。
+## Star History
 
-### 性能基线 `tests/perf_bench.py`
-
-串行跑 `gpt-image-2` / `gpt-image-2-openai` 在不同 `size` 下的 `image_generate`，记录单次延迟、actual_size 偏差、保存后字节数。
-
-```bash
-# smoke（默认）：两个 Image2 模型各 1 张；必须显式允许 live/付费请求
-MICU_RUN_LIVE_TESTS=1 python tests/perf_bench.py
-
-# 完整 sweep, 每组重复 3 次
-MICU_RUN_LIVE_TESTS=1 python tests/perf_bench.py --full --repeat 3
-
-# 干跑 (不打 API, 只验证脚本链路)
-python tests/perf_bench.py --dry-run
-```
-
-报告 markdown 表头：`group | n | ok | fail | rate | p50_ms | p95_ms | mean_ms | actual_match`。`actual_match` 是图片 header 读出的实际像素严格等于请求 size 的比例；不要假定后端一定遵守自定义尺寸。
-
-### 并发压力 `tests/stress_concurrent.py`
-
-验证：
-1. 1K 单进程多并发 → 进程内不卡，吞吐近似线性
-2. ≥2K 多进程并发 → 进程内 `asyncio.Semaphore(1)` + 跨进程 `flock` 双层锁串行
-3. CF 524 / 上游 5xx → 重试/fail-fast 策略
-4. `--model` 仅接受 `gpt-image-2` / `gpt-image-2-openai`
-
-```bash
-# in-process 并发 (默认 smoke, image2 1K x 3)
-MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py
-
-# 验证 ≥2K 锁串行
-MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --size 2048x2048 --concurrency 4
-
-# 跨进程模式 (spawn N 个子进程, 模拟多 Claude Code 窗口)
-MICU_RUN_LIVE_TESTS=1 python tests/stress_concurrent.py --mode multiprocess --concurrency 3 --size 2048x2048
-
-```
-
-报告关键派生指标：
-
-| 指标 | 含义 |
-|---|---|
-| `total_wall_ms` | 整批耗时（从 gather 到全部返回） |
-| `serial_estimate_ms` | 所有成功请求 wall_ms 之和（串行下界） |
-| `concurrency_efficiency` | `total_wall_ms / serial_estimate_ms`。≈ 1 → 强串行（锁生效）；≈ 1/N → 强并发；中间 → 部分排队 |
-| `lock_wait_observed` | notes 里出现 “等待跨进程 ≥2K 锁” 的请求数（>2s 才记） |
-
-> 提醒：Image2 真实并发会按米醋后台线路限流计费，跑 `--concurrency` ≥ 3 之前先确认账户额度。dry-run / 401 路径不计费。
-
-### Rust 原生真实 2K/4K 压力矩阵
-
-`tests/contract/test_live_rust_highres_stress.py` 会同时启动 5 个独立 Rust MCP 进程，请求
-2K 横/竖/方图和 4K 横/竖图。测试要求它们共享同一把生产跨进程锁，并逐项验证自动切换
-`gpt-image-2-openai`、`n` 强制为 1、实际像素、stdout 和敏感日志。为避免误消费额度，必须同时
-启用三个 live gate：
-
-```bash
-MICU_RUN_LIVE_TESTS=1 \
-MICU_RUN_LIVE_STRESS=1 \
-MICU_RUN_LIVE_HIGHRES_STRESS=1 \
-MICU_LIVE_HIGHRES_STRESS_REPORT=/tmp/micu-rust-live-highres-stress.json \
-  .venv/bin/python -m pytest -q \
-  tests/contract/test_live_rust_highres_stress.py
-```
-
-2026-08-23 的真实 v0.3.0 结果为 5/5 成功、5 种 requested/actual size 全部严格相等、4 个
-排队进程均返回锁等待 note，总 wall time 360.115 秒。凭据没有写入报告，临时输出在测试结束后删除。
-
-### 离线 contract / 差分测试
-
-先构建 Rust，然后运行相同 MCP STDIO 与本地 mock Micu API 矩阵：
-
-```bash
-cargo build
-MICU_RUN_LIVE_TESTS=0 \
-  .venv/bin/python -m tests.contract.compare_parameter_matrix \
-  --output /tmp/micu-parameter-matrix.json
-MICU_RUN_LIVE_TESTS=0 MICU_RUN_CONTRACT_TESTS=1 \
-  .venv/bin/python -m pytest -q \
-  tests/contract/test_path_refactor_baseline.py \
-  tests/contract/test_python_rust_differential.py \
-  tests/contract/test_latest_protocol.py
-```
-
-冻结的 42 项 size/model/quality/route 参数 nodeid、source hash 和执行结果会先做 before/after；随后
-38 个黑盒场景比较 tools schema、HTTP JSON/multipart、retry 顺序、URL/b64/data URL、
-SSRF、损坏图片、body cap、并发、文件冲突和实际落盘内容。mock 只监听 `127.0.0.1`，不调用
-真实生图 API。安全与兼容细节见：
-
-- [docs/rust-rewrite-design.md](docs/rust-rewrite-design.md)
-- [docs/rust-compatibility-matrix.md](docs/rust-compatibility-matrix.md)
-- [docs/rust-security-review.md](docs/rust-security-review.md)
-- [docs/migration-from-python.md](docs/migration-from-python.md)
+[![Star History Chart](https://api.star-history.com/svg?repos=Subaru486desuwa/micu-image-mcp&type=Date)](https://star-history.com/#Subaru486desuwa/micu-image-mcp&Date)

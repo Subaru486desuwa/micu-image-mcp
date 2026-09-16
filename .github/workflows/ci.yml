@@ -71,6 +71,9 @@ jobs:
           python tests/smoke_local.py
           python tests/perf_bench.py --dry-run --out-dir /tmp/micu-dry-run
 
+      - name: POSIX bootstrap installer syntax
+        run: sh -n scripts/install.sh
+
       - name: Rust formatting
         run: cargo fmt --check
 
@@ -174,6 +177,10 @@ jobs:
           cargo test --locked --test path_matrix windows_root_checks_are_component_aware_and_case_insensitive
           cargo test --locked --test sandbox_paths windows_junction_and_unc_escape_are_rejected
           cargo test --locked --test sandbox_paths windows_unc_share_can_be_the_actual_output_capability_root
+      - name: PowerShell bootstrap installer syntax
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: '[scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null'
       - name: Build release binary
         run: cargo build --locked --release --all-features
       - uses: actions/upload-artifact@v4

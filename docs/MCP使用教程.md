@@ -16,31 +16,40 @@
 
 生成的图片会**自动保存到本地磁盘**，返回结果中包含文件的绝对路径，方便你在 IDE 或文件管理器中打开。
 
-当前仅支持 `gpt-image-2` / `gpt-image-2-openai`。Grok 生图渠道暂时关闭，待服务器支持后再启用。
+当前支持 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
+`gpt-image-2-openai`。Grok 生图渠道暂时关闭，待服务器支持后再启用。
 
 ---
 
-## 二、安装与配置（Cursor）
+## 二、安装与配置
 
 ### 2.1 一键安装（推荐）
 
 ```bash
-git clone https://github.com/Subaru486desuwa/micu-image-mcp.git
-cd micu-image-mcp
-python install.py
+curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.sh | sh
 ```
 
-安装脚本会检查 Python ≥ 3.10、安装依赖、配置 API Key、写入 Claude/Codex 配置，并做一次 MCP 握手验证。
+Windows PowerShell：
 
-非交互安装：
+```powershell
+irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.ps1 | iex
+```
+
+脚本会识别平台、下载最新 GitHub Release 的 Rust binary、校验 `SHA256SUMS`，再调用 binary
+自带的 `install --yes`。运行时不需要 Python 或 Rust toolchain，默认自动写入 Claude/Codex
+配置，并把 binary 复制到稳定的用户数据目录。
+
+macOS / Linux 只配置 Codex：
 
 ```bash
-MICU_API_KEY=sk-你的密钥 \
-MICU_SAVE_DIR=~/Pictures/micu-out \
-python install.py --yes
+curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.sh \
+  | sh -s -- --no-claude
 ```
 
-### 2.2 手动配置 Cursor
+API key 不会由安装器写入客户端配置。macOS 可使用 Keychain；其他平台通过启动 MCP 客户端时的
+进程环境提供 `MICU_API_KEY`。
+
+### 2.2 Cursor 手动配置
 
 在 `~/.cursor/mcp.json` 中添加：
 
@@ -48,10 +57,9 @@ python install.py --yes
 {
   "mcpServers": {
     "micu-image-mcp": {
-      "command": "/path/to/micu-image-mcp/.venv/bin/python",
-      "args": ["/path/to/micu-image-mcp/server.py"],
+      "command": "/absolute/path/to/micu-image-mcp",
+      "args": [],
       "env": {
-        "MICU_API_KEY": "sk-你的Image2分组密钥",
         "MICU_SAVE_DIR": "/home/你的用户名/Pictures/micu-out",
         "MICU_SAVE_DIR_ROOT": "/home/你的用户名/Pictures/micu-out"
       }
@@ -66,14 +74,14 @@ python install.py --yes
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MICU_API_KEY` | 空 | 米醋 **Image2 分组** token，必须能访问 `gpt-image-2` / `gpt-image-2-openai` |
+| `MICU_API_KEY` | 空 | 米醋 Image2 token；不要写入仓库或共享配置 |
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 API 地址 |
-| `MICU_MODEL` | `gpt-image-2` | 默认模型 |
+| `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 Flare，编辑类默认 Sunburst |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同 `MICU_SAVE_DIR` | 安全根目录，所有输出必须在其下 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取系统 shell 代理 |
 
-> **重要**：`MICU_API_KEY` 必须是能访问 `gpt-image-2` / `gpt-image-2-openai` 的 Image2 分组 Key。
+> `MICU_API_KEY` 必须能访问所选 Image2 模型，并应通过进程环境或受保护的系统凭据存储提供。
 
 ---
 
