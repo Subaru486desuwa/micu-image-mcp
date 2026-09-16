@@ -3,8 +3,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 
 import install
+
+
+def test_windows_bootstrap_avoids_runtimeinformation_architecture_probe():
+    script = Path(__file__).resolve().parents[2] / "scripts" / "install.ps1"
+    source = script.read_text(encoding="utf-8")
+
+    assert "RuntimeInformation]::OSArchitecture" not in source
+    assert "PROCESSOR_ARCHITEW6432" in source
+    assert "PROCESSOR_ARCHITECTURE" in source
 
 
 def test_installer_ignores_legacy_grok_environment(monkeypatch, tmp_path):

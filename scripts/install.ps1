@@ -1,3 +1,7 @@
+param(
+    [switch]$PreflightOnly
+)
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -9,9 +13,20 @@ $repo = "Subaru486desuwa/micu-image-mcp"
 $latestBase = "https://github.com/$repo/releases/latest/download"
 $asset = "micu-image-mcp-windows-x86_64.exe"
 
-$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-if ($architecture -ne "X64") {
+$architecture = $env:PROCESSOR_ARCHITEW6432
+if ([string]::IsNullOrWhiteSpace($architecture)) {
+    $architecture = $env:PROCESSOR_ARCHITECTURE
+}
+if ([string]::IsNullOrWhiteSpace($architecture)) {
+    throw "micu-image-mcp installer: unable to determine native Windows architecture"
+}
+if ($architecture -ine "AMD64") {
     throw "micu-image-mcp installer: Windows release binaries currently support x86_64 only (detected $architecture)"
+}
+
+if ($PreflightOnly) {
+    Write-Host "micu-image-mcp installer preflight: Windows x86_64 supported."
+    return
 }
 
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("micu-image-mcp-" + [Guid]::NewGuid().ToString("N"))
