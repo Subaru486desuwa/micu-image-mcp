@@ -46,8 +46,10 @@ curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main
   | sh -s -- --no-claude
 ```
 
-API key 不会由安装器写入客户端配置。macOS 可使用 Keychain；其他平台通过启动 MCP 客户端时的
-进程环境提供 `MICU_API_KEY`。
+API key 不会由安装器写入客户端配置。installer 会优先复用 `MICU_API_KEY` 或已有系统安全凭据；
+首次交互安装缺少 key 时隐藏输入一次，并在 `sk-` 前缀、20–512 字符长度和字符集校验通过后写入
+macOS Keychain、Windows Credential Manager 或 Linux Secret Service。旧客户端配置里若残留
+明文 `MICU_API_KEY`，installer 会先迁移到安全凭据再删除明文项。
 
 ### 2.2 Cursor 手动配置
 
@@ -76,6 +78,8 @@ API key 不会由安装器写入客户端配置。macOS 可使用 Keychain；其
 |------|--------|------|
 | `MICU_API_KEY` | 空 | 米醋 Image2 token；不要写入仓库或共享配置 |
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 API 地址 |
+| `MICU_KEYCHAIN_SERVICE` | `micu-image-mcp` | 系统安全凭据 service；通常无需手动设置 |
+| `MICU_KEYCHAIN_ACCOUNT` | `image2-api-key` | 系统安全凭据 account；通常无需手动设置 |
 | `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 Flare，编辑类默认 Sunburst |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同 `MICU_SAVE_DIR` | 安全根目录，所有输出必须在其下 |

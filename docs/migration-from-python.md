@@ -76,9 +76,10 @@ micu-image-mcp doctor
 micu-image-mcp version
 ```
 
-installer 不把 API key 写入 Claude JSON/Codex TOML。macOS 可使用下文 Keychain；其他平台让
-客户端进程继承 `MICU_API_KEY`，或使用 tool 已有的 `api_key` 参数。base URL 仅允许 HTTPS，
-或 localhost/127.0.0.1/`::1` HTTP。
+installer 不把 API key 写入 Claude JSON/Codex TOML。它优先复用 `MICU_API_KEY`，其次检查
+系统安全凭据存储；交互式首次安装缺少 key 时会隐藏输入提示，格式校验通过后写入 macOS
+Keychain、Windows Credential Manager 或 Linux Secret Service。非交互安装不会阻塞等待输入，
+仍可通过 `MICU_API_KEY` 提供凭据。base URL 仅允许 HTTPS，或 localhost/127.0.0.1/`::1` HTTP。
 
 ## 手动配置
 
@@ -115,9 +116,11 @@ MICU_SAVE_DIR_ROOT = "/absolute/output/path"
 installer 使用 `toml_edit` AST 序列化，并对临时文件执行 parser round-trip 后才原子替换配置。
 单/双引号都不是契约，解析后的 PathBuf 与原值完全一致才是契约。
 
-## macOS Keychain
+## 系统安全凭据存储
 
-原 launcher 保留用于 Python 回滚。Rust binary 可直接读取 Keychain，因此推荐配置稳定 binary：
+Rust binary 默认使用 `micu-image-mcp` / `image2-api-key` 作为系统凭据定位符；macOS 对应
+Keychain、Windows 对应 Credential Manager、Linux 对应 Secret Service。需要兼容旧自定义
+Keychain 项时仍可覆盖 service/account：
 
 ```toml
 [mcp_servers.micu-image]
@@ -131,9 +134,9 @@ MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
 MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 ```
 
-Rust 只在 `MICU_API_KEY` 为空且配置了 service/account 时读取 Keychain；secret 进入
-`SecretString`，不会写日志或客户端配置。旧 launcher 未删除，不设置 `MICU_MCP_BINARY` 时仍可
-显式回滚到 Python reference。
+Rust 只在 `MICU_API_KEY` 为空时读取系统安全凭据；secret 进入 `SecretString`，不会写日志或客户端
+配置。installer 写入前要求 `sk-` 前缀、20–512 字符长度，并限制为 ASCII 字母、数字、`-`、`_`。
+旧 launcher 未删除，不设置 `MICU_MCP_BINARY` 时仍可显式回滚到 Python reference。
 
 ## 相对路径与锁
 

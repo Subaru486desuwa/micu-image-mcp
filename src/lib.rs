@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod config;
+pub mod credentials;
 pub mod domain;
 pub mod fs;
 pub mod http;

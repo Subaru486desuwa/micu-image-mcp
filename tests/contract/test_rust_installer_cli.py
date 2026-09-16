@@ -22,6 +22,38 @@ RUST_BINARY = REPO_ROOT / "target" / "debug" / (
 
 
 @pytest.mark.skipif(not RUST_BINARY.is_file(), reason="cargo build is required")
+def test_rust_installer_rejects_malformed_api_key_before_writing_client_config(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    secret = "not-a-valid-secret-value"
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "MICU_API_KEY": secret,
+        "MICU_SAVE_DIR": str(tmp_path / "images"),
+        "MICU_SAVE_DIR_ROOT": str(tmp_path / "images"),
+        "MICU_RUN_LIVE_TESTS": "0",
+    }
+
+    installed = subprocess.run(
+        [str(RUST_BINARY), "install", "--yes"],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert installed.returncode != 0
+    assert "必须以 sk- 开头" in installed.stderr
+    assert secret not in installed.stdout + installed.stderr
+    assert not (home / ".claude.json").exists()
+    assert not (home / ".codex" / "config.toml").exists()
+
+
+@pytest.mark.skipif(not RUST_BINARY.is_file(), reason="cargo build is required")
 def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Path) -> None:
     home = tmp_path / "home"
     save_dir = tmp_path / "images"
@@ -38,12 +70,12 @@ def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Pat
         "model = 'gpt-test'\n\n[mcp_servers.other]\ncommand = 'other'\n",
         encoding="utf-8",
     )
-    secret = "contract-installer-secret-key"
     env = {
         **os.environ,
         "HOME": str(home),
         "USERPROFILE": str(home),
-        "MICU_API_KEY": secret,
+        "MICU_KEYCHAIN_SERVICE": "micu-image-mcp-contract-test-no-entry",
+        "MICU_KEYCHAIN_ACCOUNT": "no-entry",
         "MICU_SAVE_DIR": str(save_dir),
         "MICU_SAVE_DIR_ROOT": str(save_dir),
         "MICU_RUN_LIVE_TESTS": "0",
@@ -56,7 +88,6 @@ def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Pat
         text=True,
     )
     assert installed.returncode == 0, installed.stderr
-    assert secret not in installed.stdout + installed.stderr
     claude = json.loads(claude_path.read_text(encoding="utf-8"))
     assert claude["theme"] == "dark"
     assert claude["mcpServers"]["other"]["command"] == "other"
@@ -66,7 +97,6 @@ def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Pat
     assert not stable_binary.is_relative_to(REPO_ROOT / "target")
     assert claude["mcpServers"]["micu-image"]["args"] == []
     assert "MICU_API_KEY" not in claude["mcpServers"]["micu-image"]["env"]
-    assert secret not in claude_path.read_text(encoding="utf-8")
     codex = codex_path.read_text(encoding="utf-8")
     assert "model = 'gpt-test'" in codex
     assert "[mcp_servers.other]" in codex
@@ -77,7 +107,6 @@ def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Pat
     assert Path(installed_server["command"]) == stable_binary
     assert installed_server["args"] == []
     assert "MICU_API_KEY" not in installed_server["env"]
-    assert secret not in codex
     if os.name != "nt":
         assert stat.S_IMODE(claude_path.stat().st_mode) == 0o600
         assert stat.S_IMODE(codex_path.stat().st_mode) == 0o600
@@ -91,7 +120,6 @@ def test_rust_installer_and_reset_preserve_unrelated_configuration(tmp_path: Pat
     )
     assert doctor.returncode == 0, doctor.stderr
     assert "doctor: OK" in doctor.stderr
-    assert secret not in doctor.stdout + doctor.stderr
 
     reset = subprocess.run(
         [str(RUST_BINARY), "reset", "--yes"],

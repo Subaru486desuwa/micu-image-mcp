@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, env::VarError, fmt};
 
 use thiserror::Error;
 
+use crate::credentials::{DEFAULT_CREDENTIAL_ACCOUNT, DEFAULT_CREDENTIAL_SERVICE, load_api_key};
+
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct EnvironmentSnapshot {
     values: BTreeMap<String, String>,
@@ -47,11 +49,6 @@ impl EnvironmentSnapshot {
     }
 
     pub fn load_platform_secrets(&mut self) {
-        self.load_macos_keychain_secret();
-    }
-
-    #[cfg(target_os = "macos")]
-    fn load_macos_keychain_secret(&mut self) {
         if self
             .values
             .get("MICU_API_KEY")
@@ -59,45 +56,24 @@ impl EnvironmentSnapshot {
         {
             return;
         }
-        let Some(service) = self
+        let service = self
             .values
             .get("MICU_KEYCHAIN_SERVICE")
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
-        else {
-            return;
-        };
-        let Some(account) = self
+            .unwrap_or(DEFAULT_CREDENTIAL_SERVICE);
+        let account = self
             .values
             .get("MICU_KEYCHAIN_ACCOUNT")
-            .or_else(|| self.values.get("USER"))
-            .or_else(|| self.values.get("USERNAME"))
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
-        else {
-            return;
-        };
-        let output = std::process::Command::new("/usr/bin/security")
-            .args(["find-generic-password", "-a", account, "-s", service, "-w"])
-            .stderr(std::process::Stdio::null())
-            .output();
-        let Ok(output) = output else {
-            return;
-        };
-        if !output.status.success() {
-            return;
-        }
-        let Ok(secret) = String::from_utf8(output.stdout) else {
-            return;
-        };
-        let secret = secret.trim();
-        if !secret.is_empty() {
-            self.values.insert("MICU_API_KEY".into(), secret.into());
+            .unwrap_or(DEFAULT_CREDENTIAL_ACCOUNT);
+        if let Ok(Some(secret)) = load_api_key(service, account)
+            && !secret.trim().is_empty()
+        {
+            self.values.insert("MICU_API_KEY".into(), secret);
         }
     }
-
-    #[cfg(not(target_os = "macos"))]
-    fn load_macos_keychain_secret(&mut self) {}
 }
 
 impl fmt::Debug for EnvironmentSnapshot {

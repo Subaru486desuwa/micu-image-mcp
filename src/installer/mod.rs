@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     fs,
-    io::{BufRead, Write},
+    io::{BufRead, IsTerminal, Write},
     path::{Path, PathBuf},
 };
 
@@ -11,6 +11,10 @@ use url::Url;
 
 use crate::config::{
     AppPaths, Config, ENV_KEYS, EnvironmentSnapshot, PathSource, is_safe_base_url,
+};
+use crate::credentials::{
+    DEFAULT_CREDENTIAL_ACCOUNT, DEFAULT_CREDENTIAL_SERVICE, load_api_key, store_api_key,
+    validate_api_key,
 };
 
 pub mod atomic;
@@ -64,6 +68,7 @@ pub fn install(options: InstallOptions) -> Result<(), InstallError> {
     environment.insert("MICU_BASEURL", base_url.clone());
 
     let paths = AppPaths::resolve(&environment, PathSource::capture()?)?;
+    configure_api_key(&mut environment, &paths, &options)?;
     let selected_source = options.binary_path.as_deref().unwrap_or(&paths.executable);
     let command = if options.dev {
         selected_source
@@ -209,6 +214,161 @@ fn install_environment(
     Ok(environment)
 }
 
+fn configure_api_key(
+    environment: &mut EnvironmentSnapshot,
+    paths: &AppPaths,
+    options: &InstallOptions,
+) -> Result<(), InstallError> {
+    let service = environment
+        .get("MICU_KEYCHAIN_SERVICE")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_CREDENTIAL_SERVICE)
+        .to_owned();
+    let account = environment
+        .get("MICU_KEYCHAIN_ACCOUNT")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_CREDENTIAL_ACCOUNT)
+        .to_owned();
+
+    if let Some(api_key) = environment
+        .get("MICU_API_KEY")
+        .filter(|value| !value.trim().is_empty())
+    {
+        validate_api_key(api_key)?;
+        match store_api_key(&service, &account, api_key) {
+            Ok(()) => {
+                environment.insert("MICU_KEYCHAIN_SERVICE", service);
+                environment.insert("MICU_KEYCHAIN_ACCOUNT", account);
+                write_status(
+                    "检测到 MICU_API_KEY 环境变量，格式校验通过并已同步到系统安全凭据；不会写入客户端配置"
+                        .into(),
+                )?;
+            }
+            Err(error) => write_status(format!(
+                "检测到 MICU_API_KEY 环境变量且格式校验通过，但系统安全凭据写入失败（{error}）；将继续依赖进程环境"
+            ))?,
+        }
+        return Ok(());
+    }
+
+    match load_api_key(&service, &account) {
+        Ok(Some(api_key)) => match validate_api_key(&api_key) {
+            Ok(_) => {
+                environment.insert("MICU_KEYCHAIN_SERVICE", service);
+                environment.insert("MICU_KEYCHAIN_ACCOUNT", account);
+                write_status("已找到系统安全凭据中的 API key，格式校验通过，将直接复用".into())?;
+                return Ok(());
+            }
+            Err(error) if std::io::stdin().is_terminal() => {
+                write_status(format!(
+                    "系统安全凭据中的 API key 格式无效（{error}）；请重新输入以覆盖旧凭据"
+                ))?;
+            }
+            Err(error) => return Err(error.into()),
+        },
+        Ok(None) => {}
+        Err(error) => {
+            write_status(format!(
+                "未能读取系统安全凭据（{error}）；若当前终端可交互，将继续进行首次配置"
+            ))?;
+        }
+    }
+
+    if let Some(api_key) = legacy_client_api_key(paths, options)? {
+        match validate_api_key(&api_key) {
+            Ok(_) => {
+                store_api_key(&service, &account, &api_key)?;
+                environment.insert("MICU_KEYCHAIN_SERVICE", service);
+                environment.insert("MICU_KEYCHAIN_ACCOUNT", account);
+                write_status(
+                    "已从旧客户端 MCP 配置迁移 API key 到系统安全凭据；客户端配置中的明文 key 将被移除"
+                        .into(),
+                )?;
+                return Ok(());
+            }
+            Err(error) if std::io::stdin().is_terminal() => {
+                write_status(format!(
+                    "旧客户端配置中的 API key 格式无效（{error}）；请重新输入以替换旧凭据"
+                ))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    if !std::io::stdin().is_terminal() {
+        write_status(
+            "未检测到 API key，且当前为非交互输入；安装继续，但首次生图前需设置 MICU_API_KEY 或重新交互运行 installer"
+                .into(),
+        )?;
+        return Ok(());
+    }
+
+    for attempt in 1..=3 {
+        let api_key = rpassword::prompt_password("Micu API Key（输入隐藏，格式 sk-...）: ")
+            .map_err(|error| InstallError::CredentialInput(error.to_string()))?;
+        let api_key = api_key.trim();
+        match validate_api_key(api_key) {
+            Ok(_) => {
+                store_api_key(&service, &account, api_key)?;
+                environment.insert("MICU_KEYCHAIN_SERVICE", service);
+                environment.insert("MICU_KEYCHAIN_ACCOUNT", account);
+                write_status("API key 格式校验通过，已写入系统安全凭据存储".into())?;
+                return Ok(());
+            }
+            Err(error) if attempt < 3 => {
+                write_status(format!("API key 格式无效：{error}；请重新输入"))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("three credential attempts always return")
+}
+
+fn legacy_client_api_key(
+    paths: &AppPaths,
+    options: &InstallOptions,
+) -> Result<Option<String>, InstallError> {
+    let mut found = Vec::new();
+    if !options.no_codex && paths.codex_config.is_file() {
+        let text =
+            fs::read_to_string(&paths.codex_config).map_err(|error| InstallError::ConfigIo {
+                action: "读取 Codex 旧配置以迁移 API key",
+                detail: error.to_string(),
+            })?;
+        if let Some(launch) = codex::parse_config_launch(&text)?
+            && let Some(api_key) = launch
+                .env()
+                .get("MICU_API_KEY")
+                .filter(|value| !value.trim().is_empty())
+        {
+            found.push(api_key.clone());
+        }
+    }
+    if !options.no_claude && paths.claude_config.is_file() {
+        let text =
+            fs::read_to_string(&paths.claude_config).map_err(|error| InstallError::ConfigIo {
+                action: "读取 Claude 旧配置以迁移 API key",
+                detail: error.to_string(),
+            })?;
+        if let Some(launch) = claude::parse_config_launch(&text)?
+            && let Some(api_key) = launch
+                .env()
+                .get("MICU_API_KEY")
+                .filter(|value| !value.trim().is_empty())
+        {
+            found.push(api_key.clone());
+        }
+    }
+    found.dedup();
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(found.pop()),
+        _ => Err(InstallError::LegacyCredentialConflict),
+    }
+}
+
 fn verify_launch(
     client: &str,
     launch: &ClientLaunchSpec,
@@ -325,4 +485,86 @@ fn confirm(prompt: &str) -> Result<bool, InstallError> {
 fn write_status(message: String) -> Result<(), InstallError> {
     writeln!(std::io::stderr().lock(), "{message}")
         .map_err(|error| InstallError::StatusIo(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, fs};
+
+    use crate::config::test_paths;
+
+    use super::{InstallError, InstallOptions, legacy_client_api_key};
+
+    fn options() -> InstallOptions {
+        InstallOptions {
+            no_codex: false,
+            no_claude: false,
+            yes: true,
+            base_url: None,
+            save_dir: None,
+            binary_path: None,
+            dev: false,
+        }
+    }
+
+    #[test]
+    fn legacy_client_api_key_is_recovered_without_exposing_it() {
+        let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+        let paths = test_paths(temp.path(), BTreeMap::new());
+        let key = "sk-12345678901234567";
+        fs::create_dir_all(
+            paths
+                .codex_config
+                .parent()
+                .unwrap_or_else(|| panic!("missing codex parent")),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "[mcp_servers.micu-image]\ncommand = 'old'\nargs = []\n\n[mcp_servers.micu-image.env]\nMICU_API_KEY = '{key}'\n"
+            ),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs::write(
+            &paths.claude_config,
+            format!(
+                r#"{{"mcpServers":{{"micu-image":{{"command":"old","args":[],"env":{{"MICU_API_KEY":"{key}"}}}}}}}}"#
+            ),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(
+            legacy_client_api_key(&paths, &options()).unwrap_or_else(|error| panic!("{error}")),
+            Some(key.into())
+        );
+    }
+
+    #[test]
+    fn conflicting_legacy_client_api_keys_are_never_guessed() {
+        let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+        let paths = test_paths(temp.path(), BTreeMap::new());
+        fs::create_dir_all(
+            paths
+                .codex_config
+                .parent()
+                .unwrap_or_else(|| panic!("missing codex parent")),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs::write(
+            &paths.codex_config,
+            "[mcp_servers.micu-image]\ncommand = 'old'\nargs = []\n\n[mcp_servers.micu-image.env]\nMICU_API_KEY = 'sk-11111111111111111'\n",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs::write(
+            &paths.claude_config,
+            r#"{"mcpServers":{"micu-image":{"command":"old","args":[],"env":{"MICU_API_KEY":"sk-22222222222222222"}}}}"#,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+        assert!(matches!(
+            legacy_client_api_key(&paths, &options()),
+            Err(InstallError::LegacyCredentialConflict)
+        ));
+    }
 }

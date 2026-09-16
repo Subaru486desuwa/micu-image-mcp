@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::config::{ConfigError, EnvironmentError, PathError};
+use crate::credentials::{ApiKeyFormatError, CredentialStoreError};
 
 #[derive(Debug, Error)]
 pub enum InstallError {
@@ -10,6 +11,10 @@ pub enum InstallError {
     Config(#[from] ConfigError),
     #[error(transparent)]
     Paths(#[from] PathError),
+    #[error(transparent)]
+    ApiKeyFormat(#[from] ApiKeyFormatError),
+    #[error(transparent)]
+    CredentialStore(#[from] CredentialStoreError),
     #[error("Codex TOML 无法解析: {0}")]
     TomlParse(String),
     #[error("Codex TOML 结构无效: {0}")]
@@ -54,6 +59,12 @@ pub enum InstallError {
     Cancelled,
     #[error("installer 状态输出失败: {0}")]
     StatusIo(String),
+    #[error("读取 API key 失败: {0}")]
+    CredentialInput(String),
+    #[error(
+        "Codex 与 Claude 旧配置中的 MICU_API_KEY 不一致；请通过 MICU_API_KEY 明确指定要迁移的 key"
+    )]
+    LegacyCredentialConflict,
     #[error("doctor 失败: {0}")]
     Doctor(String),
 }

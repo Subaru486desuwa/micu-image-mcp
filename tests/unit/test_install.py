@@ -17,6 +17,14 @@ def test_windows_bootstrap_avoids_runtimeinformation_architecture_probe():
     assert "PROCESSOR_ARCHITECTURE" in source
 
 
+def test_posix_bootstrap_restores_terminal_input_for_first_time_secret_prompt():
+    script = Path(__file__).resolve().parents[2] / "scripts" / "install.sh"
+    source = script.read_text(encoding="utf-8")
+
+    assert 'if [ -t 2 ] && [ -r /dev/tty ]; then' in source
+    assert '"$binary" install --yes "$@" < /dev/tty' in source
+
+
 def test_installer_ignores_legacy_grok_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("MICU_API_KEY", "sk-image2-test")
     monkeypatch.setenv("MICU_GROK_API_KEY", "sk-grok-test")

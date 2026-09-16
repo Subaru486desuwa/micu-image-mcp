@@ -72,7 +72,11 @@ irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/script
 
 一键脚本会识别当前平台，从最新 GitHub Release 下载 Rust binary，使用 Release 中的
 `SHA256SUMS` 校验后调用 binary 自带的 `install --yes`。默认自动写入 Codex 与 Claude 的
-`micu-image` MCP 配置；API key 不会写入配置文件。
+`micu-image` MCP 配置；API key 不会写入配置文件。installer 会先检查 `MICU_API_KEY` 与系统
+安全凭据存储；首次安装且两者都没有时，会在交互式终端中隐藏输入地询问一次 API key。
+只有通过 `sk-` 前缀、20–512 字符长度和 ASCII 字符集校验后才会写入 macOS Keychain、Windows
+Credential Manager 或 Linux Secret Service。之后 MCP 启动时自动读取，不需要重复输入。默认
+endpoint 仍是 `https://www.micuapi.ai`；需要自定义时使用 `--baseurl` 或 `MICU_BASEURL`。
 
 macOS / Linux 需要只配置某个客户端时，可把参数传给内置 installer：
 
@@ -230,6 +234,8 @@ GPT Image 2.5 的 Flare 与 Sunburst 已实测支持 `1024x1024`、`2048x1152` �
 |---|---|---|
 | `MICU_API_KEY` | 空 | 米醋 image2 token |
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 base URL |
+| `MICU_KEYCHAIN_SERVICE` | `micu-image-mcp` | 系统安全凭据 service；兼容旧自定义 Keychain 项 |
+| `MICU_KEYCHAIN_ACCOUNT` | `image2-api-key` | 系统安全凭据 account |
 | `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 Flare，编辑类默认 Sunburst |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同输出目录 | 输出安全根目录 |

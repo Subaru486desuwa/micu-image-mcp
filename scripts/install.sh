@@ -63,4 +63,8 @@ chmod 700 "$binary"
 version="$($binary version)"
 printf 'Verified micu-image-mcp v%s (%s).\n' "$version" "$asset" >&2
 
-"$binary" install --yes "$@"
+if [ -t 2 ] && [ -r /dev/tty ]; then
+    "$binary" install --yes "$@" < /dev/tty
+else
+    "$binary" install --yes "$@"
+fi
