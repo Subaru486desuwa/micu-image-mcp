@@ -252,7 +252,7 @@ mod tests {
         let info = engine
             .server_info()
             .unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(info["version"], "0.3.1");
+        assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(
             info["available_models"],
             serde_json::json!([
