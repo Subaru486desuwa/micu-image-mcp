@@ -37,7 +37,7 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 [issue #11](https://github.com/Subaru486desuwa/micu-image-mcp/issues/11) 的截图显示 Desktop 内的
 Claude Code 已连接但为 `0 tools`，日志明确报目录响应缺少 `ttlMs`、`cacheScope`。
-v0.4.0 已为 2026-07-28 协议补齐两个字段，旧协议继续使用原响应格式；需更新实际启动的 binary
+v0.4.1 已为 2026-07-28 协议补齐两个字段，旧协议继续使用原响应格式；需更新实际启动的 binary
 并重新连接 MCP，旧 Release 不会因修改源码而自动获得修复。
 
 Desktop 内的 Code 模式读取 Claude Code 配置；Desktop 的普通 Chat 模式使用独立的

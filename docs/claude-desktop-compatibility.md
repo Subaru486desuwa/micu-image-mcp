@@ -72,5 +72,5 @@ Desktop 的普通 Chat 模式使用独立文件，当前 installer 不会自动�
 先在同一用户下配置系统安全凭据，再重新启动或重新连接客户端。
 
 源码修复不会自动更新已经安装或已运行的旧 binary。安装修正版后查看实际 command 对应 binary 的
-`version`，重新连接 MCP，再调用 `server_info`。修复包含在 v0.4.0；
+`version`，重新连接 MCP，再调用 `server_info`。修复包含在 v0.4.1；
 旧版本需要更新实际安装的 binary，修改 API key 或重复连接旧 binary 无法修复此目录校验问题。

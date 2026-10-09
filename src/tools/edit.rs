@@ -513,7 +513,8 @@ mod tests {
 
     fn allow_session_outputs(engine: &mut ToolEngine, root: &std::path::Path) {
         let mut paths = (*engine.paths).clone();
-        paths.input_root = Some(root.to_owned());
+        // Production AppPaths canonicalizes roots; macOS /var is a symlink to /private/var.
+        paths.input_root = Some(root.canonicalize().unwrap());
         engine.input_store = crate::fs::input::InputStore::new(&paths);
         engine.paths = Arc::new(paths);
     }
@@ -568,6 +569,7 @@ mod tests {
         let first = engine.image_edit(session_params(serde_json::json!({
             "prompt": "first", "image_path": source, "session_id": "new", "context": {"clothing": "red"},
         }))).await.unwrap();
+        assert_eq!(first["ok"], true, "{first}");
         let id = &first["session"]["id"];
         provider.status.store(400, Ordering::SeqCst);
         let failed = engine
