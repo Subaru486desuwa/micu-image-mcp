@@ -23,7 +23,7 @@ Desktop 无法调用 `server_info`，工具数为零。附图提供了两个更�
 输入/输出 schema 和图片会话保持兼容。`ttlMs=0` 禁用目录缓存，`private` 避免共享目录缓存；
 它们不控制图片会话记录的保存时间。
 
-## 2026-10-09 实测
+## 2026-10-09 协议定位阶段实测
 
 探针运行真实 Claude 客户端，模型响应使用本地 Anthropic-compatible fixture；只触发 `server_info`，
 不会请求真实文字模型或图片接口。失败对照只从服务响应删掉两个缓存字段，保持 binary、工具 catalog、
@@ -74,3 +74,12 @@ Desktop 的普通 Chat 模式使用独立文件，当前 installer 不会自动�
 源码修复不会自动更新已经安装或已运行的旧 binary。安装修正版后查看实际 command 对应 binary 的
 `version`，重新连接 MCP，再调用 `server_info`。修复包含在 v0.4.1；
 旧版本需要更新实际安装的 binary，修改 API key 或重复连接旧 binary 无法修复此目录校验问题。
+
+
+## v0.4.1 发布与 Mac 部署
+
+后续已完成 [v0.4.1 发布](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.1)，issue #11 已关闭。
+Osaka 发布验收为 Rust 90 项、Python 402 passed / 5 skipped；Linux、两种 macOS 架构与 Windows 原生 CI 通过。
+MacBook 已安装正式 ARM64 包，SHA-256 与公开 Release 一致；使用 Desktop 的实际配置完成五工具、
+新旧协议和 server_info 调用，并用 Desktop 自带 CLI 验证本地 binary 可调用。
+Desktop Chat 与 Code 的配置均已补好；窗口生图仍交由用户手动验收。

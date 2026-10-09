@@ -1,7 +1,8 @@
 # 原生 harness 验收与耗时优化
 
 2026-10-09 在 Osaka（Linux ARM64、2 vCPU、约 12 GiB RAM）验证。项目代码与依赖、构建、测试均在 Osaka；
-Mac 只读取已有 provider 配置和查看图片。未切换 CC Switch 的日常 provider，也未发布新版本或替换 Mac 二进制。
+此处先记录 harness 测试阶段：Mac 读取已有 provider 配置和查看图片，未切换 CC Switch 的日常 provider。
+随后 v0.4.1 已发布并部署到 Mac；完整发布验收见 [v0.4.1 调试笔记](v0.4.1-debugging-notes.md)。
 
 ## 原生客户端与场景
 
@@ -90,9 +91,9 @@ MICU_RUN_LIVE_TESTS=0 .venv/bin/python -m tests.contract.benchmark_session_concu
   --repeat 3 --output tests/reports/session-concurrency.json
 ```
 
-当前验证：Debug/Release 构建、格式、严格 Clippy、Rust 全量 90 项通过；Python 401 passed / 5 skipped。
+Harness 阶段验证：Debug/Release 构建、格式、严格 Clippy、Rust 全量 90 项通过；Python 401 passed / 5 skipped。
 五项跳过属于原有在线或冻结参考测试。图片、native traces 与 JSON 报告位于被 Git 忽略的 tests/reports。
-Mac 和 Windows 的新版构建尚未在本轮执行。
+后续发布验收增加了一个 Python 回归，结果为 402 passed / 5 skipped；四个平台原生 CI 与 Release 构建均通过，Mac 正式包已完成本地调用检查。
 
 ## 真实生图抽测
 

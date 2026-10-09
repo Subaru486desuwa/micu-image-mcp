@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-09",
+  "generator": "Osaka micu-image-mcp -> www.micuapi.ai",
+  "assets": [
+    {
+      "asset": "cat-parachute.jpg",
+      "source_file": "gen_1791514465529548540_1.png",
+      "source_sha256": "9cd0583deeb754416e32dce6c7c7f56f54317c1d35e3b6f8752488813dead8f8",
+      "session_alias": "A",
+      "revision": 1,
+      "caller": "native OpenCode + DeepSeek Flash",
+      "presentation": "JPEG compression only; original composition and pixels retained"
+    },
+    {
+      "asset": "cat-wing.jpg",
+      "source_file": "edit_1791514487403143143.png",
+      "source_sha256": "efba25af7f42fd3a1b41cd504ab0d984a999cca84f7d5b2c8fd2f3b60d0aa766",
+      "session_alias": "A",
+      "revision": 2,
+      "caller": "native OpenCode + DeepSeek Flash",
+      "presentation": "JPEG compression only; original composition and pixels retained"
+    },
+    {
+      "asset": "beach-new-topic.jpg",
+      "source_file": "gen_1791514579324420766_1.png",
+      "source_sha256": "9b017e5101586d582722ffd090ecaffea0311fb20c333d5435b8b750af190c9c",
+      "session_alias": "B",
+      "revision": 1,
+      "caller": "native OpenCode + DeepSeek Flash",
+      "presentation": "JPEG compression only; original composition and pixels retained"
+    },
+    {
+      "asset": "cat-sunset.jpg",
+      "source_file": "edit_1791514606904226087.png",
+      "source_sha256": "04ea9c3eba3377c3bae57aba4ac837313c2537599d1c3caaff18c877049b497e",
+      "session_alias": "A",
+      "revision": 3,
+      "caller": "native OpenCode + DeepSeek Flash",
+      "presentation": "JPEG compression only; original composition and pixels retained"
+    },
+    {
+      "asset": "cat-soft-paraglider.jpg",
+      "source_file": "qa_true_paraglider.png",
+      "source_sha256": "5e0ee35eb9ab099950edf5d7f9714c7c66fb3598bb26a10e151bf08e7bb751a8",
+      "session_alias": "A",
+      "revision": 4,
+      "caller": "manual visual QA correction",
+      "presentation": "JPEG compression only; original composition and pixels retained"
+    }
+  ]
+}
