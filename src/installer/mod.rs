@@ -202,6 +202,7 @@ fn install_environment(
         "MICU_ALLOW_FAKE_IP_DOWNLOAD",
         "MICU_KEYCHAIN_ACCOUNT",
         "MICU_KEYCHAIN_SERVICE",
+        "MICU_UPDATE_CHECK",
     ] {
         if let Some(value) = source
             .get(name)

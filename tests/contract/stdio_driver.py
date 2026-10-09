@@ -179,6 +179,7 @@ def isolated_server_env(save_root: Path, overrides: dict[str, str] | None = None
             "MICU_SAVE_DIR_ROOT": str(save_root),
             "MICU_USE_SHELL_PROXY": "0",
             "MICU_RUN_LIVE_TESTS": "0",
+            "MICU_UPDATE_CHECK": "0",
             "PYTHONUNBUFFERED": "1",
         }
     )

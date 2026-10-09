@@ -68,8 +68,11 @@ def normalize_stdio(name: str, value: Any) -> Any:
     value = normalize(value)
     if name == "initialize-2024-11-05.json":
         value["result"]["serverInfo"]["version"] = "<IMPLEMENTATION_VERSION>"
+        # Rust-only update advice is additive; the frozen Python reference has none.
+        value["result"].pop("instructions", None)
     if name == "server-info.json":
         structured = value["result"]["structuredContent"]
+        structured.pop("update", None)
         structured["retry_policy"]["concurrency_2k_4k"] = "<RUNTIME_LOCK_DESCRIPTION>"
         structured["safety_constraints"]["input_image_validation"] = "<IMAGE_VALIDATION_DESCRIPTION>"
         content = value["result"].get("content") or []

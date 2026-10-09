@@ -71,8 +71,8 @@ jobs:
           python tests/smoke_local.py
           python tests/perf_bench.py --dry-run --out-dir /tmp/micu-dry-run
 
-      - name: POSIX bootstrap installer syntax
-        run: sh -n scripts/install.sh
+      - name: POSIX install and update script syntax
+        run: sh -n scripts/install.sh scripts/update.sh
 
       - name: Rust formatting
         run: cargo fmt --check
@@ -138,6 +138,7 @@ jobs:
 
   native-release-build:
     name: ${{ matrix.name }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -168,7 +169,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install Python reference for cross-runtime lock contract
         run: python -m pip install -e .
+      - name: Build release binary
+        run: cargo build --locked --release --all-features
       - name: Test all Rust targets
+        env:
+          MICU_UPDATE_FIXTURE_BINARY: ${{ github.workspace }}/${{ matrix.binary }}
         run: cargo test --locked --all-targets --all-features
       - name: Windows issue #4 native path regressions
         if: runner.os == 'Windows'
@@ -180,9 +185,17 @@ jobs:
       - name: PowerShell bootstrap installer preflight
         if: runner.os == 'Windows'
         shell: powershell
-        run: .\scripts\install.ps1 -PreflightOnly
-      - name: Build release binary
-        run: cargo build --locked --release --all-features
+        run: |
+          .\scripts\install.ps1 -PreflightOnly
+          .\scripts\update.ps1 -PreflightOnly
+      - name: PowerShell 5 updater offline acceptance
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\tests\update_script_windows.ps1
+      - name: PowerShell 7 updater offline acceptance
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\tests\update_script_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

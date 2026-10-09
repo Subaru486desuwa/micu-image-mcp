@@ -14,11 +14,13 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::tools::{ToolEngine, ToolFailure};
+use crate::updates::UpdateChecker;
 
 #[derive(Clone)]
 pub struct MicuServer {
     engine: ToolEngine,
     tools: Arc<Vec<Tool>>,
+    updates: Option<UpdateChecker>,
 }
 
 impl MicuServer {
@@ -26,7 +28,13 @@ impl MicuServer {
         Ok(Self {
             engine,
             tools: Arc::new(load_tool_catalog()?),
+            updates: None,
         })
+    }
+
+    pub fn with_updates(mut self, checker: UpdateChecker) -> Self {
+        self.updates = Some(checker);
+        self
     }
 
     async fn dispatch(
@@ -52,7 +60,17 @@ impl MicuServer {
                     .image_multi_reference(parse_parameters(name, value)?)
                     .await
             }
-            "server_info" => self.engine.server_info(),
+            "server_info" => {
+                let mut info = self.engine.server_info()?;
+                if let Some(checker) = &self.updates {
+                    checker.start();
+                    info["update"] = checker.info();
+                    if let Some(hint) = checker.take_hint() {
+                        info["update"]["hint"] = Value::String(hint);
+                    }
+                }
+                Ok(info)
+            }
             _ => Err(ToolFailure(format!("未知 tool: {name}"))),
         }
     }
@@ -73,8 +91,13 @@ impl ServerHandler for MicuServer {
             .enable_resources_with(resources)
             .enable_tools_with(tools)
             .build();
-        ServerInfo::new(capabilities)
-            .with_server_info(Implementation::new("micu-image", env!("CARGO_PKG_VERSION")))
+        let info = ServerInfo::new(capabilities)
+            .with_server_info(Implementation::new("micu-image", env!("CARGO_PKG_VERSION")));
+        if self.updates.is_some() {
+            info.with_instructions("首次使用图像工具前调用 server_info 查看能力与 update 状态。若 update.hint 存在，向用户转述升级建议及手动命令一次，让用户自行决定；当前版本仍可继续使用。update.status=checking 或 unavailable 时照常使用，不等待更新检测，也不替用户执行更新。")
+        } else {
+            info
+        }
     }
 
     fn list_tools(
@@ -136,7 +159,7 @@ impl ServerHandler for MicuServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let name = request.name.into_owned();
-        let result = match self.dispatch(&name, request.arguments).await {
+        let mut result = match self.dispatch(&name, request.arguments).await {
             Ok(value) => {
                 structured_result(value).map_err(|error| McpError::internal_error(error, None))?
             }
@@ -144,6 +167,16 @@ impl ServerHandler for MicuServer {
                 "Error executing tool {name}: {error}"
             ))]),
         };
+        // If the background check finished after the first server_info, deliver its
+        // one-time advice with the next image response without changing image JSON.
+        if name != "server_info"
+            && let Some(checker) = &self.updates
+        {
+            checker.start();
+            if let Some(hint) = checker.take_hint() {
+                result.content.push(ContentBlock::text(hint));
+            }
+        }
         Ok(result.into())
     }
 }

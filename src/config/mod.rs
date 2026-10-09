@@ -41,6 +41,7 @@ pub const ENV_KEYS: &[&str] = &[
     "MICU_TEST_API_TIMEOUT_MS",
     "MICU_KEYCHAIN_ACCOUNT",
     "MICU_KEYCHAIN_SERVICE",
+    "MICU_UPDATE_CHECK",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

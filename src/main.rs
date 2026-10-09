@@ -7,6 +7,7 @@ use micu_image_mcp::{
     app::AppState,
     installer::{self, InstallOptions, ResetOptions},
     mcp_server::MicuServer,
+    updates::{self, UpdateChecker},
 };
 use rmcp::ServiceExt;
 use tracing_subscriber::EnvFilter;
@@ -58,6 +59,18 @@ enum Command {
     Doctor,
     /// Print the project version.
     Version,
+    /// Check the latest stable release without changing files (24-hour cache).
+    CheckUpdate {
+        /// Bypass the cache or disabled automatic checks for this invocation.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Download and verify the latest stable binary, preserving all configuration.
+    Update {
+        /// Replace this installed binary instead of the currently running executable.
+        #[arg(long)]
+        binary_path: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -108,13 +121,46 @@ async fn run() -> Result<(), Box<dyn Error>> {
         })
         .map_err(Into::into),
         Command::Doctor => installer::doctor().map_err(Into::into),
+        Command::CheckUpdate { force } => {
+            let checker = UpdateChecker::system().map_err(|error| error as Box<dyn Error>)?;
+            match checker.check(force).await {
+                Ok(info) => writeln!(
+                    std::io::stdout().lock(),
+                    "{}",
+                    serde_json::to_string_pretty(&info)?
+                )?,
+                Err(_) => {
+                    writeln!(
+                        std::io::stdout().lock(),
+                        "{}",
+                        serde_json::to_string_pretty(&checker.info())?
+                    )?;
+                    return Err("无法检查 GitHub Release；现有 MCP 可继续使用，稍后用 check-update --force 重试".into());
+                }
+            }
+            if let Some(hint) = checker.take_hint() {
+                writeln!(std::io::stdout().lock(), "{hint}")?;
+            }
+            Ok(())
+        }
+        Command::Update { binary_path } => {
+            let message = updates::update(binary_path)
+                .await
+                .map_err(|error| error as Box<dyn Error>)?;
+            writeln!(std::io::stdout().lock(), "{message}")?;
+            Ok(())
+        }
     }
 }
 
 async fn serve() -> Result<(), Box<dyn Error>> {
     let state = AppState::load()?;
     let engine = state.tool_engine()?;
-    let server = MicuServer::new(engine)?;
+    let mut server = MicuServer::new(engine)?;
+    if let Ok(checker) = UpdateChecker::system() {
+        checker.start();
+        server = server.with_updates(checker);
+    }
     let running = server
         .serve((tokio::io::stdin(), tokio::io::stdout()))
         .await?;

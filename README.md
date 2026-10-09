@@ -136,6 +136,54 @@ curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main
 脚本源码在 [`scripts/install.sh`](scripts/install.sh) 和
 [`scripts/install.ps1`](scripts/install.ps1)，可先审阅再执行。
 
+### 更新提示与手动升级
+
+支持更新检查的版本在 MCP 启动后异步查询 GitHub 最新正式版，最多等待 3 秒，结果缓存
+24 小时（检查失败也缓存）。首次使用图像工具前调用 `server_info`：`update.status` 表示
+`checking`、`up_to_date`、`available`、`unavailable` 或 `disabled`。发现新版时，
+`update.hint` 给出升级建议，`update.update_command` 给出带完整程序路径的终端命令；
+升级建议每次 MCP 连接最多返回一次。客户端会收到先调用 `server_info`、转述建议的使用说明，
+具体是否展示仍由客户端或模型决定。如果后台检查稍晚完成，下一次图像工具响应会附带一次
+文字升级建议，不改变原有图片 JSON。检查中、断网、GitHub 不可用均不阻止生图，也不会自动升级。
+
+手动检查或升级（程序未在 PATH 中时，使用其完整路径）：
+
+```bash
+micu-image-mcp check-update          # 使用 24 小时缓存
+micu-image-mcp check-update --force  # 忽略缓存，立即检查
+micu-image-mcp update               # 下载并校验最新正式版，只替换当前程序
+micu-image-mcp update --binary-path /absolute/path/to/installed/micu-image-mcp
+```
+
+升级会固定同一个 Release 的下载链接，并使用 `SHA256SUMS` 验证；旧程序保存为旁边的
+`micu-image-mcp.previous`（Windows 为 `micu-image-mcp.exe.previous`）。更新不读取或改写
+客户端配置、系统凭据、保存目录、图片和会话。完成后**重新连接 MCP**，再调用 `server_info`
+确认正在运行的版本；已经运行的 MCP 进程会继续使用原版本。需要回滚时，先断开 MCP，
+再把 `.previous` 副本恢复到原程序路径，保留原客户端配置即可。
+
+旧版没有 `update` 命令，也不会自动获得新增的提示能力，可先使用独立更新脚本升级一次：
+
+macOS / Linux：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/update.sh | sh
+```
+
+Windows PowerShell（先断开 MCP，避免程序占用导致替换失败）：
+
+```powershell
+irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/update.ps1 | iex
+```
+
+脚本默认更新安装器的稳定程序路径；自定义路径可下载并运行
+[`update.sh`](scripts/update.sh) 的 `--binary-path` 或 [`update.ps1`](scripts/update.ps1) 的
+`-BinaryPath` 参数。更新脚本不会调用 `install`，因此不会重置已有配置。
+现有预编译包支持 macOS ARM64/x86_64、Linux x86_64、Windows x86_64；Linux ARM64 等
+源码安装环境继续按下方源码构建流程更新。设置 MCP 进程环境变量 `MICU_UPDATE_CHECK=0`
+可关闭自动检查和提醒；手动 `check-update --force` 与 `update` 仍可使用。
+更新缓存位于系统缓存目录的 `micu-image-mcp/update.json`，不含凭据；
+`MICU_UPDATE_CACHE_DIR` 可覆盖缓存根目录。
+
 ### 手动下载 Rust binary
 
 从 [最新 Release](https://github.com/Subaru486desuwa/micu-image-mcp/releases/latest) 下载平台对应文件并
@@ -165,6 +213,8 @@ micu-image-mcp install --yes --dev --binary-path "$PWD/target/release/micu-image
 micu-image-mcp reset --yes
 micu-image-mcp doctor
 micu-image-mcp version
+micu-image-mcp check-update --force
+micu-image-mcp update
 ```
 
 源码开发时可显式配置已编译 binary：

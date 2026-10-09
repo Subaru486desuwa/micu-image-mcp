@@ -26,6 +26,7 @@ const MANAGED_ENV_NAMES: &[&str] = &[
     "MICU_ALLOW_FAKE_IP_DOWNLOAD",
     "MICU_KEYCHAIN_ACCOUNT",
     "MICU_KEYCHAIN_SERVICE",
+    "MICU_UPDATE_CHECK",
 ];
 
 #[derive(Clone, Eq, PartialEq)]
