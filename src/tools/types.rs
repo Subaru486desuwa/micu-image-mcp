@@ -2,6 +2,7 @@ use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 
 use super::SecretArg;
+use super::edit_session::ContextPatch;
 
 fn default_n() -> i64 {
     1
@@ -55,16 +56,23 @@ pub struct GenerateParams {
     pub basename: Option<String>,
     #[serde(default)]
     pub api_key: Option<SecretArg>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub parent_revision: Option<u32>,
+    #[serde(default)]
+    pub context: ContextPatch,
 }
 
 #[derive(Deserialize)]
 pub struct EditParams {
     pub prompt: String,
-    pub image_path: String,
+    #[serde(default)]
+    pub image_path: Option<String>,
     #[serde(default)]
     pub mask_path: Option<String>,
-    #[serde(default = "default_size")]
-    pub size: String,
+    #[serde(default)]
+    pub size: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -75,6 +83,12 @@ pub struct EditParams {
     pub basename: Option<String>,
     #[serde(default)]
     pub api_key: Option<SecretArg>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub parent_revision: Option<u32>,
+    #[serde(default)]
+    pub context: ContextPatch,
 }
 
 #[derive(Deserialize)]

@@ -54,3 +54,25 @@ def test_rust_supports_the_stateless_2026_07_28_lifecycle() -> None:
                 "gpt-image-2.5-sunburst",
             ]
         assert all(line.lstrip().startswith(b"{") for line in session.stdout_lines)
+
+
+@pytest.mark.skipif(not RUST_BINARY.is_file(), reason="cargo build is required")
+def test_modern_catalog_results_have_required_private_cache_fields_and_legacy_results_do_not() -> None:
+    with tempfile.TemporaryDirectory(prefix="micu-modern-cache-") as directory:
+        root = Path(directory).resolve()
+        with StdioSession([str(RUST_BINARY)], isolated_server_env(root), REPO_ROOT) as server:
+            server.request(1, "server/discover", {"_meta": latest_meta()})
+            for request_id, method in enumerate(
+                ("tools/list", "prompts/list", "resources/list", "resources/templates/list"), start=10
+            ):
+                result = server.request(request_id, method, {"_meta": latest_meta()})["result"]
+                assert result["resultType"] == "complete"
+                assert result.get("ttlMs") == 0, (method, result.keys())
+                assert result.get("cacheScope") == "private", (method, result.keys())
+        with StdioSession([str(RUST_BINARY)], isolated_server_env(root), REPO_ROOT) as server:
+            server.initialize()
+            for request_id, method in enumerate(
+                ("tools/list", "prompts/list", "resources/list", "resources/templates/list"), start=10
+            ):
+                result = server.request(request_id, method, {})["result"]
+                assert "ttlMs" not in result and "cacheScope" not in result

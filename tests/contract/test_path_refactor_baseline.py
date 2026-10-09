@@ -22,7 +22,7 @@ def _before(name: str) -> object:
 
 
 def _accept_image25_contract_delta(name: str, expected: object, actual: object) -> None:
-    """Exclude only the public model/quality changes authorized after the path refactor."""
+    """Exclude named model/quality and editing-session changes made after the path refactor."""
     if not isinstance(expected, dict) or not isinstance(actual, dict):
         return
     if name == "tools-list.json":
@@ -32,6 +32,18 @@ def _accept_image25_contract_delta(name: str, expected: object, actual: object) 
             old["description"] = new["description"]
             if new["name"] in {"image_edit", "image_batch_edit", "image_multi_reference"}:
                 old["inputSchema"]["properties"]["quality"] = new["inputSchema"]["properties"]["quality"]
+            if new["name"] == "image_generate":
+                # The live quality observation changes documentation, not the validation schema.
+                old["inputSchema"]["properties"]["quality"]["description"] = new["inputSchema"]["properties"]["quality"]["description"]
+                for field in ("size", "session_id", "parent_revision", "context"):
+                    old["inputSchema"]["properties"][field] = new["inputSchema"]["properties"][field]
+            if new["name"] == "image_edit":
+                # Session calls may omit image_path and inherit size; all other legacy fields
+                # remain covered by the baseline. Rust tests assert the session schema itself.
+                for field in ("image_path", "size", "session_id", "parent_revision", "context"):
+                    old["inputSchema"]["properties"][field] = new["inputSchema"]["properties"][field]
+                assert new["inputSchema"]["required"] == ["prompt"]
+                old["inputSchema"]["required"] = ["prompt"]
     elif name == "validation-calls.json":
         for case in ("generate_grok_disabled", "generate_invalid_quality"):
             expected[case] = actual[case]

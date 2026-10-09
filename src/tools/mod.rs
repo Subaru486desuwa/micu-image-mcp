@@ -1,6 +1,7 @@
 mod batch;
 mod common;
 mod edit;
+mod edit_session;
 mod generate;
 mod multi_reference;
 mod server_info;

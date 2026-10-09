@@ -13,16 +13,17 @@ use crate::{
     },
     fs::output_store::{OutputDirectory, SavedImage},
     http::client::RetryOptions,
-    http::response::error_detail,
+    http::response::{error_detail, sanitize_sensitive},
     providers::GenerateRequest,
 };
 
 use super::{
-    GenerateParams, ToolEngine, ToolFailure,
+    EditParams, GenerateParams, ToolEngine, ToolFailure,
     common::{
         default_basename, push_note_once, python_string_repr, resolve_key, saved_value,
         validation_error,
     },
+    edit_session::{EditSession, MAX_PROMPT_CHARS, Revision, sanitize_context},
 };
 
 impl ToolEngine {
@@ -32,6 +33,24 @@ impl ToolEngine {
         }
         if let Some(error) = validate_n(&Value::from(params.n)) {
             return Ok(validation_error(error));
+        }
+        if params.session_id.is_none()
+            && (params.parent_revision.is_some() || !params.context.is_empty())
+        {
+            return Ok(validation_error(
+                "parent_revision 和 context 需要 session_id；用 new 开始会话",
+            ));
+        }
+        if params.session_id.is_some() && params.n != 1 {
+            return Ok(validation_error(
+                "会话生成仅支持 n=1；多张候选请省略 session_id，再用所选图片开始编辑会话",
+            ));
+        }
+        if params.session_id.as_deref().is_some_and(|id| id != "new") {
+            return self.continue_generation(params).await;
+        }
+        if params.session_id.is_some() && params.prompt.chars().count() > MAX_PROMPT_CHARS {
+            return Ok(validation_error("prompt 最多 32000 个字符"));
         }
         if let Some(error) = model_error(params.model.as_deref(), &self.config.default_model) {
             return Ok(validation_error(error));
@@ -87,6 +106,45 @@ impl ToolEngine {
             notes.insert(0, note);
         }
         let key = resolve_key(self.config.as_ref(), params.api_key)?;
+        let session = match params
+            .session_id
+            .as_deref()
+            .map(|id| EditSession::open(&self.paths.save_root, id, params.parent_revision))
+            .transpose()
+        {
+            Ok(session) => session,
+            Err(error) => return Ok(validation_error(error)),
+        };
+        // Validate caller limits before redaction can shorten base64-like values.
+        if let Some(session) = &session
+            && let Err(error) = session.context(&params.context)
+        {
+            return Ok(validation_error(error));
+        }
+        let instruction = sanitize_sensitive(
+            &params.prompt,
+            &[key.expose_secret(), self.config.api_key.expose_secret()],
+        );
+        let patch = sanitize_context(
+            params.context,
+            &[key.expose_secret(), self.config.api_key.expose_secret()],
+        );
+        let context = match session
+            .as_ref()
+            .map(|session| session.context(&patch))
+            .transpose()
+        {
+            Ok(context) => context.unwrap_or_default(),
+            Err(error) => return Ok(validation_error(error)),
+        };
+        let effective_prompt = match session
+            .as_ref()
+            .map(|session| session.generation_prompt(&instruction, &context))
+            .transpose()
+        {
+            Ok(prompt) => prompt.unwrap_or_else(|| params.prompt.clone()),
+            Err(error) => return Ok(validation_error(error)),
+        };
         let tier = size_tier(&size);
         let mut requested_n = params.n as usize;
         if is_large_tier(tier) && requested_n > 1 {
@@ -115,7 +173,7 @@ impl ToolEngine {
             stream::iter(0..requested_n)
                 .map(|index| {
                     let engine = self.clone();
-                    let prompt = params.prompt.clone();
+                    let prompt = effective_prompt.clone();
                     let size = size.clone();
                     let model = effective_model.clone();
                     let quality = quality.clone();
@@ -147,7 +205,7 @@ impl ToolEngine {
                 sequential.push(
                     self.generate_one(
                         index,
-                        &params.prompt,
+                        &effective_prompt,
                         &size,
                         &effective_model,
                         quality.as_deref(),
@@ -194,7 +252,39 @@ impl ToolEngine {
                     == requested_dimensions
             });
         let mut output = Map::new();
-        output.insert("ok".into(), Value::Bool(!saved.is_empty()));
+        let mut committed = true;
+        if let Some(session) = &session
+            && let Some(image) = saved.first()
+        {
+            let session_value = session.commit(Revision {
+                revision: 0,
+                parent_revision: None,
+                // The first revision has no input image; its generated output starts history.
+                input_path: String::new(),
+                output_path: image["path"]
+                    .as_str()
+                    .ok_or_else(|| ToolFailure("输出路径不是合法 Unicode".into()))?
+                    .to_owned(),
+                instruction,
+                context,
+                model: effective_model.clone(),
+                size: size.clone(),
+                quality: quality.clone(),
+            });
+            match session_value {
+                Ok(value) => {
+                    output.insert("session".into(), value);
+                }
+                Err(error) => {
+                    committed = false;
+                    errors.push(Value::String(format!(
+                        "图片已保存，但会话提交失败：{error}"
+                    )));
+                    output.insert("session".into(), session.unchanged_value());
+                }
+            }
+        }
+        output.insert("ok".into(), Value::Bool(!saved.is_empty() && committed));
         output.insert("model".into(), Value::String(effective_model));
         output.insert("size".into(), Value::String(size));
         output.insert("requested_n".into(), Value::from(requested_n));
@@ -207,6 +297,41 @@ impl ToolEngine {
             Value::Array(notes.into_iter().map(Value::String).collect()),
         );
         Ok(Value::Object(output))
+    }
+
+    async fn continue_generation(&self, params: GenerateParams) -> Result<Value, ToolFailure> {
+        // A continued generation uses the selected image and the same session machinery as edits.
+        // Keep image_generate's list-shaped result so callers can use either tool in one session.
+        let mut result = self
+            .image_edit(EditParams {
+                prompt: params.prompt,
+                image_path: None,
+                mask_path: None,
+                size: params.size,
+                model: params.model,
+                quality: params.quality,
+                save_dir: params.save_dir,
+                basename: params.basename,
+                api_key: params.api_key,
+                session_id: params.session_id,
+                parent_revision: params.parent_revision,
+                context: params.context,
+            })
+            .await?;
+        if let Some(mut saved) = result.get("saved").cloned() {
+            let size_honored = saved.get("actual_size") == result.get("size");
+            saved["index"] = Value::from(1);
+            result["saved"] = Value::Array(vec![saved]);
+            result["requested_n"] = Value::from(1);
+            result["size_honored"] = Value::Bool(size_honored);
+            result["errors"] = Value::Array(result.get("error").cloned().into_iter().collect());
+            if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
+                notes.push(Value::String(
+                    "已有会话通过参考编辑延续上一版本图片与上下文".into(),
+                ));
+            }
+        }
+        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -430,6 +555,9 @@ mod tests {
             save_dir: None,
             basename: Some("test".into()),
             api_key: None,
+            session_id: None,
+            parent_revision: None,
+            context: BTreeMap::new(),
         }
     }
 

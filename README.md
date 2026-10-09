@@ -16,7 +16,7 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 | Tool | 说明 |
 |---|---|
-| `image_generate` | 文生图；默认 Flare，2.5 支持 quality 到 `max` |
+| `image_generate` | 文生图；默认 Flare，当前主站 quality 使用 `low` / `auto` 或留空 |
 | `image_edit` | 单图参考/编辑；默认 Sunburst，走 `/v1/images/edits` |
 | `image_batch_edit` | 多张图逐张同指令处理；默认 Sunburst 串行 |
 | `image_multi_reference` | 2-10 张参考图融合成 1 张新图；默认 Sunburst |
@@ -33,12 +33,27 @@ Grok 生图渠道暂时关闭，待服务器支持后再启用；即使配置旧
 
 ---
 
+## Claude Desktop 兼容性
+
+[issue #11](https://github.com/Subaru486desuwa/micu-image-mcp/issues/11) 的截图显示 Desktop 内的
+Claude Code 已连接但为 `0 tools`，日志明确报目录响应缺少 `ttlMs`、`cacheScope`。
+v0.4.0 已为 2026-07-28 协议补齐两个字段，旧协议继续使用原响应格式；需更新实际启动的 binary
+并重新连接 MCP，旧 Release 不会因修改源码而自动获得修复。
+
+Desktop 内的 Code 模式读取 Claude Code 配置；Desktop 的普通 Chat 模式使用独立的
+`claude_desktop_config.json`，当前安装器不会自动修改这个文件。
+复现、离线真实客户端测试及验证限制见 [docs/claude-desktop-compatibility.md](docs/claude-desktop-compatibility.md)。
+
+---
+
 ## 当前模型范围
 
-四个图像工具都接受上述四个模型。GPT Image 2.5 支持
-`auto / low / medium / high / xhigh / max`；旧模型最高支持 `high`。旧 `gpt-image-2`
-的 2K/4K 请求仍自动切换到 `gpt-image-2-openai`；Flare 与 Sunburst 的 2K/4K
-会保持所选模型并进入高分辨率串行队列。
+四个图像工具在 MCP 参数层接受上述四个模型；实际可用模型以当前凭据的 `/v1/models` 为准。
+2026-10-09 主站的 1K 生成和单图编辑实测：Flare / Sunburst 接受 `low`、`auto` 或省略
+`quality`；`medium / high / xhigh / max` 均返回 HTTP 400（上游明确只支持 low）。
+`gpt-image-2` 接受 `low / medium / high / auto` 或省略。本次凭据未列出 `gpt-image-2-openai`，
+因此旧 `gpt-image-2` 的 2K/4K 自动切换模型前需要确认该凭据支持目标模型；Flare / Sunburst
+的 2K/4K 保持所选模型并进入高分辨率串行队列。参数完整选项仍保留，用于兼容其他线路或后续支持。
 Grok 相关实现继续保持休眠。
 
 ---
@@ -71,8 +86,8 @@ irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/script
 ```
 
 一键脚本会识别当前平台，从最新 GitHub Release 下载 Rust binary，使用 Release 中的
-`SHA256SUMS` 校验后调用 binary 自带的 `install --yes`。默认自动写入 Codex 与 Claude 的
-`micu-image` MCP 配置；API key 不会写入配置文件。installer 会先检查 `MICU_API_KEY` 与系统
+`SHA256SUMS` 校验后调用 binary 自带的 `install --yes`。默认自动写入 Codex 与 Claude Code 的
+`micu-image` MCP 配置（Claude Code 使用 `~/.claude.json`）；API key 不会写入配置文件。installer 会先检查 `MICU_API_KEY` 与系统
 安全凭据存储；首次安装且两者都没有时，会在交互式终端中隐藏输入地询问一次 API key。
 只有通过 `sk-` 前缀、20–512 字符长度和 ASCII 字符集校验后才会写入 macOS Keychain、Windows
 Credential Manager 或 Linux Secret Service。之后 MCP 启动时自动读取，不需要重复输入。默认
@@ -293,10 +308,14 @@ JSON/TOML；由客户端进程环境、macOS Keychain 或 tool 的既有 `api_ke
 
 ## 工程与验证文档
 
+Rust 支持从首次生成开始记忆：`image_generate` 或 `image_edit` 首轮传 `session_id="new"`，后续传返回的会话 ID
+即可沿用上一版本图片和编辑上下文。参见[连续编辑图片](docs/multi-turn-editing.md)。
+
 README 只保留用户安装、配置和调用所需内容。实现细节、兼容性矩阵和测试数据统一放在 `docs/`
 与 CI 中：
 
 - [Rust / Python 性能基准](docs/rust-benchmark.md)
+- [原生 harness 验收与耗时优化](docs/harness-validation.md)
 - [Rust 兼容性矩阵](docs/rust-compatibility-matrix.md)
 - [安全审计](docs/rust-security-review.md)
 - [Python → Rust 迁移与回滚](docs/migration-from-python.md)

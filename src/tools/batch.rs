@@ -150,14 +150,17 @@ impl ToolEngine {
         let result = self
             .image_edit(EditParams {
                 prompt,
-                image_path: input.clone(),
+                image_path: Some(input.clone()),
                 mask_path: None,
-                size,
+                size: Some(size),
                 model: Some(model),
                 quality,
                 save_dir: Some(output_dir),
                 basename: Some(format!("{}_{}", default_basename("batch"), index + 1)),
                 api_key,
+                session_id: None,
+                parent_revision: None,
+                context: Default::default(),
             })
             .await;
         let mut value = match result {

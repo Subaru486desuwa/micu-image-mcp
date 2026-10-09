@@ -3,9 +3,10 @@ use std::sync::Arc;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-        ListToolsResult, PaginatedRequestParams, PromptsCapability, ResourcesCapability,
-        ServerCapabilities, ServerInfo, Tool, ToolsCapability,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        Implementation, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
+        ListToolsResult, PaginatedRequestParams, PromptsCapability, ProtocolVersion,
+        ResourcesCapability, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
     },
     service::{MaybeSendFuture, RequestContext, RoleServer},
 };
@@ -79,11 +80,50 @@ impl ServerHandler for MicuServer {
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, McpError>> + MaybeSendFuture + '_ {
-        std::future::ready(Ok(ListToolsResult::with_all_items(
-            self.tools.as_ref().clone(),
-        )))
+        let mut result = ListToolsResult::with_all_items(self.tools.as_ref().clone());
+        if modern_cache_fields(&context) {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        std::future::ready(Ok(result))
+    }
+
+    fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListPromptsResult, McpError>> + MaybeSendFuture + '_ {
+        let mut result = ListPromptsResult::default();
+        if modern_cache_fields(&context) {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        std::future::ready(Ok(result))
+    }
+
+    fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourcesResult, McpError>> + MaybeSendFuture + '_ {
+        let mut result = ListResourcesResult::default();
+        if modern_cache_fields(&context) {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        std::future::ready(Ok(result))
+    }
+
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourceTemplatesResult, McpError>> + MaybeSendFuture + '_
+    {
+        let mut result = ListResourceTemplatesResult::default();
+        if modern_cache_fields(&context) {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        std::future::ready(Ok(result))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -106,6 +146,12 @@ impl ServerHandler for MicuServer {
         };
         Ok(result.into())
     }
+}
+
+// Modern clients require both cache fields even when caching is disabled. Older
+// handshakes retain the frozen wire shape; no session/image data enters a shared cache.
+fn modern_cache_fields(context: &RequestContext<RoleServer>) -> bool {
+    context.protocol_version() == Some(ProtocolVersion::V_2026_07_28)
 }
 
 fn parse_parameters<T: DeserializeOwned>(name: &str, value: Value) -> Result<T, ToolFailure> {
@@ -144,5 +190,60 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(actual, fixture["result"]["tools"]);
         assert_eq!(catalog.len(), 5);
+    }
+
+    #[test]
+    fn edit_schema_exposes_optional_session_state_without_adding_tools() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("contracts/tool_contract.json")).unwrap();
+        let edit = fixture["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "image_edit")
+            .unwrap();
+        let schema = &edit["inputSchema"];
+        assert_eq!(schema["required"], serde_json::json!(["prompt"]));
+        assert_eq!(
+            schema["properties"]["session_id"]["anyOf"][0]["pattern"],
+            "^(new|edit_[0-9a-f]{32})$"
+        );
+        assert_eq!(
+            schema["properties"]["context"]["additionalProperties"]["anyOf"][1]["type"],
+            "null"
+        );
+        assert_eq!(
+            schema["properties"]["parent_revision"]["anyOf"][0]["minimum"],
+            1
+        );
+    }
+
+    #[test]
+    fn generation_and_edit_share_session_fields_and_keep_legacy_generation_required_fields() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("contracts/tool_contract.json")).unwrap();
+        let tools = fixture["result"]["tools"].as_array().unwrap();
+        let generate = tools
+            .iter()
+            .find(|tool| tool["name"] == "image_generate")
+            .unwrap();
+        let edit = tools
+            .iter()
+            .find(|tool| tool["name"] == "image_edit")
+            .unwrap();
+        assert_eq!(
+            generate["inputSchema"]["required"],
+            serde_json::json!(["prompt"])
+        );
+        for field in ["parent_revision", "context"] {
+            assert_eq!(
+                generate["inputSchema"]["properties"][field],
+                edit["inputSchema"]["properties"][field]
+            );
+        }
+        assert_eq!(
+            generate["inputSchema"]["properties"]["session_id"]["anyOf"],
+            edit["inputSchema"]["properties"]["session_id"]["anyOf"]
+        );
     }
 }

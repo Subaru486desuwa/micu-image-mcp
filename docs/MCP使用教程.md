@@ -36,7 +36,7 @@ irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/script
 ```
 
 脚本会识别平台、下载最新 GitHub Release 的 Rust binary、校验 `SHA256SUMS`，再调用 binary
-自带的 `install --yes`。运行时不需要 Python 或 Rust toolchain，默认自动写入 Claude/Codex
+自带的 `install --yes`。运行时不需要 Python 或 Rust toolchain，默认自动写入 Claude Code/Codex
 配置，并把 binary 复制到稳定的用户数据目录。
 
 macOS / Linux 只配置 Codex：
@@ -71,6 +71,13 @@ macOS Keychain、Windows Credential Manager 或 Linux Secret Service。旧客户
 ```
 
 配置完成后**重启 Cursor**，在 MCP 面板中确认 `micu-image-mcp` 显示为已连接。
+
+### Claude Desktop
+
+Desktop 的 Code 模式使用 `~/.claude.json`；普通 Chat 模式使用独立的配置文件。
+看到“Connected · 0 tools”，且日志报 `ttlMs` / `cacheScope` 缺失时，属于新版 MCP 目录响应校验失败，
+应更新实际启动的 Rust binary 并重新连接，修改 API key 不能修复这个协议错误。
+详见 [Claude Desktop 兼容性与 issue #11](claude-desktop-compatibility.md)。
 
 ### 2.3 环境变量说明
 
@@ -228,8 +235,8 @@ flowchart TD
 | `prompt` | string | ✅ | 图像描述，1–2000 字符 |
 | `size` | string \| null | | `"WxH"` 格式，如 `"1024x1024"`；留空则从 prompt 关键字自动推断 |
 | `n` | int | | 生成张数 1–10；1K 可多张并发，≥2K 强制 n=1 |
-| `model` | string \| null | | `gpt-image-2` 或 `gpt-image-2-openai`；留空按尺寸自动选择 |
-| `quality` | string \| null | | `auto` / `low` / `medium` / `high`；留空使用后端默认值 |
+| `model` | string \| null | | MCP 支持 Flare / Sunburst / Image2 / 旧 OpenAI 模型；默认 Flare。本次主站凭据只列出前三者，实际授权以 `/v1/models` 为准 |
+| `quality` | string \| null | | 当前主站实测：Flare/Sunburst 用 `low` / `auto` / 留空；旧 Image2 也接受 `medium` / `high`。完整选项与线路支持见 `server_info.size_rules` |
 | `save_dir` | string \| null | | 输出目录，必须在 `MICU_SAVE_DIR_ROOT` 下 |
 | `basename` | string \| null | | 文件名前缀，仅允许 `[A-Za-z0-9_\-.]` |
 | `api_key` | string \| null | | 临时覆盖环境变量中的 Key |
