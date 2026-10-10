@@ -246,6 +246,25 @@ fn concurrency_fixture_releases_late_requests_after_observing_five_overlapping_r
 }
 
 #[test]
+fn partial_http_request_lines_are_reported_instead_of_treated_as_unused_connections()
+-> micu_devtools::Result<()> {
+    use std::io::{Read, Write};
+    let api = micu_devtools::mock::MockMicu::new()?;
+    let mut stream = std::net::TcpStream::connect(api.http.url.trim_start_matches("http://"))?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
+    stream.write_all(b"POST /v1/images/generations HTTP/1.1")?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+    assert_eq!(stream.read_to_end(&mut Vec::new())?, 0);
+    let began = std::time::Instant::now();
+    while api.http.errors().is_empty() && began.elapsed() < std::time::Duration::from_secs(1) {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(api.requests().is_empty());
+    assert_eq!(api.http.errors().len(), 1);
+    Ok(())
+}
+
+#[test]
 fn bursty_persistent_http_clients_do_not_starve_fixture_connection_workers()
 -> micu_devtools::Result<()> {
     let api = micu_devtools::mock::MockMicu::new()?;
