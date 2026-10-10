@@ -249,6 +249,12 @@ fn concurrency_fixture_releases_late_requests_after_observing_five_overlapping_r
 fn bursty_persistent_http_clients_do_not_starve_fixture_connection_workers()
 -> micu_devtools::Result<()> {
     let api = micu_devtools::mock::MockMicu::new()?;
+    // Connection pools may open then discard a socket without sending an HTTP request.
+    for _ in 0..3 {
+        drop(std::net::TcpStream::connect(
+            api.http.url.trim_start_matches("http://"),
+        )?);
+    }
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
         .timeout(std::time::Duration::from_secs(5))
@@ -275,6 +281,6 @@ fn bursty_persistent_http_clients_do_not_starve_fixture_connection_workers()
     })?;
     assert!(api.metrics().max_active >= 5);
     assert_eq!(api.requests().len(), 20);
-    assert!(api.http.errors().is_empty());
+    assert!(api.http.errors().is_empty(), "{:?}", api.http.errors());
     Ok(())
 }

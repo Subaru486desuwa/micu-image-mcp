@@ -30,7 +30,7 @@ pub struct Request {
 }
 
 impl Request {
-    fn read(stream: TcpStream) -> Result<Self> {
+    fn read(stream: TcpStream) -> Result<Option<Self>> {
         // macOS/Windows can inherit the nonblocking listener mode on accept.
         // Each owned worker uses blocking I/O with its own bounded idle timeout.
         stream.set_nonblocking(false)?;
@@ -39,18 +39,35 @@ impl Request {
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
         let mut reader = BufReader::new(stream);
         let mut header_bytes = 0;
-        let mut line = || -> Result<String> {
+        let mut line = || -> Result<Option<String>> {
             let mut bytes = Vec::new();
-            Read::take(&mut reader, 64 * 1024 + 1).read_until(b'\n', &mut bytes)?;
+            if let Err(error) = Read::take(&mut reader, 64 * 1024 + 1).read_until(b'\n', &mut bytes)
+            {
+                if header_bytes == 0
+                    && bytes.is_empty()
+                    && error.kind() == std::io::ErrorKind::ConnectionReset
+                {
+                    return Ok(None);
+                }
+                return Err(error.into());
+            }
+            if bytes.is_empty() {
+                return Ok(None);
+            }
             header_bytes += bytes.len();
-            if bytes.is_empty() || header_bytes > 64 * 1024 || !bytes.ends_with(b"\r\n") {
+            if header_bytes > 64 * 1024 || !bytes.ends_with(b"\r\n") {
                 return Err("invalid or oversized fixture HTTP headers".into());
             }
-            Ok(std::str::from_utf8(&bytes)?
-                .trim_end_matches("\r\n")
-                .to_owned())
+            Ok(Some(
+                std::str::from_utf8(&bytes)?
+                    .trim_end_matches("\r\n")
+                    .to_owned(),
+            ))
         };
-        let request_line = line()?;
+        // A client may dispose of an unused pooled connection before sending HTTP.
+        let Some(request_line) = line()? else {
+            return Ok(None);
+        };
         let parts: Vec<_> = request_line.split_whitespace().collect();
         if parts.len() != 3 || !matches!(parts[2], "HTTP/1.0" | "HTTP/1.1") {
             return Err("invalid fixture HTTP request line".into());
@@ -59,7 +76,7 @@ impl Request {
         let path = parts[1].to_owned();
         let mut headers = Vec::new();
         loop {
-            let value = line()?;
+            let value = line()?.ok_or("incomplete fixture HTTP headers")?;
             if value.is_empty() {
                 break;
             }
@@ -117,13 +134,13 @@ impl Request {
             bytes.resize(count, 0);
             reader.read_exact(&mut bytes)?;
         }
-        Ok(Self {
+        Ok(Some(Self {
             method,
             path,
             headers,
             body: Cursor::new(bytes),
             stream: reader.into_inner(),
-        })
+        }))
     }
 
     pub fn method(&self) -> &Method {
@@ -168,7 +185,12 @@ impl Request {
         drop(writer);
         // Half-close sending before dropping the socket, so the peer can consume
         // queued response bytes. Bound both idle time and discarded input while draining.
-        self.stream.shutdown(Shutdown::Write)?;
+        if let Err(error) = self.stream.shutdown(Shutdown::Write) {
+            // A Content-Length response can already be fully consumed and closed by the peer.
+            if error.kind() != std::io::ErrorKind::NotConnected {
+                return Err(error);
+            }
+        }
         self.stream.set_read_timeout(Some(Duration::from_secs(1)))?;
         let _ignored = std::io::copy(
             &mut Read::take(&mut self.stream, 8192),
@@ -325,7 +347,10 @@ impl HttpFixture {
                         let failures = failures.clone();
                         workers.push(thread::spawn(move || {
                             if let Err(error) =
-                                Request::read(stream).and_then(|request| handler(request))
+                                Request::read(stream).and_then(|request| match request {
+                                    Some(request) => handler(request),
+                                    None => Ok(()),
+                                })
                                 && let Ok(mut errors) = failures.lock()
                             {
                                 let message = error
