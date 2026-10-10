@@ -244,3 +244,37 @@ fn concurrency_fixture_releases_late_requests_after_observing_five_overlapping_r
     assert_eq!(api.requests().len(), 6);
     Ok(())
 }
+
+#[test]
+fn bursty_persistent_http_clients_do_not_starve_fixture_connection_workers()
+-> micu_devtools::Result<()> {
+    let api = micu_devtools::mock::MockMicu::new()?;
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let barrier = std::sync::Barrier::new(20);
+    let send = || -> micu_devtools::Result<()> {
+        barrier.wait();
+        let response = client
+            .post(format!("{}/v1/images/generations", api.http.url))
+            .bearer_auth(micu_devtools::mock::FIXTURE_KEY)
+            .json(&serde_json::json!({"prompt":"[scenario:concurrency_five] fixture"}))
+            .send()?;
+        assert!(response.status().is_success());
+        assert_eq!(response.headers()["connection"], "close");
+        assert!(!response.bytes()?.is_empty());
+        Ok(())
+    };
+    std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..20).map(|_| scope.spawn(send)).collect();
+        for job in jobs {
+            job.join().expect("burst request worker")?;
+        }
+        Ok::<_, micu_devtools::Error>(())
+    })?;
+    assert!(api.metrics().max_active >= 5);
+    assert_eq!(api.requests().len(), 20);
+    assert!(api.http.errors().is_empty());
+    Ok(())
+}

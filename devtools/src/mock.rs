@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{Cursor, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
+    net::{TcpListener, TcpStream},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -14,10 +15,161 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use tiny_http::{Header, Request, Response, Server, StatusCode};
+use tiny_http::{Header, Method, Response, StatusCode};
 
 pub const FIXTURE_KEY: &str = "offline-contract-key";
 pub const RESPONSE_LIMIT: usize = 25 * 1024 * 1024;
+
+/// One bounded request per connection; fixture scheduling never depends on idle keep-alive.
+pub struct Request {
+    method: Method,
+    path: String,
+    headers: Vec<Header>,
+    body: Cursor<Vec<u8>>,
+    stream: TcpStream,
+}
+
+impl Request {
+    fn read(stream: TcpStream) -> Result<Self> {
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut header_bytes = 0;
+        let mut line = || -> Result<String> {
+            let mut bytes = Vec::new();
+            Read::take(&mut reader, 64 * 1024 + 1).read_until(b'\n', &mut bytes)?;
+            header_bytes += bytes.len();
+            if bytes.is_empty() || header_bytes > 64 * 1024 || !bytes.ends_with(b"\r\n") {
+                return Err("invalid or oversized fixture HTTP headers".into());
+            }
+            Ok(std::str::from_utf8(&bytes)?
+                .trim_end_matches("\r\n")
+                .to_owned())
+        };
+        let request_line = line()?;
+        let parts: Vec<_> = request_line.split_whitespace().collect();
+        if parts.len() != 3 || !matches!(parts[2], "HTTP/1.0" | "HTTP/1.1") {
+            return Err("invalid fixture HTTP request line".into());
+        }
+        let method = parts[0].parse().map_err(|_| "invalid fixture method")?;
+        let path = parts[1].to_owned();
+        let mut headers = Vec::new();
+        loop {
+            let value = line()?;
+            if value.is_empty() {
+                break;
+            }
+            let (name, value) = value.split_once(':').ok_or("invalid fixture header")?;
+            headers.push(
+                Header::from_bytes(name, value.trim()).map_err(|_| "invalid fixture header")?,
+            );
+        }
+        let value = |name| {
+            headers
+                .iter()
+                .find(|item| item.field.equiv(name))
+                .map(|item| item.value.as_str())
+        };
+        if value("Expect").is_some_and(|value| value.eq_ignore_ascii_case("100-continue")) {
+            (&stream).write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+        }
+        let mut bytes = Vec::new();
+        if value("Transfer-Encoding").is_some_and(|value| value.eq_ignore_ascii_case("chunked")) {
+            loop {
+                let mut size = String::new();
+                Read::take(&mut reader, 1025).read_line(&mut size)?;
+                if size.len() > 1024 || !size.ends_with("\r\n") {
+                    return Err("invalid fixture chunk header".into());
+                }
+                let count = usize::from_str_radix(
+                    size.trim()
+                        .split(';')
+                        .next()
+                        .ok_or("invalid fixture chunk")?,
+                    16,
+                )?;
+                if count == 0 {
+                    break;
+                }
+                if count > RESPONSE_LIMIT.saturating_sub(bytes.len()) {
+                    return Err("fixture request exceeds limit".into());
+                }
+                let start = bytes.len();
+                bytes.resize(start + count, 0);
+                reader.read_exact(&mut bytes[start..])?;
+                let mut ending = [0; 2];
+                reader.read_exact(&mut ending)?;
+                if ending != *b"\r\n" {
+                    return Err("invalid fixture chunk terminator".into());
+                }
+            }
+        } else if let Some(length) = value("Content-Length") {
+            let count: usize = length.parse()?;
+            if count > RESPONSE_LIMIT {
+                return Err("fixture request exceeds limit".into());
+            }
+            bytes.resize(count, 0);
+            reader.read_exact(&mut bytes)?;
+        }
+        Ok(Self {
+            method,
+            path,
+            headers,
+            body: Cursor::new(bytes),
+            stream,
+        })
+    }
+
+    pub fn method(&self) -> &Method {
+        &self.method
+    }
+    pub fn url(&self) -> &str {
+        &self.path
+    }
+    pub fn headers(&self) -> &[Header] {
+        &self.headers
+    }
+    pub fn as_reader(&mut self) -> &mut dyn Read {
+        &mut self.body
+    }
+    pub fn into_writer(self) -> TcpStream {
+        self.stream
+    }
+
+    pub fn respond<R: Read>(mut self, response: Response<R>) -> std::io::Result<()> {
+        let status = response.status_code();
+        write!(
+            self.stream,
+            "HTTP/1.1 {} {}\r\nConnection: close\r\n",
+            status.0,
+            status.default_reason_phrase()
+        )?;
+        for header in response.headers() {
+            write!(self.stream, "{}: {}\r\n", header.field, header.value)?;
+        }
+        let length = response.data_length();
+        if let Some(length) = length {
+            write!(self.stream, "Content-Length: {length}\r\n\r\n")?;
+            std::io::copy(&mut response.into_reader(), &mut self.stream)?;
+        } else {
+            self.stream
+                .write_all(b"Transfer-Encoding: chunked\r\n\r\n")?;
+            let mut reader = response.into_reader();
+            let mut bytes = [0; 8192];
+            loop {
+                let count = reader.read(&mut bytes)?;
+                if count == 0 {
+                    break;
+                }
+                write!(self.stream, "{count:x}\r\n")?;
+                self.stream.write_all(&bytes[..count])?;
+                self.stream.write_all(b"\r\n")?;
+            }
+            self.stream.write_all(b"0\r\n\r\n")?;
+        }
+        self.stream.flush()
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Capture {
@@ -141,29 +293,42 @@ pub struct HttpFixture {
 
 impl HttpFixture {
     pub fn start(handler: impl Fn(Request) -> Result<()> + Send + Sync + 'static) -> Result<Self> {
-        let server = Server::http("127.0.0.1:0")?;
-        let url = format!("http://{}", server.server_addr());
+        let server = TcpListener::bind("127.0.0.1:0")?;
+        server.set_nonblocking(true)?;
+        let url = format!("http://{}", server.local_addr()?);
         let stopped = Arc::new(AtomicBool::new(false));
         let errors = Arc::new(Mutex::new(Vec::new()));
         let stop = stopped.clone();
         let failures = errors.clone();
         let handler = Arc::new(handler);
         let worker = thread::spawn(move || {
-            let mut workers = Vec::new();
+            let mut workers: Vec<JoinHandle<()>> = Vec::new();
             while !stop.load(Ordering::Acquire) {
-                match server.recv_timeout(Duration::from_millis(50)) {
-                    Ok(Some(request)) => {
+                let mut index = 0;
+                while index < workers.len() {
+                    if workers[index].is_finished() {
+                        let _ignored = workers.swap_remove(index).join();
+                    } else {
+                        index += 1;
+                    }
+                }
+                match server.accept() {
+                    Ok((stream, _)) => {
                         let handler = handler.clone();
                         let failures = failures.clone();
                         workers.push(thread::spawn(move || {
-                            if handler(request).is_err()
+                            if Request::read(stream)
+                                .and_then(|request| handler(request))
+                                .is_err()
                                 && let Ok(mut errors) = failures.lock()
                             {
                                 errors.push("HTTP fixture request failed".into());
                             }
                         }));
                     }
-                    Ok(None) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
                     Err(_) => break,
                 }
             }
