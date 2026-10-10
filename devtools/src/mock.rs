@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Cursor, Read, Write},
+    io::{BufRead, BufReader, BufWriter, Cursor, Read, Write},
     net::{TcpListener, TcpStream},
     sync::{
         Arc, Mutex,
@@ -31,6 +31,7 @@ pub struct Request {
 
 impl Request {
     fn read(stream: TcpStream) -> Result<Self> {
+        stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
         let mut reader = BufReader::new(stream.try_clone()?);
@@ -137,23 +138,23 @@ impl Request {
     }
 
     pub fn respond<R: Read>(mut self, response: Response<R>) -> std::io::Result<()> {
+        let mut writer = BufWriter::with_capacity(64 * 1024, &mut self.stream);
         let status = response.status_code();
         write!(
-            self.stream,
+            writer,
             "HTTP/1.1 {} {}\r\nConnection: close\r\n",
             status.0,
             status.default_reason_phrase()
         )?;
         for header in response.headers() {
-            write!(self.stream, "{}: {}\r\n", header.field, header.value)?;
+            write!(writer, "{}: {}\r\n", header.field, header.value)?;
         }
         let length = response.data_length();
         if let Some(length) = length {
-            write!(self.stream, "Content-Length: {length}\r\n\r\n")?;
-            std::io::copy(&mut response.into_reader(), &mut self.stream)?;
+            write!(writer, "Content-Length: {length}\r\n\r\n")?;
+            std::io::copy(&mut response.into_reader(), &mut writer)?;
         } else {
-            self.stream
-                .write_all(b"Transfer-Encoding: chunked\r\n\r\n")?;
+            writer.write_all(b"Transfer-Encoding: chunked\r\n\r\n")?;
             let mut reader = response.into_reader();
             let mut bytes = [0; 8192];
             loop {
@@ -161,13 +162,13 @@ impl Request {
                 if count == 0 {
                     break;
                 }
-                write!(self.stream, "{count:x}\r\n")?;
-                self.stream.write_all(&bytes[..count])?;
-                self.stream.write_all(b"\r\n")?;
+                write!(writer, "{count:x}\r\n")?;
+                writer.write_all(&bytes[..count])?;
+                writer.write_all(b"\r\n")?;
             }
-            self.stream.write_all(b"0\r\n\r\n")?;
+            writer.write_all(b"0\r\n\r\n")?;
         }
-        self.stream.flush()
+        writer.flush()
     }
 }
 
