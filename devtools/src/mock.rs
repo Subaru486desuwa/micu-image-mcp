@@ -553,7 +553,13 @@ impl MockMicu {
             let _active = ActiveRequest(captured.clone());
             if scenario == "concurrency_five" {
                 let began = Instant::now();
-                while captured.lock().map_err(|_| "fixture lock poisoned")?.active < 5
+                // Once the fixture has observed five overlapping requests, release late
+                // arrivals too; requiring five to remain active can stall the final batch.
+                while captured
+                    .lock()
+                    .map_err(|_| "fixture lock poisoned")?
+                    .max_active
+                    < 5
                     && began.elapsed() < Duration::from_secs(3)
                 {
                     thread::sleep(Duration::from_millis(5));

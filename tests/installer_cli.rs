@@ -97,8 +97,9 @@ fn dev_install_is_the_explicit_opt_out_from_a_stable_binary() -> Result<()> {
             codex["mcp_servers"]["micu-image"]["command"]
                 .as_str()
                 .unwrap()
-        ),
-        binary
+        )
+        .canonicalize()?,
+        binary.canonicalize()?
     );
     Ok(())
 }

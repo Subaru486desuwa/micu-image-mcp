@@ -208,3 +208,35 @@ fn live_stress_guards_and_authentication_stop_distinguish_quality_rejections() {
         json!({"status":400})
     ]));
 }
+
+#[test]
+fn concurrency_fixture_releases_late_requests_after_observing_five_overlapping_requests()
+-> micu_devtools::Result<()> {
+    let api = micu_devtools::mock::MockMicu::new()?;
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let send = || -> micu_devtools::Result<()> {
+        let response = client
+            .post(format!("{}/v1/images/generations", api.http.url))
+            .bearer_auth(micu_devtools::mock::FIXTURE_KEY)
+            .json(&serde_json::json!({"prompt":"[scenario:concurrency_five] fixture"}))
+            .send()?;
+        assert!(response.status().is_success());
+        Ok(())
+    };
+    std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..5).map(|_| scope.spawn(send)).collect();
+        for job in jobs {
+            job.join().expect("fixture request worker")?;
+        }
+        Ok::<_, micu_devtools::Error>(())
+    })?;
+    let began = std::time::Instant::now();
+    send()?;
+    assert!(began.elapsed() < std::time::Duration::from_secs(1));
+    assert!(api.metrics().max_active >= 5);
+    assert_eq!(api.requests().len(), 6);
+    Ok(())
+}

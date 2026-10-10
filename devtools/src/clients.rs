@@ -9,8 +9,8 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read},
     path::Path,
-    process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    process::{ChildStdout, Command, Stdio},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -29,18 +29,7 @@ pub fn run_client(mut command: Command, timeout: Duration) -> Result<(bool, f64)
 }
 
 pub fn invoke(command: &mut Command, timeout: Duration) -> Result<(bool, f64, Option<String>)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let output = child.stdout.take().ok_or("client stdout missing")?;
-    let reader = thread::spawn(move || {
+    invoke_with_reader(command, timeout, |output| {
         let mut reader = BufReader::new(output);
         let mut session = None;
         loop {
@@ -68,6 +57,28 @@ pub fn invoke(command: &mut Command, timeout: Duration) -> Result<(bool, f64, Op
             }
         }
         session
+    })
+}
+
+fn invoke_with_reader<T: Send + 'static>(
+    command: &mut Command,
+    timeout: Duration,
+    read: impl FnOnce(ChildStdout) -> T + Send + 'static,
+) -> Result<(bool, f64, T)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let output = child.stdout.take().ok_or("client stdout missing")?;
+    let (send, receive) = mpsc::sync_channel(1);
+    let _reader = thread::spawn(move || {
+        let _ignored = send.send(read(output));
     });
     let began = Instant::now();
     loop {
@@ -77,14 +88,15 @@ pub fn invoke(command: &mut Command, timeout: Duration) -> Result<(bool, f64, Op
             return Ok((
                 status.success(),
                 began.elapsed().as_secs_f64(),
-                reader.join().map_err(|_| "client reader failed")?,
+                receive
+                    .recv_timeout(timeout.saturating_sub(began.elapsed()))
+                    .map_err(|_| "native client output did not close before deadline")?,
             ));
         }
         if began.elapsed() >= timeout {
             terminate_tree(child.id());
             let _ignored = child.kill();
             let _ignored = child.wait();
-            let _ignored = reader.join();
             return Err("native client timed out; output omitted".into());
         }
         thread::sleep(Duration::from_millis(20));
@@ -377,37 +389,38 @@ pub fn redact(mut value: Value, secrets: &[&str]) -> Value {
 fn client_identity(cli: &Path) -> Result<Value> {
     let root = tempfile::tempdir()?;
     let mut command = isolated_command(cli, root.path());
-    let mut child = command
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("client version stdout unavailable")?;
-    let reader = thread::spawn(move || {
+    command.arg("--version");
+    let (success, _, bytes) = invoke_with_reader(&mut command, Duration::from_secs(5), |stdout| {
         let mut bytes = Vec::new();
         let _ignored = stdout.take(4097).read_to_end(&mut bytes);
         bytes
-    });
-    let began = Instant::now();
-    let success = loop {
-        if let Some(status) = child.try_wait()? {
-            break status.success();
-        }
-        if began.elapsed() > Duration::from_secs(5) {
-            let _ignored = child.kill();
-            let _ignored = child.wait();
-            break false;
-        }
-        thread::sleep(Duration::from_millis(20));
-    };
-    let bytes = reader.join().map_err(|_| "client version reader failed")?;
+    })?;
     if !success || bytes.len() > 4096 {
         return Err("could not obtain a bounded native client version".into());
     }
     Ok(
         json!({"executable":provenance(cli),"version":String::from_utf8(bytes).map_err(|_|"invalid native client version")?.trim()}),
     )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn version_probe_cleans_up_descendants_that_keep_stdout_open() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let cli = root.path().join("fixture-client");
+        fs::write(
+            &cli,
+            "#!/bin/sh\nsleep 2 &\nprintf 'fixture-cli\\n'\nexit 0\n",
+        )?;
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o700))?;
+        let began = Instant::now();
+        let identity = client_identity(&cli)?;
+        assert_eq!(identity["version"], "fixture-cli");
+        assert!(began.elapsed() < Duration::from_secs(1));
+        Ok(())
+    }
 }
