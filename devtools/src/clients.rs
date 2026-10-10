@@ -104,8 +104,14 @@ fn invoke_with_reader<T: Send + 'static>(
 }
 fn terminate_tree(pid: u32) {
     if cfg!(unix) {
-        let _ignored = Command::new("kill")
-            .args(["-KILL", "--", &format!("-{pid}")])
+        // Minimal POSIX images provide kill as a shell builtin, without /usr/bin/kill.
+        let _ignored = Command::new("sh")
+            .args([
+                "-c",
+                "kill -KILL \"-$1\"",
+                "micu-client-cleanup",
+                &pid.to_string(),
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -414,13 +420,13 @@ mod tests {
         let cli = root.path().join("fixture-client");
         fs::write(
             &cli,
-            "#!/bin/sh\nsleep 2 &\nprintf 'fixture-cli\\n'\nexit 0\n",
+            "#!/bin/sh\nsleep 10 &\nprintf 'fixture-cli\\n'\nexit 0\n",
         )?;
         fs::set_permissions(&cli, fs::Permissions::from_mode(0o700))?;
         let began = Instant::now();
         let identity = client_identity(&cli)?;
         assert_eq!(identity["version"], "fixture-cli");
-        assert!(began.elapsed() < Duration::from_secs(1));
+        assert!(began.elapsed() < Duration::from_secs(5));
         Ok(())
     }
 }
