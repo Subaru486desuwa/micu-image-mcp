@@ -212,18 +212,22 @@ fn live_stress_guards_and_authentication_stop_distinguish_quality_rejections() {
 #[test]
 fn concurrency_fixture_releases_late_requests_after_observing_five_overlapping_requests()
 -> micu_devtools::Result<()> {
+    use std::io::{Read, Write};
     let api = micu_devtools::mock::MockMicu::new()?;
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
     let send = || -> micu_devtools::Result<()> {
-        let response = client
-            .post(format!("{}/v1/images/generations", api.http.url))
-            .bearer_auth(micu_devtools::mock::FIXTURE_KEY)
-            .json(&serde_json::json!({"prompt":"[scenario:concurrency_five] fixture"}))
-            .send()?;
-        assert!(response.status().is_success());
+        let address = api.http.url.strip_prefix("http://").unwrap();
+        let mut stream = std::net::TcpStream::connect(address)?;
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
+        let body = r#"{"prompt":"[scenario:concurrency_five] fixture"}"#;
+        write!(
+            stream,
+            "POST /v1/images/generations HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            micu_devtools::mock::FIXTURE_KEY,
+            body.len()
+        )?;
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response)?;
+        assert!(response.starts_with(b"HTTP/1.1 200"));
         Ok(())
     };
     std::thread::scope(|scope| {
