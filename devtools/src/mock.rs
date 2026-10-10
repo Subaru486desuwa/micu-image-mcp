@@ -31,6 +31,9 @@ pub struct Request {
 
 impl Request {
     fn read(stream: TcpStream) -> Result<Self> {
+        // macOS/Windows can inherit the nonblocking listener mode on accept.
+        // Each owned worker uses blocking I/O with its own bounded idle timeout.
+        stream.set_nonblocking(false)?;
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
