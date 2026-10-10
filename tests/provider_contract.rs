@@ -199,7 +199,10 @@ fn data_urls_downloads_and_auto_fallback_preserve_security_and_saved_results() -
         )?;
         assert_eq!(result["ok"], true, "scenario {scenario}: {result}");
         let path = Path::new(result["saved"][0]["path"].as_str().unwrap());
-        assert!(path.starts_with(root.path()));
+        assert!(
+            path.canonicalize()?
+                .starts_with(root.path().canonicalize()?)
+        );
         assert!(image::open(path).is_ok());
         assert_eq!(result["size_honored"], scenario == "exact_b64");
         let requests = api.requests();

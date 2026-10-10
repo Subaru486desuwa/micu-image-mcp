@@ -104,6 +104,14 @@ enum Task {
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
+    LiveStress {
+        #[arg(long,default_value_os_t=default_binary())]
+        binary: PathBuf,
+        #[arg(long)]
+        highres: bool,
+        #[arg(long)]
+        output: PathBuf,
+    },
     ReleaseCheck {
         #[arg(long, default_value = ".")]
         root: PathBuf,
@@ -213,6 +221,18 @@ fn run() -> Result<Option<Value>> {
             live::quality(&binary, &models, &sizes, live, limit, output.as_deref())?
         }
         Task::SourceAudit { root } => repository::source_audit(&root)?,
+        Task::LiveStress {
+            binary,
+            highres,
+            output,
+        } => {
+            clients::gated("MICU_RUN_LIVE_TESTS")?;
+            clients::gated("MICU_RUN_LIVE_STRESS")?;
+            if highres {
+                clients::gated("MICU_RUN_LIVE_HIGHRES_STRESS")?;
+            }
+            live::stress(&binary.canonicalize()?, highres, &output)?
+        }
         Task::ReleaseCheck {
             root,
             tag,

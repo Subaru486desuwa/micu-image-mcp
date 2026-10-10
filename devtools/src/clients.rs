@@ -132,7 +132,11 @@ pub fn mcp_config(
 }
 
 pub fn catalog_probe(cli: &Path, binary: &Path, output: &Path) -> Result<Value> {
-    fs::create_dir_all(output)?;
+    if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    fs::create_dir(output)?;
+    let identity = client_identity(cli)?;
     let names: Vec<_> = TOOLS
         .iter()
         .map(|name| format!("mcp__micu__{name}"))
@@ -266,6 +270,10 @@ pub fn catalog_probe(cli: &Path, binary: &Path, output: &Path) -> Result<Value> 
                 "--permission-mode",
                 "dontAsk",
             ]);
+        let argv = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
         let (success, seconds) = run_client(command, Duration::from_secs(45))?;
         let rpc = read_audit(&audit)?;
         let modern = rpc.iter().any(|item| item["method"] == "server/discover");
@@ -300,10 +308,10 @@ pub fn catalog_probe(cli: &Path, binary: &Path, output: &Path) -> Result<Value> 
         {
             return Err("fixed catalog was fetched more than once".into());
         }
-        cases.push(json!({"omit_cache":omit,"client_success":success,"elapsed_seconds":seconds,"modern_protocol":modern,"registered_tools":registered,"server_info_success":info,"rpc":rpc}));
+        cases.push(json!({"omit_cache":omit,"argv":argv,"client_success":success,"elapsed_seconds":seconds,"modern_protocol":modern,"registered_tools":registered,"server_info_success":info,"rpc":rpc}));
     }
     let report =
-        json!({"provenance":provenance(binary),"client":cli,"paid_requests":0,"cases":cases});
+        json!({"provenance":provenance(binary),"client":identity,"paid_requests":0,"cases":cases});
     write_report(&output.join("report.json"), &report)?;
     Ok(report)
 }
@@ -364,4 +372,42 @@ pub fn redact(mut value: Value, secrets: &[&str]) -> Value {
     }
     visit(&mut value, secrets);
     value
+}
+
+fn client_identity(cli: &Path) -> Result<Value> {
+    let root = tempfile::tempdir()?;
+    let mut command = isolated_command(cli, root.path());
+    let mut child = command
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("client version stdout unavailable")?;
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ignored = stdout.take(4097).read_to_end(&mut bytes);
+        bytes
+    });
+    let began = Instant::now();
+    let success = loop {
+        if let Some(status) = child.try_wait()? {
+            break status.success();
+        }
+        if began.elapsed() > Duration::from_secs(5) {
+            let _ignored = child.kill();
+            let _ignored = child.wait();
+            break false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let bytes = reader.join().map_err(|_| "client version reader failed")?;
+    if !success || bytes.len() > 4096 {
+        return Err("could not obtain a bounded native client version".into());
+    }
+    Ok(
+        json!({"executable":provenance(cli),"version":String::from_utf8(bytes).map_err(|_|"invalid native client version")?.trim()}),
+    )
 }

@@ -45,6 +45,7 @@ pub fn isolated_command(binary: &Path, root: &Path) -> Command {
         .env("MICU_KEYCHAIN_ACCOUNT", "no-entry")
         .env("MICU_BASEURL", "http://127.0.0.1:9")
         .env("MICU_USE_SHELL_PROXY", "0")
+        .env("MICU_CONTRACT_TESTING", "1")
         .env("MICU_RUN_LIVE_TESTS", "0")
         .env("MICU_UPDATE_CHECK", "0");
     command

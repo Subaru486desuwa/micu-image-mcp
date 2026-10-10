@@ -15,8 +15,20 @@ pub fn tool_summary(value: &Value) -> Value {
     // A whitelist prevents arbitrary error messages, prompt text and credentials entering reports.
     let session = &value["session"];
     let saved = |item: &Value| json!({"path":item["path"],"size_bytes":item["size_bytes"]});
+    let context = session["context"].to_string().to_lowercase();
+    let previous_subject = ["小猫", "小狗", "滑翔伞", "降落伞", "摩托"]
+        .iter()
+        .any(|word| context.contains(word))
+        || context
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|word| {
+                matches!(
+                    word,
+                    "cat" | "dog" | "motorbike" | "motorcycle" | "parachute" | "paraglider"
+                )
+            });
     json!({"ok":value["ok"],"session":{"id":session["id"],"revision":session["revision"],"parent_revision":session["parent_revision"],
-        "history_length":session["history_length"],"input_path":session["input_path"],"context":session["context"]},
+        "history_length":session["history_length"],"input_path":session["input_path"],"context_contains_previous_subject":previous_subject},
         "saved":if let Some(items)=value["saved"].as_array() {json!(items.iter().map(saved).collect::<Vec<_>>())} else {saved(&value["saved"])},"available_models":value["available_models"]})
 }
 

@@ -308,9 +308,6 @@ fn api_response(
     seed: u8,
     public_url: &str,
 ) -> Result<()> {
-    if scenario == "concurrency_probe" {
-        thread::sleep(Duration::from_millis(200));
-    }
     if scenario == "api_timeout" {
         thread::sleep(Duration::from_millis(250));
     }
@@ -554,6 +551,19 @@ impl MockMicu {
                 (state.requests.len() as u8, attempt)
             };
             let _active = ActiveRequest(captured.clone());
+            if scenario == "concurrency_five" {
+                let began = Instant::now();
+                while captured.lock().map_err(|_| "fixture lock poisoned")?.active < 5
+                    && began.elapsed() < Duration::from_secs(3)
+                {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            if matches!(scenario.as_str(), "concurrency_five" | "concurrency_probe") {
+                thread::sleep(Duration::from_millis(200));
+                // End the measured operation before publishing its response to the client.
+                drop(_active);
+            }
             if !authorization_valid {
                 return respond_json(
                     request,

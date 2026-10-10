@@ -32,12 +32,29 @@ impl PathSource {
     }
 
     pub fn capture() -> Result<Self, PathError> {
-        let home = dirs::home_dir().ok_or(PathError::HomeUnavailable)?;
+        // Native Windows known-folder APIs ignore HOME/LOCALAPPDATA overrides.
+        // Explicit offline contract mode uses the harness's isolated directories.
+        let contract = std::env::var("MICU_CONTRACT_TESTING").as_deref() == Ok("1");
+        let home = if contract {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .or_else(dirs::home_dir)
+        } else {
+            dirs::home_dir()
+        }
+        .ok_or(PathError::HomeUnavailable)?;
         let startup_cwd = std::env::current_dir()
             .map_err(|error| PathError::CurrentDirectory(error.to_string()))?;
         let executable = std::env::current_exe()
             .map_err(|error| PathError::CurrentExecutable(error.to_string()))?;
-        let data_local = dirs::data_local_dir().unwrap_or_else(|| home.join(".local/share"));
+        let data_local = if contract {
+            std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .or_else(dirs::data_local_dir)
+        } else {
+            dirs::data_local_dir()
+        }
+        .unwrap_or_else(|| home.join(".local/share"));
         Ok(Self::new(home, startup_cwd, executable, data_local))
     }
 }

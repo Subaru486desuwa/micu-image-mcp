@@ -94,18 +94,42 @@ pub fn stress(binary: &Path, processes: usize, rounds: usize) -> Result<Value> {
         let mut frames = 0;
         for _ in 0..rounds {
             let outcomes = thread::scope(|scope| {
-                let jobs: Vec<_> = (0..processes).map(|index| {
-                    let root = root.path(); let api = &api;
-                    scope.spawn(move || -> Result<(usize,usize)> {
-                        let destination = root.join(format!("process-{index}")); fs::create_dir_all(&destination)?;
-                        let mut env = api.env(); env.push(("MICU_SAVE_DIR",destination.to_str().ok_or("invalid fixture path")?));
-                        let mut server = Session::new(binary,root,&env)?; server.initialize()?;
-                        let result = server.call("image_generate",json!({"prompt":"[scenario:concurrency_probe] stress","model":model,"size":size,"n":images}))?;
-                        if result["ok"] != true || result["saved"].as_array().map(Vec::len) != Some(images) { return Err("stress generation failed".into()); }
-                        if String::from_utf8_lossy(&server.stderr_bytes()).contains(FIXTURE_KEY) { return Err("stderr leaked fixture credential".into()); }
-                        Ok((images,server.frames))
+                let jobs: Vec<_> = (0..processes)
+                    .map(|index| {
+                        let root = root.path();
+                        let api = &api;
+                        scope.spawn(move || -> Result<(usize, usize)> {
+                            let destination = root.join(format!("process-{index}"));
+                            fs::create_dir_all(&destination)?;
+                            let mut env = api.env();
+                            env.push((
+                                "MICU_SAVE_DIR",
+                                destination.to_str().ok_or("invalid fixture path")?,
+                            ));
+                            let mut server = Session::new(binary, root, &env)?;
+                            server.initialize()?;
+                            let prompt = if images == 5 {
+                                "[scenario:concurrency_five] stress"
+                            } else {
+                                "[scenario:concurrency_probe] stress"
+                            };
+                            let result = server.call(
+                                "image_generate",
+                                json!({"prompt":prompt,"model":model,"size":size,"n":images}),
+                            )?;
+                            if result["ok"] != true
+                                || result["saved"].as_array().map(Vec::len) != Some(images)
+                            {
+                                return Err("stress generation failed".into());
+                            }
+                            if String::from_utf8_lossy(&server.stderr_bytes()).contains(FIXTURE_KEY)
+                            {
+                                return Err("stderr leaked fixture credential".into());
+                            }
+                            Ok((images, server.frames))
+                        })
                     })
-                }).collect();
+                    .collect();
                 jobs.into_iter()
                     .map(|job| {
                         job.join()
@@ -132,7 +156,7 @@ pub fn stress(binary: &Path, processes: usize, rounds: usize) -> Result<Value> {
             || (images == 1 && metrics.max_active != 1)
             || (images == 5 && metrics.max_active < 5)
         {
-            return Err("stress count or concurrency invariant failed".into());
+            return Err(format!("stress invariant failed in {name}: saved={saved}/{expected}, requests={captured}, max_active={}",metrics.max_active).into());
         }
         phases.push(json!({"name":name,"processes":processes,"rounds":rounds,"expected_requests":expected,"captured_requests":captured,
             "saved_images":saved,"stdout_frames":frames,"max_active":metrics.max_active,"wall_seconds":began.elapsed().as_secs_f64()}));

@@ -83,6 +83,19 @@ fn source_audit_rejects_interpreter_files_and_embedded_workflows() {
     fs::write(root.path().join("hidden.py"), "pass\n").unwrap();
     assert!(micu_devtools::repository::source_audit(root.path()).is_err());
     fs::remove_file(root.path().join("hidden.py")).unwrap();
+    for (name, contents) in [
+        ("run.sh", "#!/bin/sh\npython legacy_runner.py\n"),
+        ("probe", "#!/usr/bin/env python3.13\n"),
+        ("run.ps1", "& 'C:/Python313/python.exe' legacy_runner.py\n"),
+    ] {
+        let path = root.path().join(name);
+        fs::write(&path, contents).unwrap();
+        assert!(
+            micu_devtools::repository::source_audit(root.path()).is_err(),
+            "{name}"
+        );
+        fs::remove_file(path).unwrap();
+    }
     fs::create_dir_all(root.path().join(".github/workflows")).unwrap();
     fs::write(
         root.path().join(".github/workflows/test.yml"),
@@ -101,9 +114,16 @@ fn reports_redact_nested_credentials_and_never_keep_arbitrary_tool_errors() {
         &[secret],
     );
     assert!(!report.to_string().contains(secret));
-    let summary =
-        micu_devtools::audit::tool_summary(&json!({"ok":false,"error":secret,"prompt":secret}));
+    let summary = micu_devtools::audit::tool_summary(
+        &json!({"ok":false,"error":secret,"prompt":secret,"session":{"context":{"private":secret,"nested":{"prompt":secret}}}}),
+    );
     assert!(!summary.to_string().contains(secret));
+    assert_eq!(
+        micu_devtools::audit::tool_summary(
+            &json!({"session":{"context":{"location":"vacation by sea"}}})
+        )["session"]["context_contains_previous_subject"],
+        false
+    );
 }
 
 #[test]
@@ -158,4 +178,33 @@ fn rust_audit_proxy_records_a_real_restartable_four_turn_session_without_prompts
     assert!(!raw.contains("private-prompt-must-not-be-in-audit"));
     assert!(!raw.contains(micu_devtools::mock::FIXTURE_KEY));
     Ok(())
+}
+
+#[test]
+fn live_stress_guards_and_authentication_stop_distinguish_quality_rejections() {
+    use serde_json::json;
+    let run = |highres: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_micu-devtools"));
+        command.args(["live-stress", "--output", "unused"]);
+        if highres {
+            command.arg("--highres");
+        }
+        command
+            .env_remove("MICU_RUN_LIVE_TESTS")
+            .env_remove("MICU_RUN_LIVE_STRESS")
+            .env_remove("MICU_RUN_LIVE_HIGHRES_STRESS")
+            .output()
+            .unwrap()
+    };
+    assert!(!run(false).status.success());
+    assert!(!run(true).status.success());
+    assert!(micu_devtools::live::authentication_failed(&[
+        json!({"status":401})
+    ]));
+    assert!(micu_devtools::live::authentication_failed(&[
+        json!({"status":403})
+    ]));
+    assert!(!micu_devtools::live::authentication_failed(&[
+        json!({"status":400})
+    ]));
 }

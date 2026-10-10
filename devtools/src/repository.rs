@@ -45,30 +45,38 @@ pub fn source_audit(root: &Path) -> Result<Value> {
             violations.push(relative.to_owned());
             continue;
         }
-        let executable_text = relative.starts_with(".github/workflows/")
+        let mut prefix = [0_u8; 2];
+        let shebang = fs::File::open(&path)?.read(&mut prefix)? == 2 && prefix == *b"#!";
+        let executable_text = shebang
+            || relative.starts_with(".github/workflows/")
             || matches!(
                 path.extension().and_then(|value| value.to_str()),
-                Some("sh" | "ps1" | "rs")
+                Some("sh" | "ps1" | "rs" | "cmd" | "bat")
             );
         if !executable_text {
             continue;
         }
         let contents = fs::read_to_string(&path)?;
         let suspicious = if path.extension().is_some_and(|extension| extension == "rs") {
-            contents.contains("Command::new(\"python") || contents.contains("var_os(\"PYTHON\")")
+            contents.split("Command::new(").skip(1).any(|tail| {
+                tail.trim_start()
+                    .strip_prefix('"')
+                    .and_then(|quoted| quoted.split('"').next())
+                    .is_some_and(interpreter_token)
+            }) || contents.contains("var_os(\"PYTHON\")")
         } else {
-            [
-                "actions/setup-python",
-                "shell: python",
-                "python -",
-                "python3 ",
-                ".venv/bin/python",
-                "MICU_MCP_PYTHON",
-                "actions/github-script",
-                "script: |",
-            ]
-            .iter()
-            .any(|pattern| contents.contains(pattern))
+            contents
+                .split(|ch: char| !ch.is_ascii_alphanumeric() && !"/._-".contains(ch))
+                .any(interpreter_token)
+                || [
+                    "actions/setup-python",
+                    "shell: python",
+                    "MICU_MCP_PYTHON",
+                    "actions/github-script",
+                    "script: |",
+                ]
+                .iter()
+                .any(|pattern| contents.contains(pattern))
         };
         if suspicious {
             violations.push(relative.to_owned());
@@ -84,6 +92,19 @@ pub fn source_audit(root: &Path) -> Result<Value> {
         .into());
     }
     Ok(json!({"passed":true,"examined_files":examined,"python_files":0,"inline_interpreters":0}))
+}
+
+fn interpreter_token(token: &str) -> bool {
+    let token = token
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let name = token.strip_suffix(".exe").unwrap_or(&token);
+    matches!(name, "node" | "bun" | "deno" | "tsx" | "perl" | "ruby")
+        || name.strip_prefix("python").is_some_and(|suffix| {
+            suffix.is_empty() || suffix.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+        })
 }
 
 pub fn release_check(

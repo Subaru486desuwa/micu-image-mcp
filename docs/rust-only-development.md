@@ -29,7 +29,7 @@ Windows 的 binary 路径带 `.exe`。测试通过 Cargo 指定的真实产品 b
 | SDK 会话并发 benchmark | `cargo xtask session-benchmark`（原生 Rust STDIO 驱动） |
 | Claude catalog probe | `cargo xtask catalog-probe --cli /absolute/path/claude --output target/reports/catalog` |
 | MCP audit proxy | `cargo xtask audit-proxy --binary /absolute/path/server --audit target/reports/rpc.jsonl` |
-| 质量矩阵/付费图片验收 | `cargo xtask quality-matrix`、既有 `examples/live_edit_session.rs` |
+| 质量矩阵/付费图片验收 | `cargo xtask quality-matrix`、`cargo xtask live-stress`、既有 `examples/live_edit_session.rs` |
 | native model harness | `cargo xtask native-harness` |
 | release/branch 编排 | `cargo xtask release-check`、`cargo xtask maintain-branches` |
 
@@ -51,7 +51,7 @@ native harness 支持 `--kind claude|opencode`，四轮独立 CLI 进程通过�
 
 ## 显式在线入口
 
-常规 CI 不运行在线请求。`quality-matrix` 默认只输出计划，不读凭据；四模型、生成/编辑、省略和声明质量共 48 项 1K，也可通过 `--sizes 1024x1024,2048x2048,4096x4096` 规划 144 项。真正执行还需要 `--live`、`MICU_RUN_LIVE_TESTS=1`、`--limit` 和新的 `--output` 目录。stdin JSON 的字段为 `api_key`、可选 `origin`；只允许固定米醋 HTTPS 域名。每项最多四次实际 POST，含重试；报告记录实际请求数与状态，错误不冒充成功。
+常规 CI 不运行在线请求。`quality-matrix` 默认只输出计划，不读凭据；四模型、生成/编辑、省略和声明质量共 48 项 1K，也可通过 `--sizes 1024x1024,2048x2048,3840x2160` 规划 144 项。真正执行还需要 `--live`、`MICU_RUN_LIVE_TESTS=1`、`--limit` 和新的 `--output` 目录。stdin JSON 的字段为 `api_key`、可选 `origin`；只允许固定米醋 HTTPS 域名。每项最多四次实际 POST，含重试；报告记录实际请求数与状态，错误不冒充成功。
 
 native harness 必须 `MICU_RUN_HARNESS_TESTS=1`；stdin JSON 为 `api_key` 和 `origin`，只允许既定米醋/Anthropic/DeepSeek HTTPS origins，最多 32 次模型 POST。图片默认为本地 fixture；`--live-images` 另外要求 `MICU_RUN_LIVE_TESTS=1` 和 stdin 的 `image_api_key`、可选 `image_origin`，最多 16 次图片 POST。`--cli`、`--model`、`--output` 必填。凭据只在 relay 内存中，不写客户端配置、argv 或报告；真实文字模型授权不代替图片授权。
 
@@ -60,3 +60,7 @@ native harness 必须 `MICU_RUN_HARNESS_TESTS=1`；stdin JSON 为 `api_key` 和 
 Osaka 是 Linux ARM64，源代码构建和离线验证在该主机执行。正式资产仍为 Linux x86_64、macOS ARM64/x86_64、Windows x86_64；原生 CI 各自 build/test/STDIO smoke，不使用 Linux 来冒充 macOS/Windows 行为。历史性能、客户体验和 live 报告保留其日期与当时工具来源，不视为本次 fresh 验证。当前证据另存 ignored `target/reports/`。
 
 `source-audit` 扫描 Git 管理与未忽略的源文件，拒绝 Python/TS/JS 文件、Python 包元数据和可执行脚本/工作流中的解释器入口；不扫描 ignored 依赖目录或历史分支。独立无 Python 环境验收使用 `devtools/no-python.Dockerfile`，并明确检查 Python/Python3 不存在。
+
+付费压力入口 `cargo xtask live-stress --binary target/release/micu-image-mcp --output <新目录>` 保留标准单进程 `n=5` 的实际五并发，另需 `MICU_RUN_LIVE_STRESS=1` 和 `MICU_RUN_LIVE_TESTS=1`。`--highres` 还需 `MICU_RUN_LIVE_HIGHRES_STRESS=1`，同步启动五个真实 MCP 进程，分别请求 2048x1152、1152x2048、2048x2048、3840x2160、2160x3840；验证旧模型自动切换、n 强制为 1、像素、唯一文件、统一版本/锁描述及至少四个跨进程锁等待提示。stdin 凭据字段与质量矩阵一致；先 GET /v1/models 检查凭据与所需模型，最多 20 次实际图片 POST，未授权时在读取凭据前退出。本次不运行付费请求。
+
+原生 Windows 的系统目录 API 不读取 HOME/LOCALAPPDATA 覆盖值。显式 `MICU_CONTRACT_TESTING=1` 时，测试驱动指定临时 HOME 和数据目录，安装与共享锁验收不会使用个人配置；正常启动继续使用系统目录 API。测试比较规范化路径，包含 macOS 的 /var → /private/var 和 Windows extended path 前缀。

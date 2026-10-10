@@ -60,23 +60,7 @@ pub fn validate(calls: &[Value]) -> Result<Value> {
     if images[0]["tool"] != "image_generate" || images[2]["tool"] != "image_generate" {
         return Err("new tasks must generate from text".into());
     }
-    let context = sessions[2]["context"].to_string().to_lowercase();
-    if [
-        "小猫",
-        "小狗",
-        "滑翔伞",
-        "降落伞",
-        "摩托",
-        "cat",
-        "dog",
-        "motorbike",
-        "motorcycle",
-        "parachute",
-        "paraglider",
-    ]
-    .iter()
-    .any(|word| context.contains(word))
-    {
+    if sessions[2]["context_contains_previous_subject"] != false {
         return Err("new task inherited another task's constraints".into());
     }
     Ok(
