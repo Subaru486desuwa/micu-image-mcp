@@ -292,11 +292,14 @@ fn retries_errors_and_response_limits_are_verified_at_the_http_boundary() -> Res
             } else {
                 1
             },
-            "scenario {scenario}: {}",
-            result["error"]
-                .as_str()
-                .unwrap_or("no error detail")
-                .replace(micu_devtools::mock::FIXTURE_KEY, "<fixture-key>")
+            "scenario {scenario}: errors={}, notes={}, fixture_errors={:?}",
+            result["errors"]
+                .to_string()
+                .replace(micu_devtools::mock::FIXTURE_KEY, "<fixture-key>"),
+            result["notes"]
+                .to_string()
+                .replace(micu_devtools::mock::FIXTURE_KEY, "<fixture-key>"),
+            api.http.errors()
         );
         assert!(
             !result
