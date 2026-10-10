@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, BufWriter, Cursor, Read, Write},
-    net::{TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -168,7 +168,17 @@ impl Request {
             }
             writer.write_all(b"0\r\n\r\n")?;
         }
-        writer.flush()
+        writer.flush()?;
+        drop(writer);
+        // Half-close sending before dropping the socket, so the peer can consume
+        // queued response bytes. Bound both idle time and discarded input while draining.
+        self.stream.shutdown(Shutdown::Write)?;
+        self.stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+        let _ignored = std::io::copy(
+            &mut Read::take(&mut self.stream, 8192),
+            &mut std::io::sink(),
+        );
+        Ok(())
     }
 }
 
