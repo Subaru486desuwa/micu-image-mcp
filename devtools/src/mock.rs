@@ -34,7 +34,7 @@ impl Request {
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut reader = BufReader::new(stream);
         let mut header_bytes = 0;
         let mut line = || -> Result<String> {
             let mut bytes = Vec::new();
@@ -72,7 +72,9 @@ impl Request {
                 .map(|item| item.value.as_str())
         };
         if value("Expect").is_some_and(|value| value.eq_ignore_ascii_case("100-continue")) {
-            (&stream).write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+            reader
+                .get_mut()
+                .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
         }
         let mut bytes = Vec::new();
         if value("Transfer-Encoding").is_some_and(|value| value.eq_ignore_ascii_case("chunked")) {
@@ -117,7 +119,7 @@ impl Request {
             path,
             headers,
             body: Cursor::new(bytes),
-            stream,
+            stream: reader.into_inner(),
         })
     }
 
@@ -155,18 +157,9 @@ impl Request {
             std::io::copy(&mut response.into_reader(), &mut writer)?;
         } else {
             writer.write_all(b"Transfer-Encoding: chunked\r\n\r\n")?;
-            let mut reader = response.into_reader();
-            let mut bytes = [0; 8192];
-            loop {
-                let count = reader.read(&mut bytes)?;
-                if count == 0 {
-                    break;
-                }
-                write!(writer, "{count:x}\r\n")?;
-                writer.write_all(&bytes[..count])?;
-                writer.write_all(b"\r\n")?;
-            }
-            writer.write_all(b"0\r\n\r\n")?;
+            let mut encoder = chunked_transfer::Encoder::new(&mut writer);
+            std::io::copy(&mut response.into_reader(), &mut encoder)?;
+            encoder.flush()?;
         }
         writer.flush()?;
         drop(writer);
@@ -328,12 +321,17 @@ impl HttpFixture {
                         let handler = handler.clone();
                         let failures = failures.clone();
                         workers.push(thread::spawn(move || {
-                            if Request::read(stream)
-                                .and_then(|request| handler(request))
-                                .is_err()
+                            if let Err(error) =
+                                Request::read(stream).and_then(|request| handler(request))
                                 && let Ok(mut errors) = failures.lock()
                             {
-                                errors.push("HTTP fixture request failed".into());
+                                let message = error
+                                    .downcast_ref::<std::io::Error>()
+                                    .map(|error| {
+                                        format!("HTTP fixture I/O failed: {:?}", error.kind())
+                                    })
+                                    .unwrap_or_else(|| "HTTP fixture request failed".into());
+                                errors.push(message);
                             }
                         }));
                     }

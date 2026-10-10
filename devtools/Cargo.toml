@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 base64 = "0.23.1"
+chunked_transfer = "1.5.0"
 clap = { version = "4.6.6", features = ["derive"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }

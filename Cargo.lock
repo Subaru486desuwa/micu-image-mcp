@@ -1481,6 +1481,7 @@ name = "micu-devtools"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "chunked_transfer",
  "clap",
  "image",
  "reqwest",

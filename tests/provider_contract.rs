@@ -285,6 +285,21 @@ fn retries_errors_and_response_limits_are_verified_at_the_http_boundary() -> Res
             json!({"prompt":format!("[scenario:{scenario}] boundary"),"size":size,"model":model}),
         )?;
         assert_eq!(result["ok"], success, "scenario {scenario}: {result}");
+        if matches!(scenario, "content_length_too_large" | "stream_too_large") {
+            assert!(
+                result["errors"][0]
+                    .as_str()
+                    .is_some_and(|error| error.contains("HTTP 413")),
+                "scenario {scenario}: response must be rejected by the size limit; errors={}, notes={}, fixture_errors={:?}",
+                result["errors"]
+                    .to_string()
+                    .replace(micu_devtools::mock::FIXTURE_KEY, "<fixture-key>"),
+                result["notes"]
+                    .to_string()
+                    .replace(micu_devtools::mock::FIXTURE_KEY, "<fixture-key>"),
+                api.http.errors()
+            );
+        }
         assert_eq!(
             api.requests().len(),
             if success || matches!(scenario, "invalid_json" | "no_image") {
