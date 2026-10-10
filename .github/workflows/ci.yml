@@ -9,25 +9,11 @@ permissions:
   contents: read
   checks: write
 
-jobs:
-  python-compat:
-    name: Python ${{ matrix.python-version }} reference
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-      - run: python -m pip install -e '.[test]'
-      - env:
-          MICU_RUN_LIVE_TESTS: "0"
-          MICU_RUN_CONTRACT_TESTS: "0"
-        run: python -m pytest -q
+env:
+  MICU_RUN_LIVE_TESTS: "0"
+  MICU_RUN_HARNESS_TESTS: "0"
 
+jobs:
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest
@@ -35,90 +21,32 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked --all-targets --all-features
+      - run: cargo check --locked --workspace --all-targets --all-features
 
   quality:
-    name: Contracts, lint, tests, audit
+    name: Rust contracts, lint, tests, audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install Python reference and tests
-        run: python -m pip install -e '.[test]'
-
-      - name: Python reference tests
-        env:
-          MICU_RUN_LIVE_TESTS: "0"
-        run: python -m pytest -q
-
-      - name: Frozen 42-case parameter matrix before/after
-        env:
-          MICU_RUN_LIVE_TESTS: "0"
-        run: python -m tests.contract.compare_parameter_matrix --output /tmp/parameter-matrix.json
-
-      - name: Python smoke and offline dry-run
-        env:
-          MICU_RUN_LIVE_TESTS: "0"
-        run: |
-          python tests/smoke_local.py
-          python tests/perf_bench.py --dry-run --out-dir /tmp/micu-dry-run
-
-      - name: POSIX bootstrap installer syntax
-        run: sh -n scripts/install.sh
-
-      - name: Rust formatting
-        run: cargo fmt --check
-
-      - name: Rust lint
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
-      - name: Rust tests
-        run: cargo test --locked --all-targets --all-features
-
-      - name: Build Rust debug server for black-box contracts
-        run: cargo build --locked
-
-      - name: Python and Rust STDIO smoke
-        env:
-          MICU_RUN_LIVE_TESTS: "0"
-        run: python tests/smoke_local.py --proto --server-command './target/debug/micu-image-mcp'
-
-      - name: Full Python/Rust differential contract
-        env:
-          MICU_RUN_LIVE_TESTS: "0"
-          MICU_RUN_CONTRACT_TESTS: "1"
-        run: >-
-          python -m pytest -q
-          tests/contract/test_python_rust_differential.py
-          tests/contract/test_latest_protocol.py
-          tests/contract/test_rust_installer_cli.py
-
-      - name: Rust STDIO multiprocess stress
-        env:
-          MICU_RUN_LIVE_TESTS: "0"
-        run: >-
-          python -m tests.contract.stress_rust_stdio
-          --rust-command ./target/debug/micu-image-mcp
-          --processes 4
-          --rounds 1
-          --output /tmp/micu-rust-stress.json
-
+      - name: POSIX bootstrap syntax
+        run: sh -n scripts/install.sh scripts/run-mcp-macos-keychain.sh
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Build servers before black-box acceptance
+        run: cargo build --locked --workspace
+      - run: cargo xtask source-audit
+      - run: cargo test --locked --workspace --all-targets --all-features
+      - run: cargo xtask smoke
+      - run: cargo xtask stress --processes 4 --rounds 1 --output target/reports/stdio-stress.json
+      - run: cargo xtask release-check
       - name: Production source has no panic shortcuts
         run: >-
-          cargo clippy --locked --lib --bins --all-features --
-          -D warnings
-          -D clippy::unwrap_used
-          -D clippy::expect_used
-          -D clippy::panic
-
+          cargo clippy --locked --workspace --lib --bins --all-features --
+          -D warnings -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
       - name: No committed generated output or likely real API key
         shell: bash
         run: |
@@ -130,14 +58,17 @@ jobs:
             echo 'possible API key is committed' >&2
             exit 1
           fi
-
-      - name: Cargo audit
-        uses: rustsec/audit-check@v2
+      - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-offline-reports
+          path: target/reports/
 
   native-release-build:
     name: ${{ matrix.name }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -161,28 +92,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install Python reference for cross-runtime lock contract
-        run: python -m pip install -e .
+      - run: cargo build --locked --release --all-features
+      - run: cargo build --locked --workspace
       - name: Test all Rust targets
-        run: cargo test --locked --all-targets --all-features
-      - name: Windows issue #4 native path regressions
+        run: cargo test --locked --workspace --all-targets --all-features
+      - name: Release binary STDIO smoke
+        run: cargo xtask smoke --binary ${{ matrix.binary }}
+      - name: Windows issue #4 native paths
         if: runner.os == 'Windows'
         run: |
           cargo test --locked --test config_roundtrip codex_config_windows_backslash_regression_issue_4
           cargo test --locked --test path_matrix windows_root_checks_are_component_aware_and_case_insensitive
           cargo test --locked --test sandbox_paths windows_junction_and_unc_escape_are_rejected
           cargo test --locked --test sandbox_paths windows_unc_share_can_be_the_actual_output_capability_root
-      - name: PowerShell bootstrap installer preflight
+      - name: PowerShell bootstrap preflight
         if: runner.os == 'Windows'
         shell: powershell
-        run: .\scripts\install.ps1 -PreflightOnly
-      - name: Build release binary
-        run: cargo build --locked --release --all-features
+        run: |
+          .\scripts\install.ps1 -PreflightOnly
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

@@ -1,32 +1,11 @@
 # Contributing
 
-## Mainline and legacy runtimes
+`main` is the only maintained Rust implementation. Keep product code, tests and engineering tools in Rust; retain necessary Shell/PowerShell platform bootstrap scripts. Main must contain no Python runtime, packaging, interpreter-driven tests or inline Python/JavaScript workflows. Static historical fixtures may retain their original names.
 
-`main` is the Rust mainline. Send new functionality, fixes to the supported runtime,
-and release changes to `main`. Do not recreate a long-lived `rust-port` branch.
+Preserve the five MCP tools and public schemas, persistent sessions, client configuration and credential/path/image/response limits. Never print or persist API credentials. Offline acceptance uses isolated child processes and local HTTP fixtures; paid image or model validation requires explicit authorization and the corresponding opt-in switches.
 
-`ts-port` and `python-reference` preserve the legacy TypeScript and Python versions.
-Keep those rollback/reference branches separate from the Rust release train. Legacy
-compatibility fixes may be reviewed during the transition; do not merge a whole old
-runtime implementation into `main` merely to synchronize it. The retired Rust port
-has a documented history-only archival merge; its old implementation is not adopted.
+Run formatting, workspace Clippy, build and the complete Rust tests as documented in [Rust-only development](docs/rust-only-development.md). Black-box tests must execute the actual Cargo-built server; missing binaries are failures, not skips. Validate OS-specific behavior on native runners.
 
-Temporary feature branches are welcome. Same-repository `codex/*` branches merged
-into `main` are removed only when their exact tip is retained in main's ancestry and
-they have no newer commits, protection rules, or other open PRs depending on them.
-After squash/rebase, an original tip that is not an ancestor stays for manual review.
-Other feature branches should be removed after merge by their maintainer.
+Only release the root Rust package from main. Version tags must match Cargo.toml and docs/releases/<tag>.md. Assets remain the four native binaries and SHA256SUMS. Do not publish legacy packages or delete historical tags/releases. Manual release workflow runs are build-only.
 
-## Releases
-
-Only release the root Rust package from commits on `main`. A version tag must match
-`Cargo.toml`, and its notes must exist at `docs/releases/<tag>.md`. Release attachments
-are the four supported native Rust binaries and `SHA256SUMS`; do not attach legacy
-Python or TypeScript packages. Manual workflow runs on `main` are build-only.
-
-Do not delete historical releases or tags as part of the runtime transition. Keep
-Python differential and lock compatibility tests until equivalent standalone Rust
-coverage and legacy rollback preservation have been reviewed.
-
-See [the branch and release policy](docs/branch-release-policy.md) for the exact
-migration checkpoints, phased removal plan, and rollback commands.
+The Python reference remains separate. Both exact TS histories are archived in main's ancestry before removing ts-port refs; do not restore TS implementation into the current source tree. See [branch policy](docs/branch-release-policy.md) for recovery commands. Temporary codex/* branches are removed only after exact tip retention, unchanged refs and checks for protection/open PRs. Squashed/rebased tips remain until their original history is preserved.

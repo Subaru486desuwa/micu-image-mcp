@@ -1,5 +1,7 @@
 # Rust 重写基准
 
+本文记录 2026-09 的历史测量，保留当时 Python 工具命令供追溯。当前 Rust 工具使用 `cargo xtask runtime-benchmark`，见 [Rust-only 开发](rust-only-development.md)。
+
 测试时间：2026-08-23 16:36 +08:00
 
 基线仓库：`578b32ace77bbc732462b4d6483f2259969668ef` + 本次迁移工作树

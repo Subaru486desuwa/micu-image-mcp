@@ -98,7 +98,7 @@ MCP 客户端需要将 `session.id` 关联到当前聊天，后续每轮持续�
 
 ```bash
 cargo build --locked --bin micu-image-mcp
-.venv/bin/python -m pytest -q tests/contract/test_image_sessions.py
+cargo test --locked --test image_sessions
 cargo test --locked --lib tools::edit
 cargo fmt --check
 cargo clippy --locked --all-targets --all-features -- -D warnings

@@ -602,10 +602,7 @@ MCP 内置多项安全限制：
 
 ```bash
 # 仅移除 MCP 配置（Claude + Codex）
-python install.py --reset
-
-# 同时卸载 pip 包
-python -m pip uninstall -y micu-image-mcp
+micu-image-mcp reset
 ```
 
 Cursor 需手动从 `~/.cursor/mcp.json` 删除 `micu-image-mcp` 节。

@@ -47,15 +47,15 @@ Osaka 全量离线测试：401 passed / 5 skipped；Rust 90 项通过，Release 
 安装好真实 Claude Code 后：
 
 ```bash
-.venv/bin/python -m tests.contract.claude_catalog_probe \
+cargo xtask catalog-probe \
   --cli /absolute/path/to/claude \
   --output tests/reports/issue11-fresh-run
-.venv/bin/python -m pytest -q tests/contract/test_latest_protocol.py
+cargo test --locked --test mcp_protocol
 ```
 
 输出目录必须是新的目录；默认 MCP 为仓库 `target/debug/micu-image-mcp`。
-`--server-command-json` 可用于测试 SSH 或其他明确的 STDIO 启动命令。
-日志和 JSON 报告保存在被 Git 忽略的目录，fixture 仅使用无效的本地占位凭据。
+`--binary` 指定本机的 Rust server；跨主机验收另行在实际客户端主机执行。
+JSON 报告保存在被 Git 忽略的目录，fixture 仅使用无效的本地占位凭据；客户端 stdout/stderr 不落盘。
 
 ## Desktop 两种模式及更新
 

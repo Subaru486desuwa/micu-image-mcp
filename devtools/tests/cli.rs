@@ -1,0 +1,161 @@
+use std::{fs, process::Command};
+
+#[test]
+fn release_check_validates_tag_version_and_notes_without_an_interpreter() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("src")).unwrap();
+    fs::create_dir_all(root.path().join("docs/releases")).unwrap();
+    fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname = 'micu-image-mcp'\nversion = '0.4.1'\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(root.path().join("docs/releases/v0.4.1.md"), "Release\n").unwrap();
+    let run = |tag: &str| {
+        Command::new(env!("CARGO_BIN_EXE_micu-devtools"))
+            .args(["release-check", "--root"])
+            .arg(root.path())
+            .args(["--tag", tag])
+            .output()
+            .unwrap()
+    };
+    assert!(run("v0.4.1").status.success());
+    assert!(!run("v0.4.2").status.success());
+    assert!(!run("v0.4.1+build").status.success());
+    fs::remove_file(root.path().join("docs/releases/v0.4.1.md")).unwrap();
+    assert!(!run("v0.4.1").status.success());
+}
+
+#[test]
+fn matrix_plan_is_offline_and_paid_modes_require_explicit_switches() {
+    let binary = env!("CARGO_BIN_EXE_micu-devtools");
+    let plan = Command::new(binary)
+        .arg("quality-matrix")
+        .env_remove("MICU_RUN_LIVE_TESTS")
+        .output()
+        .unwrap();
+    assert!(plan.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&plan.stdout).unwrap();
+    assert_eq!(value["cases"].as_array().unwrap().len(), 48);
+    assert_eq!(value["paid_requests"], 0);
+    let live = Command::new(binary)
+        .args(["quality-matrix", "--live"])
+        .env_remove("MICU_RUN_LIVE_TESTS")
+        .output()
+        .unwrap();
+    assert!(!live.status.success());
+    assert!(String::from_utf8_lossy(&live.stderr).contains("MICU_RUN_LIVE_TESTS"));
+    let native = Command::new(binary)
+        .args([
+            "native-harness",
+            "--cli",
+            "missing",
+            "--model",
+            "fixture",
+            "--output",
+            "unused",
+        ])
+        .env_remove("MICU_RUN_HARNESS_TESTS")
+        .output()
+        .unwrap();
+    assert!(!native.status.success());
+    assert!(String::from_utf8_lossy(&native.stderr).contains("MICU_RUN_HARNESS_TESTS"));
+    assert!(
+        micu_devtools::live::Relay::new("https://untrusted.invalid", "secret", true, 1).is_err()
+    );
+}
+
+#[test]
+fn source_audit_rejects_interpreter_files_and_embedded_workflows() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(
+        Command::new("git")
+            .arg("init")
+            .arg(root.path())
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    fs::write(root.path().join("main.rs"), "fn main() {}\n").unwrap();
+    assert!(micu_devtools::repository::source_audit(root.path()).is_ok());
+    fs::write(root.path().join("hidden.py"), "pass\n").unwrap();
+    assert!(micu_devtools::repository::source_audit(root.path()).is_err());
+    fs::remove_file(root.path().join("hidden.py")).unwrap();
+    fs::create_dir_all(root.path().join(".github/workflows")).unwrap();
+    fs::write(
+        root.path().join(".github/workflows/test.yml"),
+        "shell: python\n",
+    )
+    .unwrap();
+    assert!(micu_devtools::repository::source_audit(root.path()).is_err());
+}
+
+#[test]
+fn reports_redact_nested_credentials_and_never_keep_arbitrary_tool_errors() {
+    use serde_json::json;
+    let secret = "fixture-private-value";
+    let report = micu_devtools::clients::redact(
+        json!({"nested":[{"error":format!("credential: {secret}")}]}),
+        &[secret],
+    );
+    assert!(!report.to_string().contains(secret));
+    let summary =
+        micu_devtools::audit::tool_summary(&json!({"ok":false,"error":secret,"prompt":secret}));
+    assert!(!summary.to_string().contains(secret));
+}
+
+#[test]
+fn rust_audit_proxy_records_a_real_restartable_four_turn_session_without_prompts()
+-> micu_devtools::Result<()> {
+    use micu_devtools::{
+        mock::MockMicu,
+        stdio::{Session, isolated_command},
+    };
+    use serde_json::json;
+    use std::path::PathBuf;
+    let binary = std::env::var_os("MICU_TEST_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/debug")
+                .join(format!("micu-image-mcp{}", std::env::consts::EXE_SUFFIX))
+        })
+        .canonicalize()?;
+    let root = tempfile::tempdir()?;
+    let api = MockMicu::exact_images()?;
+    let audit = root.path().join("audit.jsonl");
+    let mut ids: Vec<serde_json::Value> = Vec::new();
+    for (index, tool) in [
+        "image_generate",
+        "image_edit",
+        "image_generate",
+        "image_edit",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut command = isolated_command(
+            std::path::Path::new(env!("CARGO_BIN_EXE_micu-devtools")),
+            root.path(),
+        );
+        command
+            .envs(api.env())
+            .args(["audit-proxy", "--binary"])
+            .arg(&binary)
+            .arg("--audit")
+            .arg(&audit);
+        let mut server = Session::spawn(command)?;
+        server.initialize()?;
+        let result=server.call(tool,json!({"prompt":"private-prompt-must-not-be-in-audit","session_id":if index==1 || index==3 {ids[0].clone()} else {json!("new")},"size":"1024x1024","quality":"low"}))?;
+        assert_eq!(result["ok"], true);
+        ids.push(result["session"]["id"].clone());
+    }
+    let events = micu_devtools::clients::read_audit(&audit)?;
+    assert_eq!(micu_devtools::harness::validate(&events)?["ok"], true);
+    let raw = fs::read_to_string(&audit)?;
+    assert!(!raw.contains("private-prompt-must-not-be-in-audit"));
+    assert!(!raw.contains(micu_devtools::mock::FIXTURE_KEY));
+    Ok(())
+}

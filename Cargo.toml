@@ -7,6 +7,14 @@ description = "Native Rust MCP server for Micu GPT Image 2"
 license = "MIT"
 repository = "https://github.com/Subaru486desuwa/micu-image-mcp"
 
+[workspace]
+members = ["devtools"]
+default-members = ["."]
+resolver = "3"
+
+[dev-dependencies]
+micu-devtools = { path = "devtools" }
+
 [dependencies]
 async-trait = "0.1.92"
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }

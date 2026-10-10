@@ -26,9 +26,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Require a commit from main
         shell: bash
         run: |
@@ -43,30 +42,13 @@ jobs:
           }
       - name: Validate package version and version-specific release notes
         id: release
-        shell: python
+        shell: bash
         run: |
-          import os
-          import re
-          import tomllib
-          from pathlib import Path
-
-          package = tomllib.loads(Path("Cargo.toml").read_text())["package"]
-          if package["name"] != "micu-image-mcp" or not Path("src/main.rs").is_file():
-              raise SystemExit("Only the root Rust package may be released.")
-          notes = ""
-          prerelease = "false"
-          if os.environ["GITHUB_REF"].startswith("refs/tags/"):
-              tag = os.environ["GITHUB_REF_NAME"]
-              if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", tag):
-                  raise SystemExit("Expected vMAJOR.MINOR.PATCH[-prerelease].")
-              if tag != "v" + package["version"]:
-                  raise SystemExit("Tag must match Cargo.toml package.version.")
-              notes = f"docs/releases/{tag}.md"
-              if not Path(notes).is_file():
-                  raise SystemExit(f"Missing release notes: {notes}")
-              prerelease = str("-" in tag).lower()
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"notes={notes}\nprerelease={prerelease}\n")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            cargo xtask release-check --tag "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
+          else
+            cargo xtask release-check --github-output "$GITHUB_OUTPUT"
+          fi
 
   build:
     needs: validate
@@ -89,17 +71,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # Transition only: Python is a test fixture for the cross-runtime lock
-      # contract, not a runtime dependency or a published release artifact.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install legacy reference for compatibility tests only
-        run: python -m pip install -e .
-      - run: cargo test --locked --all-targets --all-features
+      - run: cargo build --locked --workspace
+      - run: cargo xtask source-audit
+      - run: cargo test --locked --workspace --all-targets --all-features
       - run: cargo build --locked --release --all-features
+      - run: cargo xtask smoke --binary ${{ matrix.binary }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

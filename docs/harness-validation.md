@@ -77,17 +77,16 @@ OpenCode 每轮启动新 CLI 的三次后续调用为 6.65、6.59、7.10 秒；
 
 ## 复跑
 
-模型测试需要显式 MICU_RUN_HARNESS_TESTS=1；native_harness_eval 从 stdin 读取配置好的 provider 凭据，
+模型测试需要显式 MICU_RUN_HARNESS_TESTS=1；`cargo xtask native-harness` 从 stdin 读取 provider 凭据，
 不支持通过 argv 传密钥。默认图片为本地替身；--live-images 还必须显式 MICU_RUN_LIVE_TESTS=1，
-并从现有 Codex micu-image 配置读取主站图片凭据。使用新的 --output 目录，避免重复或覆盖证据。
+并从 stdin 接收独立的图片凭据。使用新的 --output 目录，避免重复或覆盖证据。详见 [Rust-only 开发](rust-only-development.md)。
 
 ```bash
-cargo fmt --check
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --locked --all-targets --all-features
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-targets --all-features
 cargo build --locked --release --all-features
-.venv/bin/python -m pytest -q
-MICU_RUN_LIVE_TESTS=0 .venv/bin/python -m tests.contract.benchmark_session_concurrency \
+cargo xtask session-benchmark --binary target/release/micu-image-mcp \
   --repeat 3 --output tests/reports/session-concurrency.json
 ```
 

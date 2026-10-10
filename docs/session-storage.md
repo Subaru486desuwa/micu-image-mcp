@@ -61,20 +61,19 @@ du -sh "$micu_root" "$micu_root/.micu-sessions"
 MCP 当前对 2.5 模型接受 `auto/low/medium/high/xhigh/max`，对旧 Image2 模型接受
 `auto/low/medium/high`；接口接受不等于上游线路接受。
 
-可复跑的验收程序只连接固定米醋域名，先检查凭据和可用模型，再逐项调用 Rust MCP 的生成、编辑工具。
+可复跑的 Rust 验收程序只连接固定米醋域名，按明确选择的模型逐项调用 Rust MCP 的生成、编辑工具。
 程序用本机回传代理统计实际上游图片 POST，包括重试；凭据只保留在内存，不进入参数、日志或报告。
-每项独立开始会话，记录成功、错误、耗时、尺寸、图片大小与对应会话，避免失败的约束污染其他项。
+每项独立请求，记录成功状态、耗时、尺寸和实际请求数，避免失败的约束污染其他项。
 
 ```bash
 # 仅列出计划；不读凭据，不发网络请求。
-.venv/bin/python -m tests.contract.live_quality_matrix --plan
+cargo xtask quality-matrix
 
-# 已授权的在线验证：读取进程 MICU_API_KEY，或 Codex 的 micu-image 环境配置。
-# 主站凭据必须有效；用新目录保存报告，防止覆盖已有证据。
-MICU_RUN_LIVE_TESTS=1 .venv/bin/python -m tests.contract.live_quality_matrix
+# 在线模式需另行授权，通过 stdin JSON 提供凭据，明确 --live、--limit 和新的 --output。
+# 字段与守卫见 docs/rust-only-development.md；这里不执行在线请求。
 ```
 
-四个 MCP 模型均可用时共有 48 项；程序按当前凭据实际可用的模型缩减矩阵，覆盖省略质量参数和所有声明档位。
+四个 MCP 模型的 1K 计划共有 48 项；用 --models 明确选择当前凭据可用的模型，覆盖省略质量参数和所有声明档位。
 按照用户给出的 0.1 元/次，48 次基础请求名义金额为 4.8 元；重试会增加请求数，实际扣费须以站点账单为准。
 鉴权失败时停止，不继续产生图片请求。
 

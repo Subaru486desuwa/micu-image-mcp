@@ -91,7 +91,7 @@ Grok 相关实现继续保持休眠。
 
 ---
 
-> **Windows 中文提示词**：MCP 会以原生 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，不要把含中文的 here-string 直接通过管道喂给 `python -`；Windows PowerShell 的 `$OutputEncoding` 可能是 ASCII，导致中文在进入 MCP 前已变成 `?`。请将脚本保存为 UTF-8 文件后执行，或先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`。
+> **Windows 中文提示词**：MCP 会以原生 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`，避免旧 PowerShell 在管道中把中文变成 `?`。
 
 ## 安装
 
@@ -102,7 +102,7 @@ Grok 相关实现继续保持休眠。
 - 提供 `install/reset/doctor/version`；
 - Python v0.2.0 reference 永久保留在
   [`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) 分支，
-  main 中的兼容源码保持冻结；新模型与新参数只在 Rust 实现维护。
+  main 的运行时、测试和工程编排均为 Rust；历史实现不参与当前构建或发布。
 
 ### 一键安装（推荐）
 
@@ -176,30 +176,10 @@ target/release/micu-image-mcp install --yes --dev \
   --binary-path "$PWD/target/release/micu-image-mcp"
 ```
 
-### Python reference（保留/回滚）
-
-```bash
-git clone --branch python-reference --depth 1 \
-  https://github.com/Subaru486desuwa/micu-image-mcp.git micu-image-mcp-python
-cd micu-image-mcp-python
-python install.py
-```
-
-非交互：
-
-```bash
-MICU_API_KEY=sk-... \
-MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
-python install.py --yes --runtime python
-```
-
-main 中的 `install.py` 只作为兼容/回滚工具；新安装应使用 Rust binary 自带的 `install`。
-Python installer 会备份并合并 Claude/Codex 配置，`--reset` 只删除 `micu-image` 节。
-
 ### macOS Keychain
 
-原 Keychain launcher 保留用于 Python 回滚。Rust binary 本身也能在启动时按 service/account 从
-macOS Keychain 取 key，因此稳定 binary 可作为纯 `command`，不再需要 shell wrapper：
+Rust binary 在启动时按 service/account 从 macOS Keychain 取 key，稳定 binary 可作为纯
+`command`。保留的 Keychain launcher 也只启动 Rust：
 
 ```bash
 security add-generic-password \
@@ -229,19 +209,13 @@ Codex 桌面、CLI 和 IDE 扩展共享 `~/.codex/config.toml`；修改后重启
 
 ```bash
 micu-image-mcp doctor
-python tests/smoke_local.py --proto \
-  --server-command '/absolute/path/micu-image-mcp'
+cargo xtask smoke --binary /absolute/path/micu-image-mcp
 ```
 
-明确回滚到 Python：
-
-```bash
-MICU_API_KEY=sk-... \
-MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
-python install.py --yes --runtime python
-```
-
-完整迁移/backup 恢复说明见 [docs/migration-from-python.md](docs/migration-from-python.md)。
+回滚时恢复可信 binary 与 installer 的配置备份，保留图片和会话。历史 Python reference
+在独立分支，当前 main 不再提供 Python 入口。完整说明见
+[迁移与回滚](docs/migration-from-python.md)，开发、测试和工程工具见
+[Rust-only 开发](docs/rust-only-development.md)。
 
 ---
 

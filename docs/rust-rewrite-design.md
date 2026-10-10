@@ -1,5 +1,7 @@
 # Rust 渐进式重写设计
 
+本文保留初次重写设计历史；当前 main 已退出 Python reference 源码和差分依赖，实施边界以 [Rust-only 开发](rust-only-development.md) 为准。
+
 状态：实现前设计冻结（2026-08-23）  
 基线 HEAD：`578b32ace77bbc732462b4d6483f2259969668ef`  
 目标协议 SDK：官方 `rmcp 3.1.4`（crates.io 稳定版，MSRV 1.88）  

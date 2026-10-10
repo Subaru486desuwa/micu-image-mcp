@@ -1,222 +1,28 @@
-# 从 Python reference 迁移到 Rust binary
+# Python → Rust 迁移与回滚
 
-当前状态：v0.3.0 的 `main` 与推荐安装入口为 Rust native；Python v0.2.0 保留在
-`python-reference` 分支，并继续用于协议差分和紧急回滚。
+main 只维护 Rust，已移除 `server.py`、Python 安装器和包元数据。历史 Python reference 仍在独立 `python-reference` 分支；它不参与当前 build/test/release。不得将旧 runtime 合回 main。
 
-## 选择合适的路径
-
-- 新安装或升级：使用 release Rust binary 的 `install`。
-- 需要回滚：切到 `python-reference`，或恢复 installer 创建的配置备份。
-- 最终用户不需要 Rust toolchain：从 release artifact 下载对应单文件 binary。
-
-release workflow 产出：
-
-- `micu-image-mcp-linux-x86_64`
-- `micu-image-mcp-macos-x86_64`
-- `micu-image-mcp-macos-arm64`
-- `micu-image-mcp-windows-x86_64.exe`
-- `SHA256SUMS`
-
-发布页中的 binary 来自对应平台原生 runner；本地 `target/release` 只用于开发验证。
-
-## Python compatibility installer
-
-`install.py` 保持 Python reference 默认，仅用于兼容和回滚：
+安装与凭据配置使用 Rust binary：
 
 ```bash
-python install.py --runtime python
-```
-
-试用已有 Rust binary：
-
-```bash
-MICU_API_KEY=sk-... \
-MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
-python install.py --yes \
-  --runtime rust \
-  --rust-binary /absolute/path/to/micu-image-mcp
-```
-
-Rust 模式跳过 pip/server dependency 安装，写入的 MCP command 直接指向 binary，args 为空。脚本
-仍会备份并只合并 `micu-image`，不会删除其他 MCP server。
-
-## 阶段 B：直接使用 Rust CLI
-
-binary 无参数等于 `serve`：
-
-```bash
-/absolute/path/micu-image-mcp
-/absolute/path/micu-image-mcp serve
-```
-
-安装：
-
-```bash
-MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
-/absolute/path/micu-image-mcp install --yes
-```
-
-默认会把 source binary 复制到稳定的 per-user data-local 路径，再写客户端配置：macOS 位于
-`~/Library/Application Support/micu-image-mcp/bin/`，Linux 位于
-`~/.local/share/micu-image-mcp/bin/`，Windows 位于
-`%LOCALAPPDATA%\micu-image-mcp\bin\`。仓库移动或 `cargo clean` 不会删除该副本。
-
-常用 flags：
-
-```bash
-micu-image-mcp install --no-codex
-micu-image-mcp install --no-claude
-micu-image-mcp install --baseurl https://www.micuapi.ai
-micu-image-mcp install --save-dir /absolute/output/path
-micu-image-mcp install --binary-path /path/to/downloaded/micu-image-mcp
-micu-image-mcp install --dev --binary-path ./target/release/micu-image-mcp
-micu-image-mcp reset --yes
-micu-image-mcp reset --yes --no-claude
+micu-image-mcp install
 micu-image-mcp doctor
-micu-image-mcp version
 ```
 
-installer 不把 API key 写入 Claude JSON/Codex TOML。它优先复用 `MICU_API_KEY`，其次检查
-系统安全凭据存储；交互式首次安装缺少 key 时会隐藏输入提示，格式校验通过后写入 macOS
-Keychain、Windows Credential Manager 或 Linux Secret Service。非交互安装不会阻塞等待输入，
-仍可通过 `MICU_API_KEY` 提供凭据。base URL 仅允许 HTTPS，或 localhost/127.0.0.1/`::1` HTTP。
-
-## 手动配置
-
-Claude JSON：
-
-```json
-{
-  "mcpServers": {
-    "micu-image": {
-      "command": "/absolute/path/micu-image-mcp",
-      "args": [],
-      "env": {
-        "MICU_SAVE_DIR": "/absolute/output/path",
-        "MICU_SAVE_DIR_ROOT": "/absolute/output/path"
-      }
-    }
-  }
-}
-```
-
-Codex TOML：
-
-```toml
-[mcp_servers.micu-image]
-command = "/absolute/path/micu-image-mcp"
-args = []
-
-[mcp_servers.micu-image.env]
-MICU_SAVE_DIR = "/absolute/output/path"
-MICU_SAVE_DIR_ROOT = "/absolute/output/path"
-```
-
-客户端保存配置后需要重启，让它重新 spawn STDIO server。Windows 用户不应手工拼接上述 TOML；
-installer 使用 `toml_edit` AST 序列化，并对临时文件执行 parser round-trip 后才原子替换配置。
-单/双引号都不是契约，解析后的 PathBuf 与原值完全一致才是契约。
-
-## 系统安全凭据存储
-
-Rust binary 默认使用 `micu-image-mcp` / `image2-api-key` 作为系统凭据定位符；macOS 对应
-Keychain、Windows 对应 Credential Manager、Linux 对应 Secret Service。需要兼容旧自定义
-Keychain 项时仍可覆盖 service/account：
-
-```toml
-[mcp_servers.micu-image]
-command = "/Users/you/Library/Application Support/micu-image-mcp/bin/micu-image-mcp"
-args = []
-
-[mcp_servers.micu-image.env]
-MICU_KEYCHAIN_SERVICE = "ai.micuapi.mcp"
-MICU_KEYCHAIN_ACCOUNT = "your-macos-account"
-MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
-MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
-```
-
-Rust 只在 `MICU_API_KEY` 为空时读取系统安全凭据；secret 进入 `SecretString`，不会写日志或客户端
-配置。installer 写入前要求 `sk-` 前缀、20–512 字符长度，并限制为 ASCII 字母、数字、`-`、`_`。
-旧 launcher 未删除，不设置 `MICU_MCP_BINARY` 时仍可显式回滚到 Python reference。
-
-## 相对路径与锁
-
-- `MICU_SAVE_DIR_ROOT` 在启动时转为绝对、创建并 canonicalize；相对值以 home 为基准。
-- `MICU_SAVE_DIR` 和 tool `save_dir` 的相对值以 save root 为基准。
-- 设置 `MICU_INPUT_ROOT` 后，相对输入以 input root 为基准；未设置时以 server 启动时捕获的 cwd
-  为兼容基准。`server_info.safety_constraints.input_image_validation` 会显示实际规则。
-- 只支持 `~`、`~/...` 与 Windows `~\...`，不支持 `~someone`。
-- Python/Rust 兼容期都使用 `~/.cache/micu-image/bigsize.lock`。
-
-## 验证
-
-先做 CLI/协议验证：
+源码开发：
 
 ```bash
-micu-image-mcp doctor
-python tests/smoke_local.py --proto \
-  --server-command '/absolute/path/micu-image-mcp'
+cargo build --locked --release
+MICU_SAVE_DIR="$HOME/Pictures/micu-out" target/release/micu-image-mcp install --yes --dev \
+  --binary-path "$PWD/target/release/micu-image-mcp"
 ```
 
-然后在 Claude/Codex 中调用 `server_info`，确认：
+installer 备份并合并 Claude/Codex 配置，保留其他 MCP server。默认复制 binary 到稳定 per-user 目录；显式 dev 模式直接使用所选构建。macOS Rust binary 自行读取配置的 Keychain service/account，Shell launcher 也只启动 Rust。
 
-- `available_models` 只有两个 Image2 model；
-- `api_key_configured` 为 true；
-- base URL 与 save root 正确；
-- retry lock 描述包含 tokio Semaphore 与 fs4。
+安装后重新连接 MCP，再调用 `server_info` 确认版本、可用模型、输出根和凭据是否已配置。离线验收使用 `cargo xtask smoke --binary /absolute/path/micu-image-mcp`，不使用个人凭据或付费图片 API。
 
-开发/发布验证：
+需要回滚时，先结束当前请求，保留图片、`.micu-sessions` 和配置备份。恢复已有的可信 Rust binary 与对应配置备份；检查 `doctor` 后重启客户端。若确需历史 Python 版本，在独立目录检出 `python-reference` 并遵循该分支当时的文档，不把当前 main 当作 Python 安装源。
 
-```bash
-.venv/bin/python -m pytest -q
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
-cargo build
-MICU_RUN_CONTRACT_TESTS=1 MICU_RUN_LIVE_TESTS=0 \
-  .venv/bin/python -m pytest -q \
-  tests/contract/test_python_rust_differential.py \
-  tests/contract/test_latest_protocol.py
-cargo audit
-```
+卸载当前 MCP 配置使用 `micu-image-mcp reset`，只移除 `micu-image` 配置节；图片与会话应由用户自行归档，不因 reset 删除。历史 Release/tag 保持可用。
 
-这些 contract tests 只运行本地 mock API，不消耗图片额度。
-
-## 明确回滚
-
-### 回到 Python reference（推荐回滚命令）
-
-```bash
-MICU_API_KEY=sk-... \
-MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
-python install.py --yes --runtime python
-```
-
-该命令会再次备份当前配置，然后只把 `micu-image` command 改回当前 Python + `server.py`；其他
-MCP server 不动。
-
-### 完全移除 micu-image 节
-
-```bash
-/absolute/path/micu-image-mcp reset --yes
-# 或 Python reference installer：
-python install.py --reset
-```
-
-### 恢复某个完整备份
-
-安装/reset 会在原文件旁创建 `.bak.<timestamp>`。确认目标时间戳后：
-
-```bash
-cp "$HOME/.claude.json.bak.<timestamp>" "$HOME/.claude.json"
-cp "$HOME/.codex/config.toml.bak.<timestamp>" "$HOME/.codex/config.toml"
-chmod 600 "$HOME/.claude.json" "$HOME/.codex/config.toml"
-```
-
-Windows 用 PowerShell `Copy-Item` 恢复对应 backup。恢复后重启客户端。
-
-## 数据与兼容状态
-
-Python 实现、Python tests 和 `install.py` 都没有删除。Rust 输出文件与 Python 使用同一 size、
-basename、collision 和 root 规则；迁移不移动已有图片。详见
-[`rust-compatibility-matrix.md`](rust-compatibility-matrix.md) 和
-[`rust-security-review.md`](rust-security-review.md)。
+开发、契约与工具命令见 [Rust-only 开发](rust-only-development.md)，历史恢复点见 [分支策略](branch-release-policy.md)。
