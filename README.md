@@ -1,46 +1,43 @@
 # 米醋画图 MCP
 
-**从第一张图开始记忆，接着聊、接着改。**
+[简体中文](README.md) · [English](README.en.md)
+
+把 [米醋](https://www.micuapi.ai) 的图像接口接入 Claude Code、Claude Desktop、Codex、Cursor 等 MCP 客户端，支持生成图片、连续编辑、批量编辑和多图参考。
+
+连续编辑时，MCP 保存图片版本、成功指令和有效约束。沿用同一个会话 ID，就能在上一版图片上继续修改；不同主题使用各自的会话。
 
 ![Micu Image MCP v0.4.1 上下文记忆海报：沿用同一只小猫，继续细化图片](docs/assets/memory/context-memory-poster.png)
 
-[快速安装](#安装) · [上下文记忆](#上下文记忆) · [调试与验证](#调试与验证) · [v0.4.1 Release](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.1)
-
-把 [米醋](https://www.micuapi.ai) 的图像接口接入 Claude Code、Claude Desktop、Codex、Cursor 等 MCP 客户端。
-生成、连续编辑、批处理、多图参考共用五个工具。v0.4.1 新增持久图片会话：保存成功版本、指令和有效约束，
-让同一张图可以逐轮修改，也让一个聊天里的不同创作主题各自保留记忆。
-
-> **新版重点：**首次生成就建立记忆；沿用 ID 继续编辑；新主题新建会话；重启 MCP 后仍可用原 ID 继续。
+[安装](#安装) · [连续编辑](#上下文记忆) · [模型与质量](#模型与质量) · [尺寸规则](#尺寸规则) · [调试与验证](#调试与验证) · [v0.4.1 发布说明](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.1)
 
 ## 上下文记忆
 
-先生成一只小猫，再换飞行装备；中途生成独立海景，最后回到小猫改日落。
-客户端选对会话 ID，MCP 就会携带对应图片与编辑上下文。
+先生成一只小猫，再修改它的飞行装备。中途可以另开会话生成海景，之后回到小猫会话，把背景改成日落。
+客户端传入对应的会话 ID，MCP 就会携带该版本的图片、成功编辑历史和有效约束。
 
 ![四次真实 MCP 调用：小猫会话 A 的 r1、r2，海景会话 B 的 r1，再返回 A 的 r3](docs/assets/memory/four-turn-demo.png)
 
 | 你说的话 | 图片会话 | MCP 的处理 |
 | --- | --- | --- |
 | “生成一只小猫跳伞。” | A · r1 | 建立新会话，保存首张图和描述 |
-| “给它换一种飞行装备。” | A · r2 | 上传 A 的上一版图片，沿用主角和有效约束 |
+| “给它换一种飞行装备。” | A · r2 | 上传 A 的上一版图片，携带主角要求和有效约束 |
 | “另外生成一张独立海景人像。” | B · r1 | 新建 B，使用这个主题自己的图片与约束 |
 | “回到刚才的小猫，把背景改成日落。” | A · r3 | 返回 A，从 A 的成功历史继续编辑 |
 
-这四张图来自 Osaka 上的 **OpenCode + DeepSeek Flash → micu-image-mcp → 米醋主站**真实调用，
-对应四次成功操作。海景有一次上游失败，调整提示后重试成功；失败没有推进会话版本。
-第二张实际画出了硬质滑翔翼，随后人工补充软翼形态约束，得到海报中的 **A · r4**。
-海报与四步图分别标明版本，完整来源见[配图说明](docs/assets/memory/README.md)。
+这四张图来自 2026-10-09 在 Osaka 上通过 OpenCode、DeepSeek Flash 和本项目调用米醋主站的验收。
+海景请求失败一次，调整提示后重试成功，失败没有推进会话版本。第二张实际画出了硬质滑翔翼；
+随后人工补充软翼形态约束，得到海报使用的 A · r4。海报与四步图分别标明版本，完整来源见[配图说明](docs/assets/memory/README.md)。
 
 ### 记忆如何接上下一轮
 
-- **首次生成就开始记忆：**`image_generate` 或 `image_edit` 传 `session_id="new"`，记下返回的 `session.id`。
-- **继续改同一张图：**沿用这个 ID；省略 `model`、`size`、`quality` 时继承所选版本，并携带成功编辑历史和当前约束。
-- **换主题或回到旧图：**新主题用 `"new"`；回到旧图用原 ID。`A`、`B` 是上图简称，实际 ID 形如 `edit_<32位十六进制>`。
-- **重启也能继续：**会话保存在用户电脑；保留原 ID、输出根目录和对应图片，即可接着编辑。指定 `parent_revision` 可从旧版本开分支。
+1. 首次生成或编辑时，给 `image_generate` 或 `image_edit` 传入 `session_id="new"`，由客户端保存返回的 `session.id`。生成会话要求 `n=1`。
+2. 继续修改时，传入原 ID 和本轮指令。省略 `model`、`size`、`quality` 时继承所选版本的参数；MCP 上传该版本图片并携带其编辑上下文。
+3. 新主题使用 `"new"`，回到旧图使用原 ID。上图的 `A`、`B` 是简称，实际 ID 形如 `edit_<32位十六进制>`。
+4. 会话保存在运行 MCP 的电脑上。重启后保留原 ID、输出根目录和对应图片，即可继续。指定 `parent_revision` 可从旧版本创建分支。
 
-选择哪条会话由客户端或模型负责，MCP 根据显式 ID 读取记忆；一次聊天可以拥有多条图片会话。
-省略 `session_id` 仍按原有单次调用处理。每次成功才提交新版本，同一会话并发修改会返回忙。
-图片记忆是本地版本记录；支持范围和存储管理见[连续编辑指南](docs/multi-turn-editing.md)、[会话存储说明](docs/session-storage.md)。
+客户端或模型负责选择会话，MCP 按传入的 ID 读取记录，不会自动接收完整聊天历史。
+省略 `session_id` 时按单次调用处理，不保存会话。图片成功保存并提交会话记录后才推进版本；同一会话正在修改时，另一调用会返回忙。
+支持范围和存储管理见[连续编辑指南](docs/multi-turn-editing.md)和[会话存储说明](docs/session-storage.md)。
 
 [下载海报 PNG](docs/assets/memory/context-memory-poster.png) · [可编辑 SVG](docs/assets/memory/context-memory-poster.svg) · [四步示例大图](docs/assets/memory/four-turn-demo.png)
 
@@ -48,61 +45,61 @@
 
 ## 功能
 
-| Tool | 说明 |
+| 工具 | 说明 |
 |---|---|
-| `image_generate` | 文生图；默认 Flare，当前主站 quality 使用 `low` / `auto` 或留空 |
-| `image_edit` | 单图参考/编辑；默认 Sunburst，走 `/v1/images/edits` |
-| `image_batch_edit` | 多张图逐张同指令处理；默认 Sunburst 串行 |
-| `image_multi_reference` | 2-10 张参考图融合成 1 张新图；默认 Sunburst |
-| `server_info` | 查看 base URL、模型、size 规则、重试策略、安全约束 |
+| `image_generate` | 根据文字生成图片，默认 Flare；传入已有会话 ID 时继续编辑 |
+| `image_edit` | 根据一张参考图和指令编辑图片，默认 Sunburst，支持蒙版 |
+| `image_batch_edit` | 对多张图片分别应用同一条指令，默认 Sunburst 串行处理 |
+| `image_multi_reference` | 同时参考 2 到 10 张图片生成一张新图，默认 Sunburst |
+| `server_info` | 查看当前版本、接口地址、模型、尺寸规则、重试策略和安全限制 |
 
-第一次使用前，让 LLM 调一次 `server_info`，可以看到当前运行时配置和可用能力。
+第一次使用前，让客户端调用 `server_info`，确认当前配置和工具能力。
 
 ---
 
 ## 使用教程
 
-面向 Cursor / Claude Code / Codex 用户的完整 MCP 使用指南见 [docs/MCP使用教程.md](docs/MCP使用教程.md)，
-涵盖工具选型、尺寸规则、环境变量与故障排查（含 Clash/Surge fake-ip 落盘问题）。
+Cursor、Claude Code 和 Codex 的配置与使用方法见 [MCP 使用教程](docs/MCP使用教程.md)，
+包括工具选择、尺寸规则、环境变量，以及 Clash/Surge fake-ip 导致的图片下载问题。
 
 ---
 
 ## Claude Desktop 兼容性
 
 v0.4.1 已修复 [issue #11](https://github.com/Subaru486desuwa/micu-image-mcp/issues/11) 的 `Connected · 0 tools`。
-升级实际启动的 binary、重新连接 MCP，再调用 `server_info` 确认版本。
+升级客户端实际启动的程序，重新连接 MCP，再调用 `server_info` 确认版本。
 
 Desktop 的 Code 模式读取 `~/.claude.json`；普通 Chat 模式使用独立的 `claude_desktop_config.json`，
 当前安装器不会自动写入后者。[兼容性指南](docs/claude-desktop-compatibility.md)包含根因、两种模式的配置和测试范围。
 
 ---
 
-## 当前模型范围
+## 模型与质量
 
-当前支持 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2`、`gpt-image-2-openai`。
-文生图默认 Flare，编辑、批处理和多图参考默认 Sunburst；四个图像工具都接受这四个模型。
-实际可用模型以当前凭据的 `/v1/models` 为准。
-2026-10-09 主站的 1K 生成和单图编辑实测：Flare / Sunburst 接受 `low`、`auto` 或省略
-`quality`；`medium / high / xhigh / max` 均返回 HTTP 400（上游明确只支持 low）。
-`gpt-image-2` 接受 `low / medium / high / auto` 或省略。本次凭据未列出 `gpt-image-2-openai`，
-因此旧 `gpt-image-2` 的 2K/4K 自动切换模型前需要确认该凭据支持目标模型；Flare / Sunburst
-的 2K/4K 保持所选模型并进入高分辨率串行队列。参数完整选项仍保留，用于兼容其他线路或后续支持。
-Grok 相关实现继续保持休眠。
+四个图像工具都接受 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和 `gpt-image-2-openai`。
+文生图默认 Flare，编辑、批量编辑和多图参考默认 Sunburst。实际可用模型以当前凭据访问 `/v1/models` 的结果为准。
+
+2026-10-09 米醋主站的 1K 生成与单图编辑实测结果如下。
+
+| 模型 | 实测可用的 `quality` | 限制 |
+| --- | --- | --- |
+| Flare / Sunburst | `low`、`auto` 或省略 | `medium`、`high`、`xhigh`、`max` 返回 HTTP 400，上游提示只支持 `low` |
+| `gpt-image-2` | `low`、`medium`、`high`、`auto` 或省略 | 2K/4K 会自动切换到 `gpt-image-2-openai`，需确认凭据支持该模型 |
+| `gpt-image-2-openai` | 未验证 | 当次凭据的模型列表未包含该模型 |
+
+完整记录见[在线质量档位验证](docs/session-storage.md#在线质量档位验证)。这些结果对应当时的线路和凭据。
+工具保留完整参数选项，以兼容其他线路或后续支持；尺寸路由见[尺寸规则](#尺寸规则)。
+Grok 实现保留但暂时禁用，工具会拒绝相关模型。
 
 ---
 
-> **Windows 中文提示词**：MCP 会以原生 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`，避免旧 PowerShell 在管道中把中文变成 `?`。
+> MCP 使用 UTF-8 JSON 发送中文。自行编写 PowerShell 测试脚本时，先设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`，避免旧 PowerShell 在管道中把中文变成 `?`。
 
 ## 安装
 
-从 v0.3.0 起，`main` 与推荐安装入口是 Rust 原生单文件 MCP server：
-
-- 默认 STDIO serve，无参数即可运行；
-- 运行时不需要 Python、pip、httpx 或 Pillow；
-- 提供 `install/reset/doctor/version`；
-- Python v0.2.0 reference 永久保留在
-  [`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) 分支，
-  main 的运行时、测试和工程编排均为 Rust；历史实现不参与当前构建或发布。
+本项目使用 Rust 单文件程序，无参数运行即启动 STDIO MCP 服务，不需要 Python。
+`main` 的产品代码、测试和工程工具均由 Rust 维护；历史 Python 实现保留在
+[`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) 分支，不参与当前构建或发布。
 
 ### 一键安装（推荐）
 
@@ -118,15 +115,16 @@ Windows PowerShell：
 irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.ps1 | iex
 ```
 
-一键脚本会识别当前平台，从最新 GitHub Release 下载 Rust binary，使用 Release 中的
-`SHA256SUMS` 校验后调用 binary 自带的 `install --yes`。默认自动写入 Codex 与 Claude Code 的
-`micu-image` MCP 配置（Claude Code 使用 `~/.claude.json`）；API key 不会写入配置文件。installer 会先检查 `MICU_API_KEY` 与系统
-安全凭据存储；首次安装且两者都没有时，会在交互式终端中隐藏输入地询问一次 API key。
-只有通过 `sk-` 前缀、20–512 字符长度和 ASCII 字符集校验后才会写入 macOS Keychain、Windows
-Credential Manager 或 Linux Secret Service。之后 MCP 启动时自动读取，不需要重复输入。默认
-endpoint 仍是 `https://www.micuapi.ai`；需要自定义时使用 `--baseurl` 或 `MICU_BASEURL`。
+脚本识别当前平台，从最新 GitHub Release 下载程序，用该 Release 的 `SHA256SUMS` 校验后执行 `install --yes`。
+安装器默认写入 Codex 和 Claude Code 的 `micu-image` 配置，Claude Code 使用 `~/.claude.json`。
+Claude Desktop 普通 Chat 模式需要[单独配置](docs/claude-desktop-compatibility.md)。
 
-macOS / Linux 需要只配置某个客户端时，可把参数传给内置 installer：
+API key 不写入客户端配置文件。安装器先检查 `MICU_API_KEY` 和系统安全凭据存储；首次安装且都未配置时，
+在交互式终端中提示输入一次，输入内容不回显。通过 `sk-` 前缀、20 到 512 字符长度和 ASCII 字符集校验后，
+安装器将其存入 macOS Keychain、Windows Credential Manager 或 Linux Secret Service，供 MCP 启动时读取。
+默认接口地址为 `https://www.micuapi.ai`；自定义地址使用 `--baseurl` 或 `MICU_BASEURL`。
+
+macOS / Linux 上只配置 Codex 时，给安装器传入 `--no-claude`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.sh \
@@ -136,7 +134,7 @@ curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main
 脚本源码在 [`scripts/install.sh`](scripts/install.sh) 和
 [`scripts/install.ps1`](scripts/install.ps1)，可先审阅再执行。
 
-### 手动下载 Rust binary
+### 手动下载程序
 
 从 [最新 Release](https://github.com/Subaru486desuwa/micu-image-mcp/releases/latest) 下载平台对应文件并
 核对 `SHA256SUMS`：
@@ -147,14 +145,14 @@ MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
 /absolute/path/micu-image-mcp install --yes
 ```
 
-`install` 会把当前 binary 原子复制到稳定的 per-user data-local 目录，再让 Codex/Claude 指向该
-副本；配置不会指向仓库的 `target/release`，移动仓库或 `cargo clean` 不会使 MCP 失效：
+`install` 将程序复制到当前用户的固定安装目录，并让 Codex 和 Claude Code 使用该副本。
+移动源码仓库或执行 `cargo clean` 不影响已安装的 MCP。
 
 - macOS：`~/Library/Application Support/micu-image-mcp/bin/micu-image-mcp`
 - Linux：`~/.local/share/micu-image-mcp/bin/micu-image-mcp`
 - Windows：`%LOCALAPPDATA%\micu-image-mcp\bin\micu-image-mcp.exe`
 
-Rust CLI：
+常用命令：
 
 ```bash
 micu-image-mcp                 # 等同 serve，STDIO MCP
@@ -167,7 +165,10 @@ micu-image-mcp doctor
 micu-image-mcp version
 ```
 
-源码开发时可显式配置已编译 binary：
+### 从源码构建
+
+需要 Rust 1.88 或更新版本。Linux ARM64 等没有预编译包的平台也使用此方式。
+源码开发时，可让客户端直接使用编译产物：
 
 ```bash
 cargo build --release
@@ -178,8 +179,8 @@ target/release/micu-image-mcp install --yes --dev \
 
 ### macOS Keychain
 
-Rust binary 在启动时按 service/account 从 macOS Keychain 取 key，稳定 binary 可作为纯
-`command`。保留的 Keychain launcher 也只启动 Rust：
+程序启动时按 service/account 从 macOS Keychain 读取 API key。已有自定义 Keychain 项时，
+让 `MICU_KEYCHAIN_SERVICE` 和 `MICU_KEYCHAIN_ACCOUNT` 与该项一致。下例手动创建凭据项并配置 Codex：
 
 ```bash
 security add-generic-password \
@@ -204,35 +205,38 @@ Codex 桌面、CLI 和 IDE 扩展共享 `~/.codex/config.toml`；修改后重启
 
 ### 验证与回滚
 
-安装后让客户端调用 `server_info`，确认 `available_models`、base URL、save root 和
-`api_key_configured`。Rust 还可先运行：
+安装后让客户端调用 `server_info`，确认版本、`available_models`、接口地址、输出根目录和 `api_key_configured`。
+也可在终端检查配置，或从源码仓库运行离线 MCP 检查：
 
 ```bash
 micu-image-mcp doctor
 cargo xtask smoke --binary /absolute/path/micu-image-mcp
 ```
 
-回滚时恢复可信 binary 与 installer 的配置备份，保留图片和会话。历史 Python reference
-在独立分支，当前 main 不再提供 Python 入口。完整说明见
+回滚安装变更时，恢复可信程序和安装器生成的配置备份，保留图片和会话。完整说明见
 [迁移与回滚](docs/migration-from-python.md)，开发、测试和工程工具见
 [Rust-only 开发](docs/rust-only-development.md)。
 
 ---
 
-## Size 规则
+## 尺寸规则
 
-旧 GPT Image 2 路径：
+四个支持的模型均使用以下尺寸校验：
 
-- W/H 必须是 16 的倍数
-- 最长边不超过 3840；长宽比不超过 3:1
-- 总像素必须在 655,360 到 8,294,400 之间
-- 2K/4K 自动切 `gpt-image-2-openai`
-- 2K/4K 强制 `n=1` 并加跨进程锁，避免多个 MCP 同时打爆高质量队列
+- 宽和高必须是 16 的倍数。
+- 每条边在 256 到 3840 之间，长宽比不超过 3:1。
+- 总像素在 655,360 到 8,294,400 之间。
 
-GPT Image 2.5 的 Flare 与 Sunburst 已实测支持 `1024x1024`、`2048x1152` 和
-`3840x2160`，且返回像素与请求一致。2K/4K 保持所选 2.5 模型，强制 `n=1` 并使用跨进程锁。
+路由与并发处理如下。
 
-推荐 size：
+- 单图编辑、批量编辑和多图参考使用 `/v1/images/edits`。
+- `gpt-image-2` 的 2K/4K 请求自动切换到 `gpt-image-2-openai`。
+- Flare / Sunburst 的 2K/4K 请求保持所选模型。
+- 2K/4K 生成请求强制 `n=1`，高分辨率请求通过进程内与跨进程锁串行访问队列。
+
+实际保存尺寸以每张图片的 `saved.actual_size` 为准，生成工具的 `saved` 是列表。
+
+常用 `size` 值：
 
 | 档位 | 推荐值 |
 |---|---|
@@ -240,41 +244,32 @@ GPT Image 2.5 的 Flare 与 Sunburst 已实测支持 `1024x1024`、`2048x1152` �
 | 2K | `2048x2048`, `2048x1152`, `1152x2048` |
 | 4K | `3840x2160`, `2160x3840` |
 
-## 尺寸与路由行为
-
-- `/v1/images/edits` 负责单图编辑、多图参考与批量编辑。
-- `gpt-image-2` 的 2K/4K 请求会自动切换到 `gpt-image-2-openai`。
-- GPT Image 2.5 的 2K/4K 请求保持所选 Flare / Sunburst 模型。
-- ≥2K 请求强制 `n=1`，并通过进程内与跨进程锁串行访问高质量队列。
-- 返回的真实像素以响应中的 `saved.actual_size` 为准。
-
 ---
 
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `MICU_API_KEY` | 空 | 米醋 image2 token |
-| `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 base URL |
-| `MICU_KEYCHAIN_SERVICE` | `micu-image-mcp` | 系统安全凭据 service；兼容旧自定义 Keychain 项 |
-| `MICU_KEYCHAIN_ACCOUNT` | `image2-api-key` | 系统安全凭据 account |
+| `MICU_API_KEY` | 空 | 米醋 Image2 通道的 API key |
+| `MICU_BASEURL` | `https://www.micuapi.ai` | 图像接口地址 |
+| `MICU_KEYCHAIN_SERVICE` | `micu-image-mcp` | 系统安全凭据的 service 名称 |
+| `MICU_KEYCHAIN_ACCOUNT` | `image2-api-key` | 系统安全凭据的 account 名称 |
 | `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 Flare，编辑类默认 Sunburst |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同输出目录 | 输出安全根目录 |
 | `MICU_INPUT_ROOT` | 空（不限制） | 可选输入图片白名单根；启用后阻止路径/符号链接逃逸 |
-| `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取 shell 代理 |
-| `MICU_RESPONSE_FORMAT` | `auto` | `auto`（url→b64）、`url` 或 `b64_json` |
-| `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | 可信 CDN host，逗号分隔 |
-| `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | 仅 trusted host 可放行 198.18.0.0/15 fake-ip |
+| `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取进程环境中的代理设置 |
+| `MICU_RESPONSE_FORMAT` | `auto` | `auto` 优先 URL、回退 base64，也可指定 `url` 或 `b64_json` |
+| `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | 可信下载域名，逗号分隔 |
+| `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | 仅允许可信域名使用 198.18.0.0/15 fake-ip 下载 |
 
-路径在 server 启动时只解析一次：相对 `MICU_SAVE_DIR` 和 tool `save_dir` 都以 save root 为基准；
-设置 `MICU_INPUT_ROOT` 时，相对输入路径以 input root 为基准，否则以启动时捕获的 cwd 为基准。
-只展开精确的 `~`、`~/...`、Windows `~\...`，`~someone` 会被拒。Python/Rust 兼容期共用
-`~/.cache/micu-image/bigsize.lock`。
+路径基准在 MCP 启动时确定。相对 `MICU_SAVE_DIR` 和工具的 `save_dir` 以输出根目录为基准；
+设置 `MICU_INPUT_ROOT` 时，相对输入路径以该目录为基准，否则以启动时的工作目录为基准。
+路径只展开 `~`、`~/...` 和 Windows 的 `~\...`，拒绝 `~someone`。
 
 ## 手动配置
 
-Claude Code:
+Claude Code 使用以下 JSON 配置：
 
 ```json
 {
@@ -291,7 +286,7 @@ Claude Code:
 }
 ```
 
-Codex:
+Codex 使用以下 TOML 配置：
 
 ```toml
 [mcp_servers.micu-image]
@@ -303,46 +298,35 @@ MICU_SAVE_DIR = "/Users/you/Pictures/micu-out"
 MICU_SAVE_DIR_ROOT = "/Users/you/Pictures/micu-out"
 ```
 
-不要手工把 Windows 路径拼进 TOML 字符串。Rust installer 使用 `toml_edit` AST，临时写入后会
-再用 TOML parser 校验 `command`/`args`/env 的 PathBuf round-trip；单引号 literal string 和正确
-转义的双引号 basic string 都合法，关键是 parser 回读值完全一致。API key 不持久化到上述
-JSON/TOML；由客户端进程环境、macOS Keychain 或 tool 的既有 `api_key` 参数提供。
+将 `command` 替换为实际程序路径，并按需调整输出目录。Windows 路径建议用 TOML 单引号字符串，
+例如 `'C:\Users\you\AppData\Local\micu-image-mcp\bin\micu-image-mcp.exe'`；使用双引号时必须转义反斜杠。
+安装器会处理路径转义并校验配置。
 
-迁移期若要手动使用 Python reference，把 command 改为 Python、args 改为绝对
-`server.py` 路径即可；五工具 schema 保持相同。
+上述 JSON/TOML 不保存 API key。凭据由 MCP 进程环境、系统安全凭据存储或工具的 `api_key` 参数提供。
 
 ---
 
 ## 调试与验证
 
-这次更新从“小猫改图后还能否回到同一条记忆”出发，逐步测试会话、真实 harness、协议兼容和发布包。
+当前主线使用 Rust 离线测试，通过真实 MCP STDIO 和本地 HTTP 替身检查工具协议、请求参数、
+图片下载、路径限制、会话恢复、失败处理和安装配置。离线测试不产生图像费用，不能代替实际图片的视觉验收。
+完整检查命令见 [Rust-only 开发与验收](docs/rust-only-development.md)。
 
-| 调试问题 | 定位与修正 | 验证结果 |
-| --- | --- | --- |
-| 连续编辑容易丢失主角、约束或版本来源 | 显式 ID、持久成功历史、分支约束；失败不提交，同会话加锁 | 生成、跨工具编辑、重启恢复、失败恢复与会话隔离均有离线覆盖 |
-| DeepSeek 有时省略 `session_id` | 把“新主题新建、继续编辑复用 ID”放到工具说明最前面 | 三种原生 harness 组合在两组固定四轮场景中通过 **24/24** 个路由检查 |
-| Claude Desktop 连接成功却显示零工具 | 复刻缺少 `ttlMs` / `cacheScope` 的目录校验错误，按协议补齐 | 真实 Claude 客户端首次注册五工具并调用 `server_info`；旧协议继续兼容，#11 已关闭 |
-| 干净 CI 与本地结果不同 | 仅归一化 Pydantic 帮助链接版本；测试夹具使用标准化路径 | Python 3.10/3.13、Rust 最低版本和四个平台原生 CI 全部通过 |
-| 视觉对象的细分形态不准确 | 检查真实输出，追加软翼与无金属支架的明确约束 | 同一会话继续修正，保留小猫与日落；人工精修单独标注 |
-
-工具说明从 **23,127 → 3,256 字节**；DeepSeek 首轮工具上下文从 **9,924 → 3,607 tokens**。
-固定 200 ms 本地接口替身下，四个独立会话串行约 **953 ms**，并发约 **248 ms**；增加工作线程没有可测收益。
-这些是指定场景的实测结果，真实图像渲染、网络与模型等待另计。
-
-发布前在 Osaka 验证 **Rust 90 项、Python 402 passed / 5 skipped**；
-[完整 CI](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884013213)与
-[发布流程](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884913631)均通过。
-MacBook 已安装并校验正式包，本地五工具、新旧协议与 `server_info` 调用通过；Desktop 窗口生图验收仍由用户手动完成。
-
-完整调试过程见[v0.4.1 调试笔记](docs/v0.4.1-debugging-notes.md)和[原生 harness 验收](docs/harness-validation.md)。
+v0.4.1 发布时的调试和验收记录见[v0.4.1 调试笔记](docs/v0.4.1-debugging-notes.md)、
+[原生客户端验收](docs/harness-validation.md)、
+[当时的完整 CI](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884013213)和
+[发布流程](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884913631)。
+这些历史记录包含迁移前的 Python 测试和性能数据，不代表当前主线的测试数量或最新平台验证结果。
+该轮 MacBook 的五工具、协议与 `server_info` 检查通过，Claude Desktop 窗口生图验收仍需由用户完成。
 
 ---
 
 ## 工程与验证文档
 
-README 展示主要功能、真实案例、安装方法与调试结论；完整实现说明和验证记录见 `docs/` 与 CI：
+实现说明和验证记录：
 
-- [Rust / Python 性能基准](docs/rust-benchmark.md)
+- [Rust-only 开发与验收](docs/rust-only-development.md)
+- [Rust / Python 历史性能基准](docs/rust-benchmark.md)
 - [v0.4.1 调试笔记](docs/v0.4.1-debugging-notes.md)
 - [原生 harness 验收与耗时优化](docs/harness-validation.md)
 - [Rust 兼容性矩阵](docs/rust-compatibility-matrix.md)
@@ -350,6 +334,6 @@ README 展示主要功能、真实案例、安装方法与调试结论；完整�
 - [Python → Rust 迁移与回滚](docs/migration-from-python.md)
 - [贡献与本地验证](CONTRIBUTING.md)
 
-## Star History
+## Star history
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Subaru486desuwa/micu-image-mcp&type=Date)](https://star-history.com/#Subaru486desuwa/micu-image-mcp&Date)
