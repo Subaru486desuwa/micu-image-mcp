@@ -527,7 +527,7 @@ mod tests {
             .image_edit(session_params(serde_json::json!({
                 "prompt": "make clothing red", "image_path": source,
                 "session_id": "new", "context": {"identity": "same face", "clothing": "red shirt"},
-                "model": "gpt-image-2.5-flare", "size": "1536x1024", "quality": "medium",
+                "model": "gpt-image-2.5-flare-openai", "size": "1536x1024", "quality": "medium",
             })))
             .await
             .unwrap();
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(second["session"]["context"]["identity"], "same face");
         assert_eq!(second["session"]["context"]["clothing"], "red shirt");
         assert_eq!(second["session"]["input_path"], first["saved"]["path"]);
-        assert_eq!(second["model"], "gpt-image-2.5-flare");
+        assert_eq!(second["model"], "gpt-image-2.5-flare-openai");
         assert_eq!(second["size"], "1536x1024");
         let captured = provider.prompts_and_inputs.lock().await;
         assert_eq!(

@@ -39,6 +39,24 @@ fn matrix_plan_is_offline_and_paid_modes_require_explicit_switches() {
     let value: serde_json::Value = serde_json::from_slice(&plan.stdout).unwrap();
     assert_eq!(value["cases"].as_array().unwrap().len(), 48);
     assert_eq!(value["paid_requests"], 0);
+    assert_eq!(value["cases"][0]["model"], "gpt-image-2.5-flare-openai");
+    for model in ["gpt-image-2.5-flare", "gpt-image-2.5-flare-openai"] {
+        let plan = Command::new(binary)
+            .args(["quality-matrix", "--models", model])
+            .env_remove("MICU_RUN_LIVE_TESTS")
+            .output()
+            .unwrap();
+        assert!(plan.status.success());
+        let value: serde_json::Value = serde_json::from_slice(&plan.stdout).unwrap();
+        assert_eq!(value["paid_requests"], 0);
+        let cases = value["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 14);
+        assert!(
+            cases
+                .iter()
+                .all(|case| case["model"] == "gpt-image-2.5-flare-openai")
+        );
+    }
     let live = Command::new(binary)
         .args(["quality-matrix", "--live"])
         .env_remove("MICU_RUN_LIVE_TESTS")

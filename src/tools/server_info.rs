@@ -258,13 +258,13 @@ mod tests {
             serde_json::json!([
                 "gpt-image-2",
                 "gpt-image-2-openai",
-                "gpt-image-2.5-flare",
+                "gpt-image-2.5-flare-openai",
                 "gpt-image-2.5-sunburst"
             ])
         );
         assert_eq!(
             info["default_models"]["image_generate"],
-            "gpt-image-2.5-flare"
+            "gpt-image-2.5-flare-openai"
         );
         assert_eq!(
             info["default_models"]["image_edit"],

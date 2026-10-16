@@ -4,7 +4,7 @@ use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
-use crate::domain::routing::{FLARE_MODEL, SUNBURST_MODEL};
+use crate::domain::routing::{FLARE_MODEL, SUNBURST_MODEL, canonical_model};
 
 mod env;
 mod paths;
@@ -159,7 +159,8 @@ impl Config {
         let model_override = environment
             .get("MICU_MODEL")
             .map(|value| value.trim())
-            .filter(|value| !value.is_empty());
+            .filter(|value| !value.is_empty())
+            .map(canonical_model);
 
         Ok(Self {
             base_url,

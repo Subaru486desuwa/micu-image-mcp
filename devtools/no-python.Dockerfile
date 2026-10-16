@@ -10,4 +10,4 @@ RUN cargo build --locked --workspace \
     && cargo build --locked --release --all-features \
     && cargo xtask source-audit \
     && cargo xtask smoke --binary target/release/micu-image-mcp \
-    && cargo xtask release-check --tag v0.4.1
+    && cargo xtask release-check --tag v0.4.2

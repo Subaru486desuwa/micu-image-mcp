@@ -242,15 +242,15 @@ async fn main() -> Result<()> {
         writeln!(
             std::io::stdout().lock(),
             "Access probe: HTTP {status}; flare={}, sunburst={}, image2={}, image2_openai={}",
-            has("gpt-image-2.5-flare"),
+            has("gpt-image-2.5-flare-openai"),
             has("gpt-image-2.5-sunburst"),
             has("gpt-image-2"),
             has("gpt-image-2-openai")
         )?;
         return Ok(());
     }
-    let generate_model =
-        std::env::var("MICU_LIVE_GENERATE_MODEL").unwrap_or_else(|_| "gpt-image-2.5-flare".into());
+    let generate_model = std::env::var("MICU_LIVE_GENERATE_MODEL")
+        .unwrap_or_else(|_| "gpt-image-2.5-flare-openai".into());
     let edit_model =
         std::env::var("MICU_LIVE_EDIT_MODEL").unwrap_or_else(|_| "gpt-image-2.5-sunburst".into());
     // Micu's Image 2.5 channel currently rejects higher qualities despite listing the models.

@@ -8,7 +8,7 @@ For multi-turn editing, the server saves image revisions, successful instruction
 
 ![Micu Image MCP v0.4.1 session memory poster: continuing to edit the same kitten](docs/assets/memory/context-memory-poster.png)
 
-[Installation](#installation) · [Multi-turn editing](#session-memory) · [Models and quality](#models-and-quality) · [Image sizes](#image-sizes) · [Testing and validation](#testing-and-validation) · [v0.4.1 release](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.1)
+[Installation](#installation) · [Multi-turn editing](#session-memory) · [Models and quality](#models-and-quality) · [Image sizes](#image-sizes) · [Testing and validation](#testing-and-validation) · [v0.4.2 release](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.2)
 
 ## Session memory
 
@@ -70,7 +70,8 @@ Desktop's Code mode reads `~/.claude.json`. Regular Chat mode uses a separate `c
 
 ## Models and quality
 
-All four image tools accept `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`, `gpt-image-2`, and `gpt-image-2-openai`. Text-to-image generation defaults to Flare. Editing, batch editing, and multi-reference generation default to Sunburst. Model availability depends on the response from `/v1/models` for your credentials.
+All four image tools accept `gpt-image-2.5-flare-openai`, `gpt-image-2.5-sunburst`, `gpt-image-2`, and `gpt-image-2-openai`. Text-to-image generation defaults to Flare. Editing, batch editing, and multi-reference generation default to Sunburst. Model availability depends on the response from `/v1/models` for your credentials.
+The old ID `gpt-image-2.5-flare` maps automatically to `gpt-image-2.5-flare-openai`, including existing `MICU_MODEL` settings and saved editing sessions.
 
 Live tests of 1K generation and single-image editing on Micu's main endpoint on 2026-10-09 produced these results.
 
@@ -80,7 +81,7 @@ Live tests of 1K generation and single-image editing on Micu's main endpoint on 
 | `gpt-image-2` | `low`, `medium`, `high`, `auto`, or omitted | 2K/4K requests switch to `gpt-image-2-openai`; confirm that your credentials support it |
 | `gpt-image-2-openai` | Not tested | The model was absent from the model list for those credentials |
 
-See the [quality validation record](docs/session-storage.md#在线质量档位验证) for details. These results describe the endpoint and credentials used at that time. The tools retain their full parameter options for other endpoints or future support. See [image sizes](#image-sizes) for routing behavior.
+See the [quality validation record](docs/session-storage.md#在线质量档位验证) for details. These results describe the endpoint and credentials used at that time, with Flare using its old ID. The new ID has not undergone paid image validation. The tools retain their full parameter options for other endpoints or future support. See [image sizes](#image-sizes) for routing behavior.
 
 The Grok implementation remains in the repository but is disabled. The tools reject Grok models.
 

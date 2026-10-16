@@ -12,7 +12,7 @@ cargo test --locked --workspace --all-targets --all-features
 cargo build --locked --release --all-features
 cargo xtask source-audit
 cargo xtask smoke --binary target/release/micu-image-mcp
-cargo xtask release-check --tag v0.4.1
+cargo xtask release-check --tag v0.4.2
 ```
 
 Windows 的 binary 路径带 `.exe`。测试通过 Cargo 指定的真实产品 binary 发送 STDIO，缺少 binary 直接失败。离线驱动清空继承环境，使用临时 HOME、独立输出目录、本地 HTTP fixture、占位凭据；不读取个人 API 配置，不向付费服务发请求。新旧 MCP 目录、参数矩阵、HTTP JSON/multipart、重试、响应上限、SSRF、输入/输出路径、持久会话和安装配置都在 Rust suite 中运行。

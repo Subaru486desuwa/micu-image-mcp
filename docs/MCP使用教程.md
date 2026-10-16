@@ -16,8 +16,9 @@
 
 生成的图片会**自动保存到本地磁盘**，返回结果中包含文件的绝对路径，方便你在 IDE 或文件管理器中打开。
 
-当前支持 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
-`gpt-image-2-openai`。Grok 生图渠道暂时关闭，待服务器支持后再启用。
+当前支持 `gpt-image-2.5-flare-openai`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
+`gpt-image-2-openai`。旧 ID `gpt-image-2.5-flare` 自动映射到新的 Flare ID，包括已有配置和会话。
+Grok 生图渠道暂时关闭，待服务器支持后再启用。
 
 ---
 

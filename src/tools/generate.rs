@@ -569,13 +569,13 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result["ok"], true, "{result}");
-        assert_eq!(result["model"], "gpt-image-2.5-flare");
+        assert_eq!(result["model"], "gpt-image-2.5-flare-openai");
         assert_eq!(result["requested_n"], 1);
         assert_eq!(result["saved"][0]["actual_size"], "32x24");
         assert_eq!(
             provider.calls.lock().await.as_slice(),
             &[(
-                "gpt-image-2.5-flare".into(),
+                "gpt-image-2.5-flare-openai".into(),
                 "1024x1024".into(),
                 "url".into()
             )]

@@ -162,13 +162,17 @@ impl Relay {
 pub fn quality_matrix(models: &[String], sizes: &[String]) -> Result<Vec<Value>> {
     let mut cases = Vec::new();
     for model in models {
+        let model = match model.as_str() {
+            "gpt-image-2.5-flare" => "gpt-image-2.5-flare-openai",
+            model => model,
+        };
         if ![
-            "gpt-image-2.5-flare",
+            "gpt-image-2.5-flare-openai",
             "gpt-image-2.5-sunburst",
             "gpt-image-2",
             "gpt-image-2-openai",
         ]
-        .contains(&model.as_str())
+        .contains(&model)
         {
             return Err("unknown matrix model".into());
         }

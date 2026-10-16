@@ -2,10 +2,18 @@ use super::size::{SizeTier, parse_size, round_to_alignment, size_tier, validate_
 
 pub const STANDARD_MODEL: &str = "gpt-image-2";
 pub const QUALITY_MODEL: &str = "gpt-image-2-openai";
-pub const FLARE_MODEL: &str = "gpt-image-2.5-flare";
+pub const FLARE_MODEL: &str = "gpt-image-2.5-flare-openai";
+pub const LEGACY_FLARE_MODEL: &str = "gpt-image-2.5-flare";
 pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
 pub const SUPPORTED_IMAGE_MODELS: [&str; 4] =
     [STANDARD_MODEL, QUALITY_MODEL, FLARE_MODEL, SUNBURST_MODEL];
+
+pub fn canonical_model(model: &str) -> &str {
+    match model {
+        LEGACY_FLARE_MODEL => FLARE_MODEL,
+        _ => model,
+    }
+}
 
 pub fn is_grok_model(model: Option<&str>) -> bool {
     model.is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("grok-"))
@@ -13,7 +21,7 @@ pub fn is_grok_model(model: Option<&str>) -> bool {
 
 pub fn model_error(requested: Option<&str>, default_model: &str) -> Option<String> {
     let model = requested.unwrap_or(default_model);
-    if SUPPORTED_IMAGE_MODELS.contains(&model) {
+    if SUPPORTED_IMAGE_MODELS.contains(&canonical_model(model)) {
         return None;
     }
     let supported = SUPPORTED_IMAGE_MODELS.join(" / ");
@@ -33,9 +41,13 @@ pub fn resolve_model(
     default_model: &str,
     size: &str,
 ) -> (String, Vec<String>) {
-    let mut model = requested.unwrap_or(default_model).to_owned();
+    let requested_model = requested.unwrap_or(default_model);
+    let mut model = canonical_model(requested_model).to_owned();
     let tier = size_tier(size);
     let mut notes = Vec::new();
+    if model != requested_model {
+        notes.push(format!("模型 ID {requested_model} 已更新为 {model}"));
+    }
     if is_large_tier(tier) && model == STANDARD_MODEL {
         notes.push(format!(
             "size={size} ({}) 已自动切到高质量线路 {QUALITY_MODEL}",
@@ -269,6 +281,7 @@ mod tests {
         assert_eq!(model_error(Some(STANDARD_MODEL), STANDARD_MODEL), None);
         assert_eq!(model_error(Some(QUALITY_MODEL), STANDARD_MODEL), None);
         assert_eq!(model_error(Some(FLARE_MODEL), STANDARD_MODEL), None);
+        assert_eq!(model_error(Some(LEGACY_FLARE_MODEL), STANDARD_MODEL), None);
         assert_eq!(model_error(Some(SUNBURST_MODEL), STANDARD_MODEL), None);
         assert!(
             model_error(Some(" gpt-image-2 "), STANDARD_MODEL)
@@ -278,6 +291,29 @@ mod tests {
             model_error(Some("GROK-imagine-image"), STANDARD_MODEL)
                 .is_some_and(|text| text.contains("Grok 生图渠道暂时关闭"))
         );
+    }
+
+    #[test]
+    fn flare_alias_is_exact_and_preserves_size_and_scheduling_policy() {
+        for size in ["1024x1024", "2048x1152", "3840x2160"] {
+            assert_eq!(
+                resolve_model(Some(FLARE_MODEL), STANDARD_MODEL, size),
+                (FLARE_MODEL.into(), vec![])
+            );
+            let (model, notes) = resolve_model(Some(LEGACY_FLARE_MODEL), STANDARD_MODEL, size);
+            assert_eq!(model, FLARE_MODEL);
+            assert!(notes[0].contains("已更新为 gpt-image-2.5-flare-openai"));
+            assert_eq!(resolve_model(None, LEGACY_FLARE_MODEL, size).0, FLARE_MODEL);
+        }
+        assert!(!is_quality_model(FLARE_MODEL));
+        for invalid in [
+            "gpt-image-2.5-flare-openai-openai",
+            " gpt-image-2.5-flare",
+            "gpt-image-2.5-flare ",
+            "GPT-IMAGE-2.5-FLARE-OPENAI",
+        ] {
+            assert!(model_error(Some(invalid), FLARE_MODEL).is_some());
+        }
     }
 
     #[test]
