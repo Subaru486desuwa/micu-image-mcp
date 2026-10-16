@@ -195,7 +195,7 @@ fn data_urls_downloads_and_auto_fallback_preserve_security_and_saved_results() -
         server.initialize()?;
         let result = server.call(
             "image_generate",
-            json!({"prompt":format!("[scenario:{scenario}] save"),"size":"1024x1024"}),
+            json!({"prompt":format!("[scenario:{scenario}] save"),"size":"1024x1024","model":"gpt-image-2"}),
         )?;
         assert_eq!(result["ok"], true, "scenario {scenario}: {result}");
         let path = Path::new(result["saved"][0]["path"].as_str().unwrap());
@@ -302,11 +302,7 @@ fn retries_errors_and_response_limits_are_verified_at_the_http_boundary() -> Res
         }
         assert_eq!(
             api.requests().len(),
-            if success || matches!(scenario, "invalid_json" | "no_image") {
-                2
-            } else {
-                1
-            },
+            if success { 2 } else { 1 },
             "scenario {scenario}: errors={}, notes={}, fixture_errors={:?}",
             result["errors"]
                 .to_string()

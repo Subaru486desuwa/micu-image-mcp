@@ -186,6 +186,23 @@ impl Config {
             api_request_timeout,
         })
     }
+
+    /// Flare selects its output format upstream. Retrying with another format
+    /// would submit the same image request again without changing its payload.
+    pub fn response_formats_for_model(
+        &self,
+        model: &str,
+    ) -> impl Iterator<Item = Option<&'static str>> + '_ {
+        let explicit = canonical_model(model) != FLARE_MODEL;
+        self.response_formats_to_try
+            .iter()
+            .take(if explicit {
+                self.response_formats_to_try.len()
+            } else {
+                1
+            })
+            .map(move |format| explicit.then_some(*format))
+    }
 }
 
 pub fn is_safe_base_url(url: &Url) -> bool {

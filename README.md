@@ -8,7 +8,7 @@
 
 ![Micu Image MCP v0.4.1 上下文记忆海报：沿用同一只小猫，继续细化图片](docs/assets/memory/context-memory-poster.png)
 
-[安装](#安装) · [连续编辑](#上下文记忆) · [模型与质量](#模型与质量) · [尺寸规则](#尺寸规则) · [调试与验证](#调试与验证) · [v0.4.2 发布说明](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.2)
+[安装](#安装) · [连续编辑](#上下文记忆) · [模型与质量](#模型与质量) · [尺寸规则](#尺寸规则) · [调试与验证](#调试与验证) · [v0.4.3 发布说明](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.3)
 
 ## 上下文记忆
 
@@ -79,6 +79,9 @@ Desktop 的 Code 模式读取 `~/.claude.json`；普通 Chat 模式使用独立�
 四个图像工具都接受 `gpt-image-2.5-flare-openai`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和 `gpt-image-2-openai`。
 文生图默认 Flare，编辑、批量编辑和多图参考默认 Sunburst。实际可用模型以当前凭据访问 `/v1/models` 的结果为准。
 旧 ID `gpt-image-2.5-flare` 自动映射到 `gpt-image-2.5-flare-openai`，已有 `MICU_MODEL` 配置和图片会话可继续使用。
+Flare 的 Images 请求不发送 `response_format`，直接保存上游返回的 base64 或 URL 图片。下载或响应解析失败时，不通过更换格式重复提交生图请求。所有图像工具只走 `/v1/images/generations` 或 `/v1/images/edits`，不调用 Responses API。
+
+2026-10-16，v0.4.3 Release 候选在米醋主站完成默认 Flare 生图与重启后的会话编辑，两次 Images 请求均返回 HTTP 200 和 1024×1024 图片，均省略 `quality` 与 `response_format`。
 
 2026-10-09 米醋主站的 1K 生成与单图编辑实测结果如下。
 
@@ -88,7 +91,7 @@ Desktop 的 Code 模式读取 `~/.claude.json`；普通 Chat 模式使用独立�
 | `gpt-image-2` | `low`、`medium`、`high`、`auto` 或省略 | 2K/4K 会自动切换到 `gpt-image-2-openai`，需确认凭据支持该模型 |
 | `gpt-image-2-openai` | 未验证 | 当次凭据的模型列表未包含该模型 |
 
-完整记录见[在线质量档位验证](docs/session-storage.md#在线质量档位验证)。这些结果对应当时的线路和凭据，Flare 使用改名前的 ID；新 ID 尚未进行付费生图验证。
+完整记录见[在线质量档位验证](docs/session-storage.md#在线质量档位验证)。这些结果对应当时的线路和凭据，Flare 使用改名前的 ID。
 工具保留完整参数选项，以兼容其他线路或后续支持；尺寸路由见[尺寸规则](#尺寸规则)。
 Grok 实现保留但暂时禁用，工具会拒绝相关模型。
 
@@ -260,7 +263,7 @@ cargo xtask smoke --binary /absolute/path/micu-image-mcp
 | `MICU_SAVE_DIR_ROOT` | 同输出目录 | 输出安全根目录 |
 | `MICU_INPUT_ROOT` | 空（不限制） | 可选输入图片白名单根；启用后阻止路径/符号链接逃逸 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取进程环境中的代理设置 |
-| `MICU_RESPONSE_FORMAT` | `auto` | `auto` 优先 URL、回退 base64，也可指定 `url` 或 `b64_json` |
+| `MICU_RESPONSE_FORMAT` | `auto` | 旧模型可选 `auto`、`url`、`b64_json`；Flare 不发送此参数，按上游返回保存 |
 | `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | 可信下载域名，逗号分隔 |
 | `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | 仅允许可信域名使用 198.18.0.0/15 fake-ip 下载 |
 

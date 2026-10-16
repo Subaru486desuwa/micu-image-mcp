@@ -11,7 +11,7 @@ use std::{
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 struct Server {
     child: Child,
@@ -22,13 +22,24 @@ struct Server {
 
 impl Server {
     fn start(binary: &Path, root: &Path, key: &SecretString) -> Result<Self> {
+        Self::start_with_options(binary, root, key, "https://www.micuapi.ai", "url")
+    }
+
+    fn start_with_options(
+        binary: &Path,
+        root: &Path,
+        key: &SecretString,
+        base_url: &str,
+        response_format: &str,
+    ) -> Result<Self> {
         let mut child = Command::new(binary)
             .env("MICU_API_KEY", key.expose_secret())
-            .env("MICU_BASEURL", "https://www.micuapi.ai")
+            .env("MICU_BASEURL", base_url)
             .env("MICU_SAVE_DIR", root)
             .env("MICU_SAVE_DIR_ROOT", root)
             .env("MICU_INPUT_ROOT", root)
-            .env("MICU_RESPONSE_FORMAT", "url")
+            .env("MICU_RESPONSE_FORMAT", response_format)
+            .env("MICU_UPDATE_CHECK", "0")
             .env("MICU_USE_SHELL_PROXY", "0")
             .env_remove("MICU_MODEL")
             .stdin(Stdio::piped())
@@ -190,6 +201,84 @@ fn stage(
     Ok(path)
 }
 
+fn quick_images_acceptance(binary: &Path, output: &Path, key: &SecretString) -> Result<()> {
+    let relay =
+        micu_devtools::live::Relay::new("https://www.micuapi.ai", key.expose_secret(), true, 2)?;
+    let mut server = Server::start_with_options(binary, output, key, &relay.http.url, "auto")?;
+    let info = server.request(
+        2,
+        "tools/call",
+        json!({"name":"server_info","arguments":{}}),
+    )?;
+    let version = info["structuredContent"]["version"].clone();
+    let model = info["structuredContent"]["default_model"].clone();
+    if version != env!("CARGO_PKG_VERSION") || model != "gpt-image-2.5-flare-openai" {
+        return Err("live probe did not start the expected candidate/default model".into());
+    }
+    let mut report = Vec::new();
+    let started = Instant::now();
+    let first = server.call(3, "image_generate", json!({
+        "prompt":"A single cobalt blue ceramic coffee cup on a plain white tabletop, centered product photograph, soft light, no text or logo.",
+        "size":"1024x1024", "n":1, "session_id":"new", "basename":"01_default_flare"
+    }))?;
+    let first_path = stage(
+        &mut report,
+        "default_flare_generation",
+        started,
+        &first,
+        true,
+    )?;
+    let id = first["session"]["id"]
+        .as_str()
+        .ok_or("generated session missing")?;
+    drop(server);
+    let mut server = Server::start_with_options(binary, output, key, &relay.http.url, "auto")?;
+    let started = Instant::now();
+    let edited = server.call(2, "image_edit", json!({
+        "prompt":"Change only the ceramic cup color to bright yellow. Preserve its shape, position, handle, tabletop, white background and lighting.",
+        "session_id":id, "basename":"02_flare_edit"
+    }))?;
+    stage(
+        &mut report,
+        "flare_edit_after_restart",
+        started,
+        &edited,
+        false,
+    )?;
+    if first["model"] != model
+        || edited["model"] != model
+        || first["session"]["revision"] != 1
+        || edited["session"]["revision"] != 2
+        || edited["session"]["parent_revision"] != 1
+        || edited["session"]["input_path"].as_str() != first_path.to_str()
+    {
+        return Err("live default generation/edit session contract failed".into());
+    }
+    let requests = relay.records();
+    if requests.len() != 2
+        || requests[0]["path"] != "/v1/images/generations"
+        || requests[1]["path"] != "/v1/images/edits"
+        || requests
+            .iter()
+            .any(|request| request["status"] != 200 || request["response_format_present"] != false)
+    {
+        return Err("live Images-only request/response_format contract failed".into());
+    }
+    std::fs::write(
+        output.join("live-report.json"),
+        serde_json::to_vec_pretty(&json!({
+            "status":"requests_completed", "visual_review":"pending", "version":version,
+            "default_model":model, "paid_calls_requested":2, "upstream_requests":requests, "stages":report
+        }))?,
+    )?;
+    writeln!(
+        std::io::stdout().lock(),
+        "Two live Images API calls passed; report: {}",
+        output.join("live-report.json").display()
+    )?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     if std::env::var("MICU_RUN_LIVE_TESTS").as_deref() != Ok("1") {
@@ -214,6 +303,12 @@ async fn main() -> Result<()> {
         Some(key) => key.into(),
         None => rpassword::prompt_password("API key (hidden): ")?.into(),
     };
+    if std::env::var("MICU_LIVE_QUICK_IMAGES").as_deref() == Ok("1") {
+        return tokio::task::spawn_blocking(move || {
+            quick_images_acceptance(&binary, &output, &key)
+        })
+        .await?;
+    }
     if std::env::var("MICU_LIVE_CHECK_MODELS").as_deref() == Ok("1") {
         let client = reqwest::Client::builder()
             .no_proxy()

@@ -42,10 +42,12 @@ impl ImageProvider for Image2Provider {
         body.insert("prompt".into(), Value::String(request.prompt.into()));
         body.insert("n".into(), Value::from(1));
         body.insert("size".into(), Value::String(request.size.into()));
-        body.insert(
-            "response_format".into(),
-            Value::String(request.response_format.into()),
-        );
+        if let Some(response_format) = request.response_format {
+            body.insert(
+                "response_format".into(),
+                Value::String(response_format.into()),
+            );
+        }
         if let Some(quality) = request.quality {
             body.insert("quality".into(), Value::String(quality.into()));
         }
@@ -73,8 +75,10 @@ impl ImageProvider for Image2Provider {
             ("model".into(), request.model.into()),
             ("prompt".into(), request.prompt.into()),
             ("size".into(), request.size.into()),
-            ("response_format".into(), request.response_format.into()),
         ];
+        if let Some(response_format) = request.response_format {
+            fields.push(("response_format".into(), response_format.into()));
+        }
         if let Some(quality) = request.quality {
             fields.push(("quality".into(), quality.into()));
         }

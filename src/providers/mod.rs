@@ -15,7 +15,7 @@ pub struct GenerateRequest<'a> {
     pub prompt: &'a str,
     pub size: &'a str,
     pub quality: Option<&'a str>,
-    pub response_format: &'a str,
+    pub response_format: Option<&'a str>,
 }
 
 pub struct EditRequest<'a> {
@@ -23,7 +23,7 @@ pub struct EditRequest<'a> {
     pub prompt: &'a str,
     pub size: &'a str,
     pub quality: Option<&'a str>,
-    pub response_format: &'a str,
+    pub response_format: Option<&'a str>,
     pub images: &'a [(&'a str, &'a ValidatedImage)],
     pub mask: Option<&'a ValidatedImage>,
 }

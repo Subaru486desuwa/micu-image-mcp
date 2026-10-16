@@ -350,9 +350,11 @@ impl ToolEngine {
         let mut notes = Vec::new();
         let mut last_error: Option<String> = None;
         for (format_index, response_format) in
-            self.config.response_formats_to_try.iter().enumerate()
+            self.config.response_formats_for_model(model).enumerate()
         {
-            if format_index > 0 {
+            if format_index > 0
+                && let Some(response_format) = response_format
+            {
                 notes.push(format!(
                     "URL 落盘失败（{}）→ 重试 API response_format={response_format}",
                     last_error.as_deref().unwrap_or("保存失败")
@@ -388,7 +390,9 @@ impl ToolEngine {
                 .await
             {
                 Ok(saved) => {
-                    if format_index > 0 {
+                    if format_index > 0
+                        && let Some(response_format) = response_format
+                    {
                         notes.push(format!("已通过 response_format={response_format} 成功落盘"));
                     }
                     return GenerateOneResult {
@@ -458,7 +462,7 @@ mod tests {
 
     struct FakeProvider {
         body: Vec<u8>,
-        calls: Mutex<Vec<(String, String, String)>>,
+        calls: Mutex<Vec<(String, String, Option<String>)>>,
         active: AtomicUsize,
         max_active: AtomicUsize,
     }
@@ -475,7 +479,7 @@ mod tests {
             self.calls.lock().await.push((
                 request.model.into(),
                 request.size.into(),
-                request.response_format.into(),
+                request.response_format.map(str::to_owned),
             ));
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_active.fetch_max(active, Ordering::SeqCst);
@@ -577,7 +581,7 @@ mod tests {
             &[(
                 "gpt-image-2.5-flare-openai".into(),
                 "1024x1024".into(),
-                "url".into()
+                None
             )]
         );
     }

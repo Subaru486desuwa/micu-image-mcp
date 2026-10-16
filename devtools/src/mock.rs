@@ -780,6 +780,27 @@ impl MockMicu {
                     &[],
                 );
             }
+            if !matches!(
+                request_path(&request).as_str(),
+                "/v1/images/generations" | "/v1/images/edits"
+            ) {
+                return respond_json(
+                    request,
+                    404,
+                    json!({"error":{"message":"Image models require the Images API"}}),
+                    &[],
+                );
+            }
+            if fields["model"] == "gpt-image-2.5-flare-openai"
+                && fields.get("response_format").is_some()
+            {
+                return respond_json(
+                    request,
+                    400,
+                    json!({"error":{"message":"Unknown parameter: 'response_format'"}}),
+                    &[],
+                );
+            }
             let public_url = public.lock().map_err(|_| "fixture lock poisoned")?.clone();
             let response_scenario = if exact_images && scenario == "b64" {
                 "exact_b64"

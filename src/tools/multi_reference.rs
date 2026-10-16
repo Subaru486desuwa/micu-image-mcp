@@ -116,10 +116,14 @@ impl ToolEngine {
         };
         let mut saved = None;
         let mut last_error: Option<String> = None;
-        for (format_index, response_format) in
-            self.config.response_formats_to_try.iter().enumerate()
+        for (format_index, response_format) in self
+            .config
+            .response_formats_for_model(&effective_model)
+            .enumerate()
         {
-            if format_index > 0 {
+            if format_index > 0
+                && let Some(response_format) = response_format
+            {
                 notes.push(format!(
                     "URL 落盘失败（{}）→ 重试 API response_format={response_format}",
                     last_error.as_deref().unwrap_or("保存失败")
@@ -156,7 +160,9 @@ impl ToolEngine {
                 .await
             {
                 Ok(image) => {
-                    if format_index > 0 {
+                    if format_index > 0
+                        && let Some(response_format) = response_format
+                    {
                         notes.push(format!("已通过 response_format={response_format} 成功落盘"));
                     }
                     saved = Some(image);

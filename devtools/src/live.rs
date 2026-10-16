@@ -78,7 +78,20 @@ impl Relay {
                     );
                 }
                 let index = events.len();
-                events.push(json!({"sequence":index+1,"path":path,"request_bytes":bytes.len()}));
+                let mut event = json!({"sequence":index+1,"path":path,"request_bytes":bytes.len()});
+                if images {
+                    let response_format_present =
+                        if header(&request, "Content-Type").starts_with("application/json") {
+                            serde_json::from_slice::<Value>(&bytes)
+                                .ok()
+                                .is_some_and(|value| value.get("response_format").is_some())
+                        } else {
+                            let field = b"name=\"response_format\"";
+                            bytes.windows(field.len()).any(|window| window == field)
+                        };
+                    event["response_format_present"] = json!(response_format_present);
+                }
+                events.push(event);
                 index
             };
             let mut target = origin.clone();

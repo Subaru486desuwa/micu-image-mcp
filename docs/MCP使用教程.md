@@ -167,7 +167,7 @@ HTTP 524: A timeout occurred
 
 **当前版本默认已双层修复，通常无需改代理：**
 
-1. **主路径** `MICU_RESPONSE_FORMAT=auto`（默认）：先请求 `url` 并下载落盘，失败再重试 `b64_json`
+1. Flare 不发送 `response_format`，直接保存 Images API 返回的 base64 或 URL 图片。下载或解析失败时返回错误，不为切换格式重复生图。其他模型仍支持 `MICU_RESPONSE_FORMAT=auto`（默认），先请求 `url`，落盘失败再请求 `b64_json`。
 2. **URL 路径** `MICU_ALLOW_FAKE_IP_DOWNLOAD=1`（默认）：可信 CDN（`oss.filenest.top`）解析到 fake-ip 时仍允许下载，**不影响 VPN 正常功能**
 
 若仍失败，可检查 `server_info` 中 `response_format` / `allow_fake_ip_download` 是否为预期值；或临时在代理中将 `oss.filenest.top` 加入 fake-ip 排除列表。
