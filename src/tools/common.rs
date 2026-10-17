@@ -46,9 +46,11 @@ pub fn resolve_key(
         }
     }
     if config.api_key.expose_secret().trim().is_empty() {
-        return Err(ToolFailure(
-            "未配置 API key。请设置 MICU_API_KEY 环境变量，或在调用时传 api_key 参数。".into(),
-        ));
+        return Err(ToolFailure(format!(
+            "API key 不可用（{:?}）。{} 也可设置 MICU_API_KEY 或在调用时传 api_key。",
+            config.credential_status,
+            crate::credentials::CREDENTIAL_RECOVERY
+        )));
     }
     Ok(config.api_key.clone())
 }

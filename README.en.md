@@ -169,14 +169,19 @@ target/release/micu-image-mcp install --yes --dev \
 
 ### macOS Keychain
 
-At startup, the executable reads the API key from macOS Keychain using a service and account name. For an existing custom Keychain item, set `MICU_KEYCHAIN_SERVICE` and `MICU_KEYCHAIN_ACCOUNT` to match it. This example creates an item manually and configures Codex:
+macOS background startup (`serve` and `doctor`) only attempts noninteractive reads. A locked keychain or missing application authorization never opens a password dialog. MCP can still connect; `server_info.credentials.status` reports the credential state and image requests explain how to recover.
+
+To authorize an existing key, run the **same executable used by your client configuration** in a terminal:
 
 ```bash
-security add-generic-password \
-  -U -a "$USER" -s ai.micuapi.mcp \
-  -l "Micu Image MCP API Key" \
-  -T /usr/bin/security -w
+"$HOME/Library/Application Support/micu-image-mcp/bin/micu-image-mcp" credentials authorize
+# First setup or replacement: hidden input, system store, no client config changes
+"$HOME/Library/Application Support/micu-image-mcp/bin/micu-image-mcp" credentials set
 ```
+
+Only these explicit operations and the installer may request authorization. Denial exits once without retrying. `authorize` verifies noninteractive access before reporting success; reconnect MCP afterward. Updating a binary without a stable signing identity may require renewed authorization, but background startup will not repeatedly prompt. A nonempty `MICU_API_KEY` takes priority and bypasses Keychain entirely.
+
+The default item remains service=`micu-image-mcp`, account=`image2-api-key`. Existing custom items can keep the configuration below; set the same `MICU_KEYCHAIN_SERVICE` and `MICU_KEYCHAIN_ACCOUNT` when running the commands above:
 
 ```toml
 [mcp_servers.micu-image]

@@ -185,15 +185,19 @@ target/release/micu-image-mcp install --yes --dev \
 
 ### macOS Keychain
 
-程序启动时按 service/account 从 macOS Keychain 读取 API key。已有自定义 Keychain 项时，
-让 `MICU_KEYCHAIN_SERVICE` 和 `MICU_KEYCHAIN_ACCOUNT` 与该项一致。下例手动创建凭据项并配置 Codex：
+macOS 后台启动（包括 `serve`、`doctor`）只尝试无交互读取，钥匙串锁定或程序未获授权时不会弹密码窗口。MCP 仍能连接；`server_info.credentials.status` 会说明凭据状态，生图请求会提示恢复方法。
+
+需要授权已有 Key 时，在终端运行 **客户端配置中同一个可执行文件**：
 
 ```bash
-security add-generic-password \
-  -U -a "$USER" -s ai.micuapi.mcp \
-  -l "Micu Image MCP API Key" \
-  -T /usr/bin/security -w
+"$HOME/Library/Application Support/micu-image-mcp/bin/micu-image-mcp" credentials authorize
+# 首次设置或更换 Key：隐藏输入并保存到系统安全凭据，不改客户端配置
+"$HOME/Library/Application Support/micu-image-mcp/bin/micu-image-mcp" credentials set
 ```
+
+只有这些显式操作和安装器可以发起授权；拒绝后立即退出，不自动重试。`authorize` 会再次验证无交互读取，验证成功后重连 MCP。升级未稳定签名的程序可能使系统重新要求授权，但后台不会因此循环弹窗。`MICU_API_KEY` 非空时优先使用环境变量，不访问钥匙串。
+
+默认凭据项仍为 service=`micu-image-mcp`、account=`image2-api-key`。已有自定义项可保留以下配置；执行上述命令时也要设置相同的 `MICU_KEYCHAIN_SERVICE` 和 `MICU_KEYCHAIN_ACCOUNT`：
 
 ```toml
 [mcp_servers.micu-image]

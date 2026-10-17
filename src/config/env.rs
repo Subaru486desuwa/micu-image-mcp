@@ -2,11 +2,26 @@ use std::{collections::BTreeMap, env::VarError, fmt};
 
 use thiserror::Error;
 
-use crate::credentials::{DEFAULT_CREDENTIAL_ACCOUNT, DEFAULT_CREDENTIAL_SERVICE, load_api_key};
+use crate::credentials::{
+    CredentialInteraction, CredentialReader, DEFAULT_CREDENTIAL_ACCOUNT,
+    DEFAULT_CREDENTIAL_SERVICE, SystemCredentials,
+};
 
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct EnvironmentSnapshot {
     values: BTreeMap<String, String>,
+    credential_status: CredentialStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialStatus {
+    Environment,
+    SystemStore,
+    #[default]
+    Missing,
+    AccessRequired,
+    Unavailable,
 }
 
 #[derive(Debug, Error)]
@@ -29,11 +44,22 @@ impl EnvironmentSnapshot {
                 }
             }
         }
-        Ok(Self { values })
+        Ok(Self::from_map(values))
     }
 
     pub fn from_map(values: BTreeMap<String, String>) -> Self {
-        Self { values }
+        let credential_status = if values
+            .get("MICU_API_KEY")
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            CredentialStatus::Environment
+        } else {
+            CredentialStatus::Missing
+        };
+        Self {
+            values,
+            credential_status,
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<&str> {
@@ -45,15 +71,29 @@ impl EnvironmentSnapshot {
     }
 
     pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) {
-        self.values.insert(name.into(), value.into());
+        let name = name.into();
+        let value = value.into();
+        if name == "MICU_API_KEY" {
+            self.credential_status = if value.trim().is_empty() {
+                CredentialStatus::Missing
+            } else {
+                CredentialStatus::Environment
+            };
+        }
+        self.values.insert(name, value);
     }
 
     pub fn load_platform_secrets(&mut self) {
+        self.load_platform_secrets_with(&SystemCredentials);
+    }
+
+    pub fn load_platform_secrets_with(&mut self, reader: &dyn CredentialReader) {
         if self
             .values
             .get("MICU_API_KEY")
             .is_some_and(|value| !value.trim().is_empty())
         {
+            self.credential_status = CredentialStatus::Environment;
             return;
         }
         let service = self
@@ -68,11 +108,22 @@ impl EnvironmentSnapshot {
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
             .unwrap_or(DEFAULT_CREDENTIAL_ACCOUNT);
-        if let Ok(Some(secret)) = load_api_key(service, account)
-            && !secret.trim().is_empty()
-        {
-            self.values.insert("MICU_API_KEY".into(), secret);
-        }
+        self.credential_status =
+            match reader.read(service, account, CredentialInteraction::Forbidden) {
+                Ok(Some(secret)) if !secret.trim().is_empty() => {
+                    self.values.insert("MICU_API_KEY".into(), secret);
+                    CredentialStatus::SystemStore
+                }
+                Ok(_) => CredentialStatus::Missing,
+                Err(crate::credentials::CredentialStoreError::AccessRequired) => {
+                    CredentialStatus::AccessRequired
+                }
+                Err(_) => CredentialStatus::Unavailable,
+            };
+    }
+
+    pub fn credential_status(&self) -> CredentialStatus {
+        self.credential_status
     }
 }
 

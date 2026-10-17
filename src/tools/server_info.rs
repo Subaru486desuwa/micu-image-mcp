@@ -50,7 +50,18 @@ impl ToolEngine {
         set_top(
             &mut info,
             "api_key_configured",
-            Value::Bool(!self.config.api_key.expose_secret().is_empty()),
+            Value::Bool(!self.config.api_key.expose_secret().trim().is_empty()),
+        )?;
+        set_top(
+            &mut info,
+            "credentials",
+            serde_json::json!({
+                "status": self.config.credential_status,
+                "macos_background_ui": "forbidden",
+                "recovery": if self.config.api_key.expose_secret().trim().is_empty() {
+                    Some(crate::credentials::CREDENTIAL_RECOVERY)
+                } else { None },
+            }),
         )?;
         let response_format = match self.config.response_format {
             ResponseFormat::Auto => "auto",

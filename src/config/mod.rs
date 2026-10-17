@@ -11,7 +11,7 @@ use crate::domain::routing::{
 mod env;
 mod paths;
 
-pub use env::{EnvironmentError, EnvironmentSnapshot};
+pub use env::{CredentialStatus, EnvironmentError, EnvironmentSnapshot};
 #[cfg(test)]
 pub(crate) use paths::test_paths;
 pub use paths::{AppPaths, PathError, PathPolicy, PathSource};
@@ -50,6 +50,7 @@ pub enum ResponseFormat {
 pub struct Config {
     pub base_url: Url,
     pub api_key: SecretString,
+    pub credential_status: CredentialStatus,
     pub default_model: String,
     pub default_edit_model: String,
     pub use_shell_proxy: bool,
@@ -78,7 +79,9 @@ impl Config {
     }
 
     pub fn from_env(environment: &EnvironmentSnapshot) -> Result<Self, ConfigError> {
-        Self::from_map(environment.as_map())
+        let mut config = Self::from_map(environment.as_map())?;
+        config.credential_status = environment.credential_status();
+        Ok(config)
     }
 
     pub fn from_map(environment: &BTreeMap<String, String>) -> Result<Self, ConfigError> {
@@ -142,6 +145,14 @@ impl Config {
 
         Ok(Self {
             base_url,
+            credential_status: if environment
+                .get("MICU_API_KEY")
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                CredentialStatus::Environment
+            } else {
+                CredentialStatus::Missing
+            },
             api_key: environment
                 .get("MICU_API_KEY")
                 .cloned()

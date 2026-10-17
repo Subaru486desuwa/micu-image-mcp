@@ -33,8 +33,14 @@ pub enum AppError {
 
 impl AppState {
     pub fn load() -> Result<Self, AppError> {
+        Self::load_with_credentials(&crate::credentials::SystemCredentials)
+    }
+
+    pub fn load_with_credentials(
+        reader: &dyn crate::credentials::CredentialReader,
+    ) -> Result<Self, AppError> {
         let mut environment = EnvironmentSnapshot::capture(ENV_KEYS)?;
-        environment.load_platform_secrets();
+        environment.load_platform_secrets_with(reader);
         let source = PathSource::capture()?;
         let config = Arc::new(Config::from_env(&environment)?);
         let paths = Arc::new(AppPaths::resolve(&environment, source)?);

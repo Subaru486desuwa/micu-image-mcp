@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "micu-image-mcp"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1516,6 +1516,7 @@ dependencies = [
  "rmcp",
  "rpassword",
  "secrecy",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2",

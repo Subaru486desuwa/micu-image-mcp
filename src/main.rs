@@ -56,8 +56,21 @@ enum Command {
     },
     /// Diagnose configuration and runtime prerequisites.
     Doctor,
+    /// Manage credentials explicitly; never rewrites MCP client configuration.
+    Credentials {
+        #[command(subcommand)]
+        action: CredentialCommand,
+    },
     /// Print the project version.
     Version,
+}
+
+#[derive(Debug, Subcommand)]
+enum CredentialCommand {
+    /// Authorize the existing key, then verify that background access works.
+    Authorize,
+    /// Enter a replacement key without echoing it and save to the system store.
+    Set,
 }
 
 #[tokio::main]
@@ -108,6 +121,42 @@ async fn run() -> Result<(), Box<dyn Error>> {
         })
         .map_err(Into::into),
         Command::Doctor => installer::doctor().map_err(Into::into),
+        Command::Credentials { action } => {
+            use micu_image_mcp::{
+                config::{ENV_KEYS, EnvironmentSnapshot},
+                credentials::*,
+            };
+            let environment = EnvironmentSnapshot::capture(ENV_KEYS)?;
+            let service = environment
+                .get("MICU_KEYCHAIN_SERVICE")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(DEFAULT_CREDENTIAL_SERVICE);
+            let account = environment
+                .get("MICU_KEYCHAIN_ACCOUNT")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(DEFAULT_CREDENTIAL_ACCOUNT);
+            if matches!(action, CredentialCommand::Set) {
+                use std::io::IsTerminal;
+                if !std::io::stdin().is_terminal() {
+                    return Err(
+                        "credentials set 需要交互终端；Key 不接受 argv 或明文文件输入".into(),
+                    );
+                }
+                let secret = secrecy::SecretString::from(rpassword::prompt_password(
+                    "Micu API Key（输入隐藏）: ",
+                )?);
+                use secrecy::ExposeSecret;
+                store_api_key(service, account, secret.expose_secret().trim())?;
+            }
+            authorize_credentials(&SystemCredentials, service, account)?;
+            writeln!(
+                std::io::stdout().lock(),
+                "凭据已验证可供后台读取；请重连 MCP。客户端配置未修改。"
+            )?;
+            Ok(())
+        }
     }
 }
 

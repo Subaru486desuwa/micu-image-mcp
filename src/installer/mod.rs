@@ -13,8 +13,8 @@ use crate::config::{
     AppPaths, Config, ENV_KEYS, EnvironmentSnapshot, PathSource, is_safe_base_url,
 };
 use crate::credentials::{
-    DEFAULT_CREDENTIAL_ACCOUNT, DEFAULT_CREDENTIAL_SERVICE, load_api_key, store_api_key,
-    validate_api_key,
+    DEFAULT_CREDENTIAL_ACCOUNT, DEFAULT_CREDENTIAL_SERVICE, load_api_key_interactive,
+    store_api_key, validate_api_key,
 };
 
 pub mod atomic;
@@ -127,8 +127,14 @@ pub fn reset(options: ResetOptions) -> Result<(), InstallError> {
 }
 
 pub fn doctor() -> Result<(), InstallError> {
+    doctor_with_credentials(&crate::credentials::SystemCredentials)
+}
+
+pub fn doctor_with_credentials(
+    reader: &dyn crate::credentials::CredentialReader,
+) -> Result<(), InstallError> {
     let mut environment = EnvironmentSnapshot::capture(ENV_KEYS)?;
-    environment.load_platform_secrets();
+    environment.load_platform_secrets_with(reader);
     let paths = AppPaths::resolve(&environment, PathSource::capture()?)?;
     let config = Config::from_env(&environment)?;
     let mut configured = 0_usize;
@@ -160,13 +166,19 @@ pub fn doctor() -> Result<(), InstallError> {
         ));
     }
     write_status(format!(
-        "doctor: OK version={} clients={} base_url={} api_key_configured={} save_root={} lock_file={}",
+        "doctor: OK version={} clients={} base_url={} api_key_configured={} credential_status={:?} save_root={} lock_file={}{}",
         env!("CARGO_PKG_VERSION"),
         configured,
         config.base_url,
         !config.api_key.expose_secret().trim().is_empty(),
+        config.credential_status,
         path_text(&paths.save_root, "save root")?,
         path_text(&paths.lock_file, "lock file")?,
+        if config.api_key.expose_secret().trim().is_empty() {
+            format!("\n{}", crate::credentials::CREDENTIAL_RECOVERY)
+        } else {
+            String::new()
+        },
     ))
 }
 
@@ -253,7 +265,7 @@ fn configure_api_key(
         return Ok(());
     }
 
-    match load_api_key(&service, &account) {
+    match load_api_key_interactive(&service, &account) {
         Ok(Some(api_key)) => match validate_api_key(&api_key) {
             Ok(_) => {
                 environment.insert("MICU_KEYCHAIN_SERVICE", service);
