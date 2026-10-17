@@ -90,19 +90,20 @@ pub fn parse_config_launch(input: &str) -> Result<Option<ClientLaunchSpec>, Inst
         .and_then(Item::as_value)
         .and_then(Value::as_str)
         .ok_or_else(|| InstallError::InvalidCodex("micu-image.command 必须是 string".into()))?;
-    let args = server
-        .get("args")
-        .and_then(Item::as_value)
-        .and_then(Value::as_array)
-        .ok_or_else(|| InstallError::InvalidCodex("micu-image.args 必须是 array".into()))?
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(OsString::from)
-                .ok_or_else(|| InstallError::InvalidCodex("micu-image.args 只能包含 string".into()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let args = match server.get("args") {
+        None => Vec::new(),
+        Some(item) => item
+            .as_value()
+            .and_then(Value::as_array)
+            .ok_or_else(|| InstallError::InvalidCodex("micu-image.args 必须是 array".into()))?
+            .iter()
+            .map(|value| {
+                value.as_str().map(OsString::from).ok_or_else(|| {
+                    InstallError::InvalidCodex("micu-image.args 只能包含 string".into())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
     let env = server
         .get("env")
         .and_then(Item::as_table)

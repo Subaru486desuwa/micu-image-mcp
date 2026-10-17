@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{is_large_tier, is_quality_model, model_error, resolve_model, size_note},
+        routing::{is_large_tier, is_quality_model, resolve_model, size_note},
         size::{size_tier, validate_quality, validate_size},
     },
     fs::input::validate_mask,
@@ -51,7 +51,14 @@ impl ToolEngine {
             .model
             .as_deref()
             .or(parent.map(|parent| parent.model.as_str()));
-        if let Some(error) = model_error(requested_model, &self.config.default_edit_model) {
+        if let Some(error) = self
+            .model_error(
+                requested_model,
+                &self.config.default_edit_model,
+                params.api_key.as_ref(),
+            )
+            .await
+        {
             return Ok(validation_error(error));
         }
         let requested_size = params
@@ -67,6 +74,16 @@ impl ToolEngine {
         };
         let (effective_model, mut notes) =
             resolve_model(requested_model, &self.config.default_edit_model, &size);
+        if let Some(error) = self
+            .model_error(
+                Some(&effective_model),
+                &self.config.default_model,
+                params.api_key.as_ref(),
+            )
+            .await
+        {
+            return Ok(validation_error(error));
+        }
         let requested_quality = params
             .quality
             .as_deref()
@@ -408,6 +425,7 @@ mod tests {
                 input.to_string_lossy().into_owned(),
             ),
             ("MICU_API_KEY".into(), "sk-test".into()),
+            ("MICU_BASEURL".into(), "http://127.0.0.1:9".into()),
         ]);
         let config =
             Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
@@ -457,7 +475,7 @@ mod tests {
         assert_eq!(
             provider.edits.lock().await.as_slice(),
             &[(
-                "gpt-image-2.5-sunburst".into(),
+                "gpt-image-2.5-sunburst-openai".into(),
                 "1024x1024".into(),
                 Some("max".into()),
                 vec!["image".into()],

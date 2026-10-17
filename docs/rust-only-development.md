@@ -64,3 +64,13 @@ Osaka 是 Linux ARM64，源代码构建和离线验证在该主机执行。正�
 付费压力入口 `cargo xtask live-stress --binary target/release/micu-image-mcp --output <新目录>` 保留标准单进程 `n=5` 的实际五并发，另需 `MICU_RUN_LIVE_STRESS=1` 和 `MICU_RUN_LIVE_TESTS=1`。`--highres` 还需 `MICU_RUN_LIVE_HIGHRES_STRESS=1`，同步启动五个真实 MCP 进程，分别请求 2048x1152、1152x2048、2048x2048、3840x2160、2160x3840；验证旧模型自动切换、n 强制为 1、像素、唯一文件、统一版本/锁描述及至少四个跨进程锁等待提示。stdin 凭据字段与质量矩阵一致；先 GET /v1/models 检查凭据与所需模型，最多 20 次实际图片 POST，未授权时在读取凭据前退出。本次不运行付费请求。
 
 原生 Windows 的系统目录 API 不读取 HOME/LOCALAPPDATA 覆盖值。显式 `MICU_CONTRACT_TESTING=1` 时，测试驱动指定临时 HOME 和数据目录，安装与共享锁验收不会使用个人配置；正常启动继续使用系统目录 API。测试比较规范化路径，包含 macOS 的 /var → /private/var 和 Windows extended path 前缀。
+
+## 实际配置的只读启动验收
+
+在服务器上用实际 Codex 配置启动一次独立 MCP 子进程，读取版本、五工具、模型目录与凭据加载状态：
+
+```bash
+cargo run --locked --example probe_config -- /absolute/path/to/config.toml
+```
+
+该入口复用安装器的 Codex 配置解析器，只调用 initialize、tools/list 和 server_info，不提交图像请求；输出仅包含选定的非敏感字段。失败时只输出固定提示，不输出配置内容、环境变量或原始错误。

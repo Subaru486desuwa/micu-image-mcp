@@ -16,9 +16,9 @@
 
 生成的图片会**自动保存到本地磁盘**，返回结果中包含文件的绝对路径，方便你在 IDE 或文件管理器中打开。
 
-当前支持 `gpt-image-2.5-flare-openai`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
+当前支持 `gpt-image-2.5-flare-openai`、`gpt-image-2.5-sunburst-openai`、`gpt-image-2` 和
 `gpt-image-2-openai`。旧 ID `gpt-image-2.5-flare` 自动映射到新的 Flare ID，包括已有配置和会话。
-Grok 生图渠道暂时关闭，待服务器支持后再启用。
+Grok 生图已永久移除。
 
 ---
 
@@ -202,7 +202,7 @@ flowchart TD
 **返回要点**：
 
 - `api_key_configured`：Image2 密钥是否配置
-- `grok_channel_enabled`：当前固定为 `false`
+- `model_catalog`：目录来源、刷新状态与最后成功时间；默认模型可用性单独标记
 - `recommended_sizes`：各档位推荐尺寸
 - `capability_matrix`：各工具 × 各尺寸档的可用性
 - `retry_policy`：重试与并发策略
@@ -479,11 +479,10 @@ image_edit(
 
 ---
 
-## 六、Grok 通道状态
+## 六、联网模型目录
 
-Grok 生图渠道暂时关闭。工具只接受 `gpt-image-2` / `gpt-image-2-openai`；传入 Grok 模型会在读取本地图片或发出网络请求前被拒绝。内部兼容实现暂时保留，待服务器支持恢复后再启用。
+`server_info.available_models` 与图像工具共用目录。首次需要时查询 `/v1/models`，成功缓存一小时；失败保留同凭据旧目录（`stale_cache`），没有旧目录则使用 `offline_baseline`。成功空目录不会回退。更换凭据或上游使用独立目录；请求中的 `api_key` 也按其凭据查询。目录不证明每个模型的编辑能力。
 
----
 
 ## 七、返回结果字段说明
 
@@ -533,7 +532,6 @@ MCP 内置多项安全限制：
 |----------|------|----------|
 | `未配置 API key` | 环境变量未设置 | 在 mcp.json 的 `env` 中配置 `MICU_API_KEY` |
 | `分组 grok 下模型 gpt-image-2 无可用渠道` | Key 分组填错 | 将可访问两个 Image2 模型的 Key 填入 `MICU_API_KEY` |
-| `Grok 生图渠道暂时关闭` | 当前版本主动禁用 Grok | 改用 `gpt-image-2` / `gpt-image-2-openai`，等待服务器支持恢复 |
 | `size W/H 必须是 16 的倍数` | 尺寸不符合约束 | 改为如 `1024x1024`、`2048x1152` |
 | `HTTP 524: timeout` | 上游超时 | 改小尺寸或稍后重试；2K/4K 高负载时偶发 |
 | `SSRF 防护` + `198.18.x.x` | 旧版或 `MICU_ALLOW_FAKE_IP_DOWNLOAD=0` | 升级 MCP 或设 `MICU_ALLOW_FAKE_IP_DOWNLOAD=1`；`auto` 模式下 URL 失败会自动重试 `b64_json` |

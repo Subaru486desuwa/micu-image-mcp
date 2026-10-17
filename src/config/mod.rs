@@ -4,7 +4,9 @@ use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
-use crate::domain::routing::{FLARE_MODEL, SUNBURST_MODEL, canonical_model};
+use crate::domain::routing::{
+    FLARE_MODEL, QUALITY_MODEL, STANDARD_MODEL, SUNBURST_MODEL, canonical_model,
+};
 
 mod env;
 mod paths;
@@ -30,15 +32,9 @@ pub const ENV_KEYS: &[&str] = &[
     "MICU_RESPONSE_FORMAT",
     "MICU_TRUSTED_DOWNLOAD_HOSTS",
     "MICU_ALLOW_FAKE_IP_DOWNLOAD",
-    "MICU_GROK_BASEURL",
-    "MICU_GROK_API_KEY",
-    "XAI_API_KEY",
-    "GROK_API_KEY",
-    "XAI_MODEL",
-    "GROK_MODEL",
-    "MICU_GROK_SIZE_MODE",
     "MICU_CONTRACT_TESTING",
     "MICU_TEST_API_TIMEOUT_MS",
+    "MICU_TEST_CATALOG_TTL_MS",
     "MICU_KEYCHAIN_ACCOUNT",
     "MICU_KEYCHAIN_SERVICE",
 ];
@@ -61,11 +57,8 @@ pub struct Config {
     pub response_formats_to_try: Vec<&'static str>,
     pub trusted_download_hosts: Vec<String>,
     pub allow_fake_ip_download: bool,
-    pub grok_base_url: String,
-    pub grok_api_key: SecretString,
-    pub xai_model: String,
-    pub grok_size_mode: String,
     pub api_request_timeout: Duration,
+    pub catalog_ttl: Duration,
 }
 
 #[derive(Debug, Error)]
@@ -128,21 +121,6 @@ impl Config {
         trusted_download_hosts.sort();
         trusted_download_hosts.dedup();
 
-        let grok_base_url = environment
-            .get("MICU_GROK_BASEURL")
-            .cloned()
-            .unwrap_or_else(|| base_url_raw.to_owned());
-        let grok_key = first_non_empty(
-            environment,
-            &["MICU_GROK_API_KEY", "XAI_API_KEY", "GROK_API_KEY"],
-        );
-        let xai_model = first_non_empty(environment, &["XAI_MODEL", "GROK_MODEL"])
-            .unwrap_or_else(|| "grok-imagine-image-lite".to_owned());
-        let grok_size_mode = environment
-            .get("MICU_GROK_SIZE_MODE")
-            .map(|value| value.trim().to_ascii_lowercase())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "contain".to_owned());
         let api_request_timeout = if environment
             .get("MICU_CONTRACT_TESTING")
             .is_some_and(|value| value.trim() == "1")
@@ -179,21 +157,29 @@ impl Config {
                 environment.get("MICU_ALLOW_FAKE_IP_DOWNLOAD"),
                 true,
             ),
-            grok_base_url,
-            grok_api_key: grok_key.unwrap_or_default().into(),
-            xai_model,
-            grok_size_mode,
             api_request_timeout,
+            catalog_ttl: if environment
+                .get("MICU_CONTRACT_TESTING")
+                .is_some_and(|v| v == "1")
+            {
+                environment
+                    .get("MICU_TEST_CATALOG_TTL_MS")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(|v| Duration::from_millis(v.max(10)))
+                    .unwrap_or(Duration::from_secs(3600))
+            } else {
+                Duration::from_secs(3600)
+            },
         })
     }
 
-    /// Flare selects its output format upstream. Retrying with another format
-    /// would submit the same image request again without changing its payload.
+    /// Only the two legacy routes negotiate response format. Modern Images
+    /// routes select it upstream; repeating an unchanged payload can charge twice.
     pub fn response_formats_for_model(
         &self,
         model: &str,
     ) -> impl Iterator<Item = Option<&'static str>> + '_ {
-        let explicit = canonical_model(model) != FLARE_MODEL;
+        let explicit = matches!(canonical_model(model), STANDARD_MODEL | QUALITY_MODEL);
         self.response_formats_to_try
             .iter()
             .take(if explicit {
@@ -227,16 +213,6 @@ pub fn is_safe_base_url(url: &Url) -> bool {
 
 pub fn default_model() -> &'static str {
     FLARE_MODEL
-}
-
-fn first_non_empty(environment: &BTreeMap<String, String>, names: &[&str]) -> Option<String> {
-    names.iter().find_map(|name| {
-        environment
-            .get(*name)
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-    })
 }
 
 fn env_truthy(value: Option<&String>, default: bool) -> bool {

@@ -39,7 +39,7 @@ fn default_and_explicit_flare_ids_send_the_current_model() -> Result<()> {
     assert_eq!(info["default_model"], FLARE);
     assert_eq!(
         info["default_models"]["image_edit"],
-        "gpt-image-2.5-sunburst"
+        "gpt-image-2.5-sunburst-openai"
     );
     assert!(
         info["available_models"]

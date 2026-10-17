@@ -276,3 +276,50 @@ fn claude_reset_removes_only_micu_image() {
     assert_eq!(raw["mcpServers"]["other"]["command"], "other");
     assert!(raw["mcpServers"].get("micu-image").is_none());
 }
+
+#[test]
+fn installers_remove_retired_channel_fields_only_from_the_managed_server() {
+    let input = r#"
+[mcp_servers.other.env]
+GROK_MODEL = "shared-other-app"
+MICU_GROK_API_KEY = "other-app-fixture"
+[mcp_servers.micu-image]
+command = "/old/server"
+[mcp_servers.micu-image.env]
+MICU_GROK_BASEURL = "https://retired.example.test"
+MICU_GROK_SIZE_MODE = "cover"
+XAI_MODEL = "old"
+GROK_MODEL = "old"
+MICU_GROK_API_KEY = "retired-fixture"
+KEEP_ME = "custom"
+"#;
+    let expected = launch("/new/server");
+    let rendered = merge_config(input, &expected).unwrap();
+    let parsed = parse_config_launch(&rendered).unwrap().unwrap();
+    assert_eq!(
+        parsed.env().get("KEEP_ME").map(String::as_str),
+        Some("custom")
+    );
+    assert!(
+        !parsed
+            .env()
+            .keys()
+            .any(|key| key.contains("GROK") || key.contains("XAI"))
+    );
+    assert!(rendered.contains("other-app-fixture"));
+    assert!(rendered.contains("shared-other-app"));
+    assert!(!rendered.contains("retired-fixture"));
+}
+
+#[test]
+fn codex_launch_allows_omitted_args_but_rejects_wrong_types() {
+    let parsed = parse_config_launch("[mcp_servers.micu-image]\ncommand='/server'\n")
+        .unwrap()
+        .unwrap();
+    assert!(parsed.args().is_empty());
+    assert_eq!(parsed.command(), Path::new("/server"));
+    for args in ["'not-an-array'", "[1]"] {
+        let config = format!("[mcp_servers.micu-image]\ncommand='/server'\nargs={args}\n");
+        assert!(parse_config_launch(&config).is_err());
+    }
+}

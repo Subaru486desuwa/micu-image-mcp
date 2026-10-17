@@ -6,8 +6,7 @@ use crate::{
     domain::{
         basename::safe_basename,
         routing::{
-            infer_size_from_prompt, is_large_tier, is_quality_model, model_error, resolve_model,
-            size_note,
+            infer_size_from_prompt, is_large_tier, is_quality_model, resolve_model, size_note,
         },
         size::{SizeTier, size_tier, validate_n, validate_quality, validate_size},
     },
@@ -52,7 +51,14 @@ impl ToolEngine {
         if params.session_id.is_some() && params.prompt.chars().count() > MAX_PROMPT_CHARS {
             return Ok(validation_error("prompt 最多 32000 个字符"));
         }
-        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_model) {
+        if let Some(error) = self
+            .model_error(
+                params.model.as_deref(),
+                &self.config.default_model,
+                params.api_key.as_ref(),
+            )
+            .await
+        {
             return Ok(validation_error(error));
         }
         let safe_stem = params
@@ -87,6 +93,16 @@ impl ToolEngine {
         };
         let (effective_model, mut notes) =
             resolve_model(params.model.as_deref(), &self.config.default_model, &size);
+        if let Some(error) = self
+            .model_error(
+                Some(&effective_model),
+                &self.config.default_model,
+                params.api_key.as_ref(),
+            )
+            .await
+        {
+            return Ok(validation_error(error));
+        }
         let quality_value = params
             .quality
             .as_ref()
@@ -517,6 +533,7 @@ mod tests {
             ),
             ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
             ("MICU_API_KEY".into(), "sk-test".into()),
+            ("MICU_BASEURL".into(), "http://127.0.0.1:9".into()),
         ]);
         let config =
             Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));

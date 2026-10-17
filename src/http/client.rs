@@ -156,6 +156,34 @@ struct DownloadClientKey {
 }
 
 impl HttpExecutor {
+    pub async fn fetch_models(config: &Config, key: &SecretString) -> Result<Value, String> {
+        let mut url = config.base_url.clone();
+        url.set_path(&format!("{}/v1/models", url.path().trim_end_matches('/')));
+        url.set_query(None);
+        url.set_fragment(None);
+        let client = configured_client_builder(config.use_shell_proxy)?
+            .build()
+            .map_err(|_| "catalog client unavailable")?;
+        let timeout = config.api_request_timeout.min(Duration::from_secs(5));
+        let response = tokio::time::timeout(timeout, async {
+            let response = client
+                .get(url)
+                .header(AUTHORIZATION, bearer_header(key)?)
+                .timeout(timeout)
+                .send()
+                .await
+                .map_err(|_| "catalog unavailable")?;
+            let response = read_response_capped(response, 1024 * 1024).await;
+            if !response.is_success() {
+                return Err("catalog unavailable".to_owned());
+            }
+            serde_json::from_slice(&response.body).map_err(|_| "invalid catalog".to_owned())
+        })
+        .await
+        .map_err(|_| "catalog timeout")??;
+        Ok(response)
+    }
+
     pub fn new(config: &Config, paths: &AppPaths) -> Result<Self, String> {
         let api_client = configured_client_builder(config.use_shell_proxy)?
             .build()

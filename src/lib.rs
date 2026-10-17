@@ -10,3 +10,5 @@ pub mod installer;
 pub mod mcp_server;
 pub mod providers;
 pub mod tools;
+
+pub mod model_catalog;

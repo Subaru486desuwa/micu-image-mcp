@@ -14,6 +14,13 @@ const SECRET_ENV_NAMES: &[&str] = &[
     "GROK_API_KEY",
 ];
 
+const RETIRED_ENV_NAMES: &[&str] = &[
+    "MICU_GROK_BASEURL",
+    "XAI_MODEL",
+    "GROK_MODEL",
+    "MICU_GROK_SIZE_MODE",
+];
+
 const MANAGED_ENV_NAMES: &[&str] = &[
     "MICU_BASEURL",
     "MICU_MODEL",
@@ -37,7 +44,7 @@ pub struct ClientLaunchSpec {
 
 impl ClientLaunchSpec {
     pub fn new(command: PathBuf, args: Vec<OsString>, mut env: BTreeMap<String, String>) -> Self {
-        for name in SECRET_ENV_NAMES {
+        for name in SECRET_ENV_NAMES.iter().chain(RETIRED_ENV_NAMES) {
             env.remove(*name);
         }
         Self { command, args, env }
@@ -92,6 +99,7 @@ pub(crate) fn is_secret_environment_name(name: &str) -> bool {
 
 pub(crate) fn keep_existing_environment_name(name: &str, expected: &ClientLaunchSpec) -> bool {
     !is_secret_environment_name(name)
+        && !RETIRED_ENV_NAMES.contains(&name)
         && (!MANAGED_ENV_NAMES.contains(&name) || expected.env().contains_key(name))
 }
 

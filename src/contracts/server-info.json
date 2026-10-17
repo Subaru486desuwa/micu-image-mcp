@@ -4,7 +4,7 @@
   "result": {
     "content": [
       {
-        "text": "{\n  \"allow_fake_ip_download\": true,\n  \"api_key_configured\": false,\n  \"available_models\": [\n    \"gpt-image-2\",\n    \"gpt-image-2-openai\",\n    \"gpt-image-2.5-flare-openai\",\n    \"gpt-image-2.5-sunburst\"\n  ],\n  \"base_url\": \"https://www.micuapi.ai\",\n  \"capability_matrix\": {\n    \"grok_image_generate\": {\n      \"1k\": \"暂时关闭，待服务器支持后再启用\",\n      \"2k\": \"暂时关闭，待服务器支持后再启用\",\n      \"4k\": \"暂时关闭，待服务器支持后再启用\"\n    },\n    \"image_batch_edit\": {\n      \"1k_quality\": \"gpt-image-2.5-sunburst / gpt-image-2-openai 串行 + 1.5s gap\",\n      \"1k_standard\": \"5 并发\",\n      \">=2k\": \"2.5 保持所选模型；旧 gpt-image-2 自动切换；逐张串行 + 1.5s gap\",\n      \"grok\": \"暂时关闭，待服务器支持后再启用\"\n    },\n    \"image_edit\": {\n      \"1k\": \"默认 gpt-image-2.5-sunburst；2026-10-09 主站接受 quality=low/auto/省略；支持可选 alpha mask\",\n      \"2k_quality\": \"2.5 保持所选模型；旧 gpt-image-2 自动切 gpt-image-2-openai\",\n      \"4k\": \"2.5 保持所选模型；旧 gpt-image-2 自动切 gpt-image-2-openai\"\n    },\n    \"image_generate\": {\n      \"1k\": \"默认 gpt-image-2.5-flare-openai；2026-10-16 主站 1K 默认生成与会话编辑实测成功，quality 和 response_format 均省略；N>1 最多 5 并发\",\n      \"2k_quality\": \"2.5 保持所选模型；N 强制为 1；改名前 Flare/Sunburst 实测 2048×1152 精确返回\",\n      \"4k_quality\": \"2.5 保持所选模型；N 强制为 1；改名前 Flare/Sunburst 实测 3840×2160 精确返回\"\n    },\n    \"image_multi_reference\": {\n      \"1k\": \"默认 gpt-image-2.5-sunburst；2-10 张参考图融合输出 1 张，走 edits + image[]\",\n      \"2k_quality\": \"2.5 保持所选模型；旧 gpt-image-2 自动切换；失败时返回 Images API 错误\",\n      \"4k\": \"2.5 保持所选模型；旧 gpt-image-2 自动切换；走 edits + image[]\"\n    }\n  },\n  \"default_model\": \"gpt-image-2.5-flare-openai\",\n  \"default_models\": {\n    \"image_batch_edit\": \"gpt-image-2.5-sunburst\",\n    \"image_edit\": \"gpt-image-2.5-sunburst\",\n    \"image_generate\": \"gpt-image-2.5-flare-openai\",\n    \"image_multi_reference\": \"gpt-image-2.5-sunburst\"\n  },\n  \"default_save_dir\": \"<SAVE_ROOT>\",\n  \"grok_api_key_configured\": false,\n  \"grok_available_models\": [],\n  \"grok_base_url\": \"https://www.micuapi.ai\",\n  \"grok_channel_enabled\": false,\n  \"grok_channel_status\": \"暂时关闭，待服务器支持后再启用\",\n  \"grok_default_model\": \"grok-imagine-image-lite\",\n  \"grok_size_mode\": \"contain\",\n  \"recommended_sizes\": {\n    \"1k_standard\": [\n      \"1024x1024\",\n      \"1024x1536\",\n      \"1280x720\",\n      \"1536x1024\",\n      \"720x1280\"\n    ],\n    \"2k_quality\": [\n      \"1152x2048\",\n      \"2048x1152\",\n      \"2048x2048\"\n    ],\n    \"4k_quality\": [\n      \"2160x3840\",\n      \"3840x2160\"\n    ],\n    \"gpt_image_2_5\": [\n      \"1024x1024\",\n      \"1024x1536\",\n      \"1536x1024\"\n    ],\n    \"grok_actual_size_tip\": \"Grok 生图渠道暂时关闭，当前不会生成 Grok 输出。\",\n    \"grok_tip\": \"Grok 生图渠道暂时关闭，待服务器支持后再启用。\",\n    \"tip\": \"文生图默认 gpt-image-2.5-flare-openai；编辑、批量编辑和多图参考默认 gpt-image-2.5-sunburst。旧 Flare ID 自动映射，已有配置和会话继续使用。2026-10-16 新 Flare 的 1K 默认生成与会话编辑实测成功。旧 gpt-image-2 的 2K/4K 仍自动走 gpt-image-2-openai。始终核对 saved.actual_size。\",\n    \"two_step_tip\": \"当前线路已支持参考图 4K，无需两步绕行；image_edit/image_multi_reference 可直接请求 3840x2160。\"\n  },\n  \"response_format\": \"auto\",\n  \"response_formats_to_try\": [\n    \"url\",\n    \"b64_json\"\n  ],\n  \"response_handling\": {\n    \"actual_size_field\": \"返回的 saved[].actual_size 是从 PNG/JPEG header 读出的真实像素，可与请求 size 对比验证\",\n    \"extract_paths\": \"支持 data[].b64_json / data[].url / chat content markdown 三种响应格式\",\n    \"grok_extract_paths\": \"Grok 生图渠道暂时关闭，当前不会执行 Grok 响应提取。\",\n    \"saved_to_disk\": \"所有生成的图片落盘到 save_dir（默认 cwd/out 或 MICU_SAVE_DIR）\",\n    \"response_format_policy\": \"gpt-image-2.5-flare-openai 不发送 response_format，直接保存上游返回的 base64 或 URL；下载/解析失败不为切换格式重新生图。其他模型保留 MICU_RESPONSE_FORMAT 的选择和回退。\",\n    \"live_images_observation_2026_10_16\": {\n      \"base_url\": \"https://www.micuapi.ai\",\n      \"version\": \"0.4.3\",\n      \"model\": \"gpt-image-2.5-flare-openai\",\n      \"tools\": [\n        \"image_generate\",\n        \"image_edit\"\n      ],\n      \"paths\": [\n        \"/v1/images/generations\",\n        \"/v1/images/edits\"\n      ],\n      \"statuses\": [\n        200,\n        200\n      ],\n      \"actual_sizes\": [\n        \"1024x1024\",\n        \"1024x1024\"\n      ],\n      \"quality_omitted\": true,\n      \"response_format_omitted\": true,\n      \"requested_images\": 2\n    }\n  },\n  \"retry_policy\": {\n    \"concurrency_2k_4k\": \"双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; (2) 跨进程文件锁 @ ~/.cache/micu-image/bigsize.lock，POSIX 用 fcntl.flock，Windows 用 msvcrt.locking —— 多 Claude Code/Codex 窗口各自独立 MCP 子进程时跨进程串行打 origin，整机任意时刻只有一张 ≥2K 在 origin 排队。\",\n    \"fallback_status\": [],\n    \"retryable_status\": [\n      0,\n      408,\n      409,\n      425,\n      429,\n      500,\n      502,\n      503,\n      504,\n      520,\n      521,\n      522,\n      523,\n      524,\n      525,\n      527\n    ],\n    \"route_fallback\": \"所有图像模型只走 /v1/images/generations 或 /v1/images/edits，不调用 /v1/responses 或 /v1/chat/completions。\",\n    \"schedule_1k\": \"上游 5xx → 4s+jitter → 重试 → 8s+jitter → 重试（退避重试最多 2 次，共 ≤3 次尝试）；网络层异常（status=0）另有 1 次免费重试不计入此预算（故最坏 ≤4 次）。注：带 Retry-After 的 408/429/5xx 会按头部值 sleep（上限 120s），此时单次等待可能远大于 4s/8s\",\n    \"schedule_2k_4k\": \"双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。单次 attempt 无字节挂起最长 600s，故 2K/4K 最坏 ≈ 两次 600s attempt + 一次 60s 退避；其间整机所有 ≥2K 请求经跨进程锁串行等待。锁等待 >2s 时 notes 会提示在排队\",\n    \"trigger\": \"model == 'gpt-image-2-openai' 或 size tier ∈ {2k, 4k}\"\n  },\n  \"safety_constraints\": {\n    \"base_url_locked\": \"base_url 锁在启动期 MICU_BASEURL env，运行期 tool 不接受参数（防 key 外泄到攻击者 host）\",\n    \"basename_charset\": \"basename 仅允许 [A-Za-z0-9_-.]，禁含 / .. 和路径分量\",\n    \"input_image_validation\": \"所有输入图先检查文件大小与 magic，再以 allocation/像素/边长硬上限执行完整解码；仅允许 PNG/JPEG/WebP，截断、损坏、伪装格式和解压炸弹会在请求前拒绝\",\n    \"input_size_limits\": \"单输入图 ≤4MB；image_multi_reference 总和 ≤8MB\",\n    \"n_range\": \"image_generate 的 n ∈ [1, 10]，超出立即拒（防 burn quota）\",\n    \"response_size_limit\": \"远端响应 ≤25MB；超过中断不落盘\",\n    \"save_dir_root\": \"所有输出强制落在 MICU_SAVE_DIR_ROOT=<SAVE_ROOT> 之下；传 root 之外路径会被拒\"\n  },\n  \"size_rules\": {\n    \"alignment\": \"W 与 H 都必须是 16 的整数倍\",\n    \"auto_quality_route\": \"仅 gpt-image-2 在 max edge ≥ 1600 时自动切 gpt-image-2-openai\",\n    \"edge_range\": \"W/H 必须在 [256, 3840] 范围内\",\n    \"format\": \"WxH 字符串（如 '1024x1024'）\",\n    \"live_observation_2026_08_14\": \"gpt-image-2-openai 的生成与编辑线路在 1536×1024、2048×1152、3840×2160 按请求像素返回；gpt-image-2 的自定义尺寸可能被后端重映射，调用方应核对 saved.actual_size。\",\n    \"max_aspect_ratio\": \"最长边/最短边 ≤ 3\",\n    \"pixel_range\": \"总像素必须在 [655,360, 8,294,400] 范围内\",\n    \"quality_values\": [\n      \"auto\",\n      \"high\",\n      \"low\",\n      \"max\",\n      \"medium\",\n      \"xhigh\"\n    ],\n    \"quality_values_by_model\": {\n      \"gpt-image-2\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"medium\"\n      ],\n      \"gpt-image-2-openai\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"medium\"\n      ],\n      \"gpt-image-2.5-flare-openai\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"max\",\n        \"medium\",\n        \"xhigh\"\n      ],\n      \"gpt-image-2.5-sunburst\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"max\",\n        \"medium\",\n        \"xhigh\"\n      ]\n    },\n    \"quality_live_observation_2026_10_09\": {\n      \"base_url\": \"https://www.micuapi.ai\",\n      \"requested_size\": \"1024x1024\",\n      \"tools\": [\n        \"image_generate\",\n        \"image_edit\"\n      ],\n      \"accepted_quality_values_by_model\": {\n        \"gpt-image-2.5-flare\": [\n          \"auto\",\n          \"low\"\n        ],\n        \"gpt-image-2.5-sunburst\": [\n          \"auto\",\n          \"low\"\n        ],\n        \"gpt-image-2\": [\n          \"auto\",\n          \"low\",\n          \"medium\",\n          \"high\"\n        ]\n      },\n      \"omitted_quality_accepted\": true,\n      \"image25_rejected_quality_values\": [\n        \"medium\",\n        \"high\",\n        \"xhigh\",\n        \"max\"\n      ],\n      \"model_not_listed_for_test_credential\": \"gpt-image-2-openai\",\n      \"scope_note\": \"这是上述日期、主站、测试凭据和 1K 生成/单图编辑的实测；quality_values 是 MCP 参数范围，不代表所有上游线路均支持。\"\n    }\n  },\n  \"trusted_download_hosts\": [\n    \"oss.filenest.top\"\n  ],\n  \"version\": \"0.4.3\",\n  \"model_aliases\": {\n    \"gpt-image-2.5-flare\": \"gpt-image-2.5-flare-openai\"\n  }\n}",
+        "text": "{\n  \"allow_fake_ip_download\": true,\n  \"api_key_configured\": false,\n  \"available_models\": [\n    \"gpt-image-2\",\n    \"gpt-image-2-openai\",\n    \"gpt-image-2.5-flare-openai\",\n    \"gpt-image-2.5-sunburst-openai\"\n  ],\n  \"base_url\": \"https://www.micuapi.ai\",\n  \"capability_matrix\": {\n    \"image_batch_edit\": {\n      \"1k_quality\": \"gpt-image-2.5-sunburst-openai / gpt-image-2-openai 串行 + 1.5s gap\",\n      \"1k_standard\": \"5 并发\",\n      \">=2k\": \"2.5 保持所选模型；旧 gpt-image-2 自动切换；逐张串行 + 1.5s gap\"\n    },\n    \"image_edit\": {\n      \"1k\": \"默认 gpt-image-2.5-sunburst-openai；2026-10-09 主站接受 quality=low/auto/省略；支持可选 alpha mask\",\n      \"2k_quality\": \"2.5 保持所选模型；旧 gpt-image-2 自动切 gpt-image-2-openai\",\n      \"4k\": \"2.5 保持所选模型；旧 gpt-image-2 自动切 gpt-image-2-openai\"\n    },\n    \"image_generate\": {\n      \"1k\": \"默认 gpt-image-2.5-flare-openai；2026-10-16 主站 1K 默认生成与会话编辑实测成功，quality 和 response_format 均省略；N>1 最多 5 并发\",\n      \"2k_quality\": \"2.5 保持所选模型；N 强制为 1；改名前 Flare/Sunburst 实测 2048×1152 精确返回\",\n      \"4k_quality\": \"2.5 保持所选模型；N 强制为 1；改名前 Flare/Sunburst 实测 3840×2160 精确返回\"\n    },\n    \"image_multi_reference\": {\n      \"1k\": \"默认 gpt-image-2.5-sunburst-openai；2-10 张参考图融合输出 1 张，走 edits + image[]\",\n      \"2k_quality\": \"2.5 保持所选模型；旧 gpt-image-2 自动切换；失败时返回 Images API 错误\",\n      \"4k\": \"2.5 保持所选模型；旧 gpt-image-2 自动切换；走 edits + image[]\"\n    }\n  },\n  \"default_model\": \"gpt-image-2.5-flare-openai\",\n  \"default_models\": {\n    \"image_batch_edit\": \"gpt-image-2.5-sunburst-openai\",\n    \"image_edit\": \"gpt-image-2.5-sunburst-openai\",\n    \"image_generate\": \"gpt-image-2.5-flare-openai\",\n    \"image_multi_reference\": \"gpt-image-2.5-sunburst-openai\"\n  },\n  \"default_save_dir\": \"<SAVE_ROOT>\",\n  \"recommended_sizes\": {\n    \"1k_standard\": [\n      \"1024x1024\",\n      \"1024x1536\",\n      \"1280x720\",\n      \"1536x1024\",\n      \"720x1280\"\n    ],\n    \"2k_quality\": [\n      \"1152x2048\",\n      \"2048x1152\",\n      \"2048x2048\"\n    ],\n    \"4k_quality\": [\n      \"2160x3840\",\n      \"3840x2160\"\n    ],\n    \"gpt_image_2_5\": [\n      \"1024x1024\",\n      \"1024x1536\",\n      \"1536x1024\"\n    ],\n    \"tip\": \"文生图默认 gpt-image-2.5-flare-openai；编辑、批量编辑和多图参考默认 gpt-image-2.5-sunburst-openai。旧 Flare ID 自动映射，已有配置和会话继续使用。2026-10-16 新 Flare 的 1K 默认生成与会话编辑实测成功。旧 gpt-image-2 的 2K/4K 仍自动走 gpt-image-2-openai。始终核对 saved.actual_size。\",\n    \"two_step_tip\": \"当前线路已支持参考图 4K，无需两步绕行；image_edit/image_multi_reference 可直接请求 3840x2160。\"\n  },\n  \"response_format\": \"auto\",\n  \"response_formats_to_try\": [\n    \"url\",\n    \"b64_json\"\n  ],\n  \"response_handling\": {\n    \"actual_size_field\": \"返回的 saved[].actual_size 是从 PNG/JPEG header 读出的真实像素，可与请求 size 对比验证\",\n    \"extract_paths\": \"支持 data[].b64_json / data[].url / chat content markdown 三种响应格式\",\n    \"saved_to_disk\": \"所有生成的图片落盘到 save_dir（默认 cwd/out 或 MICU_SAVE_DIR）\",\n    \"response_format_policy\": \"已验证旧 Image2 模型保留 MICU_RESPONSE_FORMAT；Flare 及新发现的协议兼容模型省略 response_format，输出解析或下载失败不重新提交图像请求。\",\n    \"live_images_observation_2026_10_16\": {\n      \"base_url\": \"https://www.micuapi.ai\",\n      \"version\": \"0.4.3\",\n      \"model\": \"gpt-image-2.5-flare-openai\",\n      \"tools\": [\n        \"image_generate\",\n        \"image_edit\"\n      ],\n      \"paths\": [\n        \"/v1/images/generations\",\n        \"/v1/images/edits\"\n      ],\n      \"statuses\": [\n        200,\n        200\n      ],\n      \"actual_sizes\": [\n        \"1024x1024\",\n        \"1024x1024\"\n      ],\n      \"quality_omitted\": true,\n      \"response_format_omitted\": true,\n      \"requested_images\": 2\n    }\n  },\n  \"retry_policy\": {\n    \"concurrency_2k_4k\": \"双层锁: (1) 进程内 asyncio.Semaphore(1) 同 MCP 进程内并发本地排队; (2) 跨进程文件锁 @ ~/.cache/micu-image/bigsize.lock，POSIX 用 fcntl.flock，Windows 用 msvcrt.locking —— 多 Claude Code/Codex 窗口各自独立 MCP 子进程时跨进程串行打 origin，整机任意时刻只有一张 ≥2K 在 origin 排队。\",\n    \"fallback_status\": [],\n    \"retryable_status\": [\n      0,\n      408,\n      409,\n      425,\n      429,\n      500,\n      502,\n      503,\n      504,\n      520,\n      521,\n      522,\n      523,\n      524,\n      525,\n      527\n    ],\n    \"route_fallback\": \"所有图像模型只走 /v1/images/generations 或 /v1/images/edits，不调用 /v1/responses 或 /v1/chat/completions。\",\n    \"schedule_1k\": \"上游 5xx → 4s+jitter → 重试 → 8s+jitter → 重试（退避重试最多 2 次，共 ≤3 次尝试）；网络层异常（status=0）另有 1 次免费重试不计入此预算（故最坏 ≤4 次）。注：带 Retry-After 的 408/429/5xx 会按头部值 sleep（上限 120s），此时单次等待可能远大于 4s/8s\",\n    \"schedule_2k_4k\": \"双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。单次 attempt 无字节挂起最长 600s，故 2K/4K 最坏 ≈ 两次 600s attempt + 一次 60s 退避；其间整机所有 ≥2K 请求经跨进程锁串行等待。锁等待 >2s 时 notes 会提示在排队\",\n    \"trigger\": \"model == 'gpt-image-2-openai' 或 size tier ∈ {2k, 4k}\"\n  },\n  \"safety_constraints\": {\n    \"base_url_locked\": \"base_url 锁在启动期 MICU_BASEURL env，运行期 tool 不接受参数（防 key 外泄到攻击者 host）\",\n    \"basename_charset\": \"basename 仅允许 [A-Za-z0-9_-.]，禁含 / .. 和路径分量\",\n    \"input_image_validation\": \"所有输入图先检查文件大小与 magic，再以 allocation/像素/边长硬上限执行完整解码；仅允许 PNG/JPEG/WebP，截断、损坏、伪装格式和解压炸弹会在请求前拒绝\",\n    \"input_size_limits\": \"单输入图 ≤4MB；image_multi_reference 总和 ≤8MB\",\n    \"n_range\": \"image_generate 的 n ∈ [1, 10]，超出立即拒（防 burn quota）\",\n    \"response_size_limit\": \"远端响应 ≤25MB；超过中断不落盘\",\n    \"save_dir_root\": \"所有输出强制落在 MICU_SAVE_DIR_ROOT=<SAVE_ROOT> 之下；传 root 之外路径会被拒\"\n  },\n  \"size_rules\": {\n    \"alignment\": \"W 与 H 都必须是 16 的整数倍\",\n    \"auto_quality_route\": \"仅 gpt-image-2 在 max edge ≥ 1600 时自动切 gpt-image-2-openai\",\n    \"edge_range\": \"W/H 必须在 [256, 3840] 范围内\",\n    \"format\": \"WxH 字符串（如 '1024x1024'）\",\n    \"live_observation_2026_08_14\": \"gpt-image-2-openai 的生成与编辑线路在 1536×1024、2048×1152、3840×2160 按请求像素返回；gpt-image-2 的自定义尺寸可能被后端重映射，调用方应核对 saved.actual_size。\",\n    \"max_aspect_ratio\": \"最长边/最短边 ≤ 3\",\n    \"pixel_range\": \"总像素必须在 [655,360, 8,294,400] 范围内\",\n    \"quality_values\": [\n      \"auto\",\n      \"high\",\n      \"low\",\n      \"max\",\n      \"medium\",\n      \"xhigh\"\n    ],\n    \"quality_values_by_model\": {\n      \"gpt-image-2\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"medium\"\n      ],\n      \"gpt-image-2-openai\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"medium\"\n      ],\n      \"gpt-image-2.5-flare-openai\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"max\",\n        \"medium\",\n        \"xhigh\"\n      ],\n      \"gpt-image-2.5-sunburst-openai\": [\n        \"auto\",\n        \"high\",\n        \"low\",\n        \"max\",\n        \"medium\",\n        \"xhigh\"\n      ]\n    },\n    \"quality_live_observation_2026_10_09\": {\n      \"base_url\": \"https://www.micuapi.ai\",\n      \"requested_size\": \"1024x1024\",\n      \"tools\": [\n        \"image_generate\",\n        \"image_edit\"\n      ],\n      \"accepted_quality_values_by_model\": {\n        \"gpt-image-2.5-flare\": [\n          \"auto\",\n          \"low\"\n        ],\n        \"gpt-image-2.5-sunburst\": [\n          \"auto\",\n          \"low\"\n        ],\n        \"gpt-image-2\": [\n          \"auto\",\n          \"low\",\n          \"medium\",\n          \"high\"\n        ]\n      },\n      \"omitted_quality_accepted\": true,\n      \"image25_rejected_quality_values\": [\n        \"medium\",\n        \"high\",\n        \"xhigh\",\n        \"max\"\n      ],\n      \"model_not_listed_for_test_credential\": \"gpt-image-2-openai\",\n      \"scope_note\": \"这是上述日期、主站、测试凭据和 1K 生成/单图编辑的实测；quality_values 是 MCP 参数范围，不代表所有上游线路均支持。\"\n    }\n  },\n  \"trusted_download_hosts\": [\n    \"oss.filenest.top\"\n  ],\n  \"version\": \"0.5.0\",\n  \"model_aliases\": {\n    \"gpt-image-2.5-flare\": \"gpt-image-2.5-flare-openai\",\n    \"gpt-image-2.5-sunburst\": \"gpt-image-2.5-sunburst-openai\"\n  }\n}",
         "type": "text"
       }
     ],
@@ -16,23 +16,17 @@
         "gpt-image-2",
         "gpt-image-2-openai",
         "gpt-image-2.5-flare-openai",
-        "gpt-image-2.5-sunburst"
+        "gpt-image-2.5-sunburst-openai"
       ],
       "base_url": "https://www.micuapi.ai",
       "capability_matrix": {
-        "grok_image_generate": {
-          "1k": "暂时关闭，待服务器支持后再启用",
-          "2k": "暂时关闭，待服务器支持后再启用",
-          "4k": "暂时关闭，待服务器支持后再启用"
-        },
         "image_batch_edit": {
-          "1k_quality": "gpt-image-2.5-sunburst / gpt-image-2-openai 串行 + 1.5s gap",
+          "1k_quality": "gpt-image-2.5-sunburst-openai / gpt-image-2-openai 串行 + 1.5s gap",
           "1k_standard": "5 并发",
-          ">=2k": "2.5 保持所选模型；旧 gpt-image-2 自动切换；逐张串行 + 1.5s gap",
-          "grok": "暂时关闭，待服务器支持后再启用"
+          ">=2k": "2.5 保持所选模型；旧 gpt-image-2 自动切换；逐张串行 + 1.5s gap"
         },
         "image_edit": {
-          "1k": "默认 gpt-image-2.5-sunburst；2026-10-09 主站接受 quality=low/auto/省略；支持可选 alpha mask",
+          "1k": "默认 gpt-image-2.5-sunburst-openai；2026-10-09 主站接受 quality=low/auto/省略；支持可选 alpha mask",
           "2k_quality": "2.5 保持所选模型；旧 gpt-image-2 自动切 gpt-image-2-openai",
           "4k": "2.5 保持所选模型；旧 gpt-image-2 自动切 gpt-image-2-openai"
         },
@@ -42,26 +36,19 @@
           "4k_quality": "2.5 保持所选模型；N 强制为 1；改名前 Flare/Sunburst 实测 3840×2160 精确返回"
         },
         "image_multi_reference": {
-          "1k": "默认 gpt-image-2.5-sunburst；2-10 张参考图融合输出 1 张，走 edits + image[]",
+          "1k": "默认 gpt-image-2.5-sunburst-openai；2-10 张参考图融合输出 1 张，走 edits + image[]",
           "2k_quality": "2.5 保持所选模型；旧 gpt-image-2 自动切换；失败时返回 Images API 错误",
           "4k": "2.5 保持所选模型；旧 gpt-image-2 自动切换；走 edits + image[]"
         }
       },
       "default_model": "gpt-image-2.5-flare-openai",
       "default_models": {
-        "image_batch_edit": "gpt-image-2.5-sunburst",
-        "image_edit": "gpt-image-2.5-sunburst",
+        "image_batch_edit": "gpt-image-2.5-sunburst-openai",
+        "image_edit": "gpt-image-2.5-sunburst-openai",
         "image_generate": "gpt-image-2.5-flare-openai",
-        "image_multi_reference": "gpt-image-2.5-sunburst"
+        "image_multi_reference": "gpt-image-2.5-sunburst-openai"
       },
       "default_save_dir": "<SAVE_ROOT>",
-      "grok_api_key_configured": false,
-      "grok_available_models": [],
-      "grok_base_url": "https://www.micuapi.ai",
-      "grok_channel_enabled": false,
-      "grok_channel_status": "暂时关闭，待服务器支持后再启用",
-      "grok_default_model": "grok-imagine-image-lite",
-      "grok_size_mode": "contain",
       "recommended_sizes": {
         "1k_standard": [
           "1024x1024",
@@ -84,9 +71,7 @@
           "1024x1536",
           "1536x1024"
         ],
-        "grok_actual_size_tip": "Grok 生图渠道暂时关闭，当前不会生成 Grok 输出。",
-        "grok_tip": "Grok 生图渠道暂时关闭，待服务器支持后再启用。",
-        "tip": "文生图默认 gpt-image-2.5-flare-openai；编辑、批量编辑和多图参考默认 gpt-image-2.5-sunburst。旧 Flare ID 自动映射，已有配置和会话继续使用。2026-10-16 新 Flare 的 1K 默认生成与会话编辑实测成功。旧 gpt-image-2 的 2K/4K 仍自动走 gpt-image-2-openai。始终核对 saved.actual_size。",
+        "tip": "文生图默认 gpt-image-2.5-flare-openai；编辑、批量编辑和多图参考默认 gpt-image-2.5-sunburst-openai。旧 Flare ID 自动映射，已有配置和会话继续使用。2026-10-16 新 Flare 的 1K 默认生成与会话编辑实测成功。旧 gpt-image-2 的 2K/4K 仍自动走 gpt-image-2-openai。始终核对 saved.actual_size。",
         "two_step_tip": "当前线路已支持参考图 4K，无需两步绕行；image_edit/image_multi_reference 可直接请求 3840x2160。"
       },
       "response_format": "auto",
@@ -97,9 +82,8 @@
       "response_handling": {
         "actual_size_field": "返回的 saved[].actual_size 是从 PNG/JPEG header 读出的真实像素，可与请求 size 对比验证",
         "extract_paths": "支持 data[].b64_json / data[].url / chat content markdown 三种响应格式",
-        "grok_extract_paths": "Grok 生图渠道暂时关闭，当前不会执行 Grok 响应提取。",
         "saved_to_disk": "所有生成的图片落盘到 save_dir（默认 cwd/out 或 MICU_SAVE_DIR）",
-        "response_format_policy": "gpt-image-2.5-flare-openai 不发送 response_format，直接保存上游返回的 base64 或 URL；下载/解析失败不为切换格式重新生图。其他模型保留 MICU_RESPONSE_FORMAT 的选择和回退。",
+        "response_format_policy": "已验证旧 Image2 模型保留 MICU_RESPONSE_FORMAT；Flare 及新发现的协议兼容模型省略 response_format，输出解析或下载失败不重新提交图像请求。",
         "live_images_observation_2026_10_16": {
           "base_url": "https://www.micuapi.ai",
           "version": "0.4.3",
@@ -197,7 +181,7 @@
             "medium",
             "xhigh"
           ],
-          "gpt-image-2.5-sunburst": [
+          "gpt-image-2.5-sunburst-openai": [
             "auto",
             "high",
             "low",
@@ -243,9 +227,10 @@
       "trusted_download_hosts": [
         "oss.filenest.top"
       ],
-      "version": "0.4.3",
+      "version": "0.5.0",
       "model_aliases": {
-        "gpt-image-2.5-flare": "gpt-image-2.5-flare-openai"
+        "gpt-image-2.5-flare": "gpt-image-2.5-flare-openai",
+        "gpt-image-2.5-sunburst": "gpt-image-2.5-sunburst-openai"
       }
     }
   }

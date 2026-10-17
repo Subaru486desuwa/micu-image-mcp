@@ -467,6 +467,7 @@ pub fn png(width: u32, height: u32, seed: u8) -> Result<Vec<u8>> {
 #[derive(Default)]
 struct State {
     requests: Vec<Capture>,
+    catalog_requests: usize,
     attempts: HashMap<String, usize>,
     active: usize,
     max_active: usize,
@@ -676,6 +677,18 @@ impl MockMicu {
         let public_url = Arc::new(Mutex::new(String::new()));
         let public = public_url.clone();
         let http = HttpFixture::start(move |mut request| {
+            if request.method().as_str() == "GET" && request_path(&request) == "/v1/models" {
+                captured
+                    .lock()
+                    .map_err(|_| "fixture lock poisoned")?
+                    .catalog_requests += 1;
+                return respond_json(
+                    request,
+                    503,
+                    json!({"error":"catalog unavailable in image fixture"}),
+                    &[],
+                );
+            }
             if request.method().as_str() == "GET" {
                 let path = request_path(&request);
                 let authorization_valid = header(&request, "Authorization").is_empty();

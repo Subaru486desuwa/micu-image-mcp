@@ -46,7 +46,7 @@ fn current_models_qualities_sizes_and_large_routing_are_verified_on_the_wire() -
         "gpt-image-2",
         "gpt-image-2-openai",
         "gpt-image-2.5-flare-openai",
-        "gpt-image-2.5-sunburst",
+        "gpt-image-2.5-sunburst-openai",
     ] {
         let qualities: &[Option<&str>] = if model.contains("2.5") {
             &[
@@ -402,7 +402,7 @@ fn reference_edits_send_the_selected_image_as_multipart() -> Result<()> {
     assert_eq!(result["ok"], true);
     let requests = api.requests();
     assert_eq!(requests[0].path, "/v1/images/edits");
-    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-sunburst");
+    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-sunburst-openai");
     assert_eq!(requests[0].fields["quality"], "low");
     assert_eq!(requests[0].files[0].name, "image");
     assert_eq!(requests[0].files[0].bytes, bytes);

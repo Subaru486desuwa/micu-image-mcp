@@ -70,9 +70,9 @@ Desktop's Code mode reads `~/.claude.json`. Regular Chat mode uses a separate `c
 
 ## Models and quality
 
-All four image tools accept `gpt-image-2.5-flare-openai`, `gpt-image-2.5-sunburst`, `gpt-image-2`, and `gpt-image-2-openai`. Text-to-image generation defaults to Flare. Editing, batch editing, and multi-reference generation default to Sunburst. Model availability depends on the response from `/v1/models` for your credentials.
+The offline compatibility baseline includes `gpt-image-2.5-flare-openai`, `gpt-image-2.5-sunburst-openai`, `gpt-image-2`, and `gpt-image-2-openai`. Text-to-image generation defaults to Flare. Editing, batch editing, and multi-reference generation default to Sunburst. Model availability depends on the response from `/v1/models` for your credentials.
 The old ID `gpt-image-2.5-flare` maps automatically to `gpt-image-2.5-flare-openai`, including existing `MICU_MODEL` settings and saved editing sessions.
-Flare Images requests omit `response_format` and save the base64 image or URL returned by the backend. A download or parsing failure does not trigger another generation with a different format. All image tools use `/v1/images/generations` or `/v1/images/edits`, never the Responses API.
+Flare, Sunburst, and newly discovered compatible models omit `response_format` and save the base64 image or URL returned by the backend. A download or parsing failure does not trigger another generation with a different format. All image tools use `/v1/images/generations` or `/v1/images/edits`, never the Responses API.
 
 On 2026-10-16, the v0.4.3 release candidate completed default Flare generation and a session edit after restarting MCP against Micu's main endpoint. Both Images requests returned HTTP 200 and 1024×1024 images, with `quality` and `response_format` omitted.
 
@@ -86,7 +86,9 @@ Live tests of 1K generation and single-image editing on Micu's main endpoint on 
 
 See the [quality validation record](docs/session-storage.md#在线质量档位验证) for details. These results describe the endpoint and credentials used at that time, with Flare using its old ID. The tools retain their full parameter options for other endpoints or future support. See [image sizes](#image-sizes) for routing behavior.
 
-The Grok implementation remains in the repository but is disabled. The tools reject Grok models.
+The historical Sunburst ID `gpt-image-2.5-sunburst` maps to `gpt-image-2.5-sunburst-openai`, preserving existing configurations and sessions.
+
+Grok image generation has been removed. The trusted upstream `/v1/models` supplies compatible GPT Image 2 family IDs, cached for one hour. Offline operation reports stale cache or the built-in baseline; discovery never changes the selected default model.
 
 ---
 
@@ -243,7 +245,7 @@ Common `size` values:
 | `MICU_SAVE_DIR_ROOT` | Same as output directory | Root directory restricting all output paths |
 | `MICU_INPUT_ROOT` | Empty, unrestricted | Optional root for input images; prevents path and symlink escapes when set |
 | `MICU_USE_SHELL_PROXY` | `0` | Set to `1` to read proxy settings from the process environment |
-| `MICU_RESPONSE_FORMAT` | `auto` | Legacy models accept `auto`, `url`, or `b64_json`; Flare omits this parameter and saves the backend response |
+| `MICU_RESPONSE_FORMAT` | `auto` | Legacy models accept `auto`, `url`, or `b64_json`; Flare, Sunburst, and newly discovered models omit this parameter and saves the backend response |
 | `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | Trusted download hosts, separated by commas |
 | `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | Allows fake-ip downloads in 198.18.0.0/15 only for trusted hosts |
 

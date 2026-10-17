@@ -4,19 +4,17 @@ pub const STANDARD_MODEL: &str = "gpt-image-2";
 pub const QUALITY_MODEL: &str = "gpt-image-2-openai";
 pub const FLARE_MODEL: &str = "gpt-image-2.5-flare-openai";
 pub const LEGACY_FLARE_MODEL: &str = "gpt-image-2.5-flare";
-pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
+pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst-openai";
+pub const LEGACY_SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
 pub const SUPPORTED_IMAGE_MODELS: [&str; 4] =
     [STANDARD_MODEL, QUALITY_MODEL, FLARE_MODEL, SUNBURST_MODEL];
 
 pub fn canonical_model(model: &str) -> &str {
     match model {
         LEGACY_FLARE_MODEL => FLARE_MODEL,
+        LEGACY_SUNBURST_MODEL => SUNBURST_MODEL,
         _ => model,
     }
-}
-
-pub fn is_grok_model(model: Option<&str>) -> bool {
-    model.is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("grok-"))
 }
 
 pub fn model_error(requested: Option<&str>, default_model: &str) -> Option<String> {
@@ -24,15 +22,10 @@ pub fn model_error(requested: Option<&str>, default_model: &str) -> Option<Strin
     if SUPPORTED_IMAGE_MODELS.contains(&canonical_model(model)) {
         return None;
     }
-    let supported = SUPPORTED_IMAGE_MODELS.join(" / ");
-    if is_grok_model(Some(model)) {
-        return Some(format!(
-            "Grok 生图渠道暂时关闭，待服务器支持后再启用；当前仅支持 {supported}。"
-        ));
-    }
     Some(format!(
-        "不支持 model={}；当前仅支持 {supported}。Grok 生图渠道暂时关闭，待服务器支持后再启用。",
-        python_string_repr(model)
+        "不支持 model={}；当前可用模型: {}",
+        python_string_repr(model),
+        SUPPORTED_IMAGE_MODELS.join(" / ")
     ))
 }
 
@@ -289,7 +282,7 @@ mod tests {
         );
         assert!(
             model_error(Some("GROK-imagine-image"), STANDARD_MODEL)
-                .is_some_and(|text| text.contains("Grok 生图渠道暂时关闭"))
+                .is_some_and(|text| text.contains("不支持 model="))
         );
     }
 

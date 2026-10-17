@@ -52,7 +52,7 @@ impl MicuServer {
                     .image_multi_reference(parse_parameters(name, value)?)
                     .await
             }
-            "server_info" => self.engine.server_info(),
+            "server_info" => self.engine.catalog_server_info().await,
             _ => Err(ToolFailure(format!("未知 tool: {name}"))),
         }
     }

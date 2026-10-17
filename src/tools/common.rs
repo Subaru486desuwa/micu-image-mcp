@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::{config::Config, fs::output_store::SavedImage};
 
 #[derive(Clone)]
-pub struct SecretArg(SecretString);
+pub struct SecretArg(pub(crate) SecretString);
 
 impl SecretArg {
     pub fn into_inner(self) -> SecretString {

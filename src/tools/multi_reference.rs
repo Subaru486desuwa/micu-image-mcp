@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{is_large_tier, is_quality_model, model_error, resolve_model, size_note},
+        routing::{is_large_tier, is_quality_model, resolve_model, size_note},
         size::{parse_size, size_tier, validate_quality, validate_size},
     },
     fs::input::MAX_TOTAL_INPUT_BYTES,
@@ -40,7 +40,14 @@ impl ToolEngine {
                 "参考图最多 10 张，当前 {reference_count} 张。请减少或分批。"
             )));
         }
-        if let Some(error) = model_error(params.model.as_deref(), &self.config.default_edit_model) {
+        if let Some(error) = self
+            .model_error(
+                params.model.as_deref(),
+                &self.config.default_edit_model,
+                params.api_key.as_ref(),
+            )
+            .await
+        {
             return Ok(validation_error(error));
         }
         let (cleaned_size, size_error) = validate_size(Some(&params.size), false);
@@ -54,6 +61,16 @@ impl ToolEngine {
             &self.config.default_edit_model,
             &size,
         );
+        if let Some(error) = self
+            .model_error(
+                Some(&effective_model),
+                &self.config.default_model,
+                params.api_key.as_ref(),
+            )
+            .await
+        {
+            return Ok(validation_error(error));
+        }
         let quality_value = params
             .quality
             .as_ref()
@@ -319,6 +336,7 @@ mod tests {
                 input.to_string_lossy().into_owned(),
             ),
             ("MICU_API_KEY".into(), "sk-test".into()),
+            ("MICU_BASEURL".into(), "http://127.0.0.1:9".into()),
         ]);
         let config =
             Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));

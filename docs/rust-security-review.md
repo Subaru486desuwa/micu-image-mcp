@@ -29,7 +29,7 @@
   `base_url`。base URL 不可能在一次 tool call 中变化。
 - Rust server 进一步拒绝非 HTTPS 的远端 base URL；HTTP 只允许 localhost、127.0.0.1、
   `::1` 或 `*.localhost`，以支持离线 mock/本地代理。
-- `MICU_API_KEY`、legacy Grok key 和 tool-level key override 进入 `secrecy::SecretString`；
+- `MICU_API_KEY` 和 tool-level key override 进入 `secrecy::SecretString`；
   `Debug` 固定显示 `[REDACTED]`。
 - `Authorization` 只在 request 构造时从 secret wrapper 生成。错误清洗会替换当前 key、Bearer
   token 和长度 ≥64 的 base64-like run。

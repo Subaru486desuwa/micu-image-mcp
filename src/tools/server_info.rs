@@ -25,11 +25,6 @@ impl ToolEngine {
         )?;
         set_top(
             &mut info,
-            "grok_base_url",
-            Value::String(self.config.grok_base_url.clone()),
-        )?;
-        set_top(
-            &mut info,
             "default_model",
             Value::String(self.config.default_model.clone()),
         )?;
@@ -49,20 +44,6 @@ impl ToolEngine {
         }
         set_top(
             &mut info,
-            "grok_default_model",
-            Value::String(self.config.xai_model.clone()),
-        )?;
-        let grok_size_mode = if matches!(
-            self.config.grok_size_mode.as_str(),
-            "backend" | "contain" | "cover" | "stretch"
-        ) {
-            self.config.grok_size_mode.clone()
-        } else {
-            "contain".into()
-        };
-        set_top(&mut info, "grok_size_mode", Value::String(grok_size_mode))?;
-        set_top(
-            &mut info,
             "default_save_dir",
             Value::String(path_text(&self.paths.default_save_dir, "default_save_dir")?),
         )?;
@@ -70,11 +51,6 @@ impl ToolEngine {
             &mut info,
             "api_key_configured",
             Value::Bool(!self.config.api_key.expose_secret().is_empty()),
-        )?;
-        set_top(
-            &mut info,
-            "grok_api_key_configured",
-            Value::Bool(!self.config.grok_api_key.expose_secret().is_empty()),
         )?;
         let response_format = match self.config.response_format {
             ResponseFormat::Auto => "auto",
@@ -259,7 +235,7 @@ mod tests {
                 "gpt-image-2",
                 "gpt-image-2-openai",
                 "gpt-image-2.5-flare-openai",
-                "gpt-image-2.5-sunburst"
+                "gpt-image-2.5-sunburst-openai"
             ])
         );
         assert_eq!(
@@ -268,9 +244,9 @@ mod tests {
         );
         assert_eq!(
             info["default_models"]["image_edit"],
-            "gpt-image-2.5-sunburst"
+            "gpt-image-2.5-sunburst-openai"
         );
-        assert_eq!(info["grok_channel_enabled"], false);
+        assert!(info.get("grok_channel_enabled").is_none());
         assert_eq!(info["api_key_configured"], true);
         assert!(info["retry_policy"]["concurrency_2k_4k"].as_str().is_some_and(|text| text.contains("tokio::sync::Semaphore") && text.contains("fs4")));
         assert!(

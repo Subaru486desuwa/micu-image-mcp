@@ -51,7 +51,7 @@ reference；编译好的 Rust binary 只能通过显式选项配置。
 `domain` 是纯逻辑深模块，`InputStore` 是 capability-based 文件系统深模块：
 
 - `Size`：格式、边长、16 对齐、像素总数、长宽比、size tier；
-- `ModelRoute`：精确 allowlist、Grok 公共拒绝语义、≥1600 自动高质量路由；
+- `ModelRoute`：动态 Image2 目录与不支持模型的请求前拒绝、≥1600 自动高质量路由；
 - `Basename`：字符集、100 字符、路径分量、前导点和 `..`；
 - `ValidatedImage`：保持已打开文件 handle、真实格式/MIME/尺寸/alpha、长度。
 
@@ -105,7 +105,7 @@ Provider seam 表达领域动作，而不是通用 fetch：
 - `edit(request, images, optional_mask)`。
 
 当前只有 `Image2Provider` 生产 adapter；本地 mock HTTP server 是第二个测试 adapter。
-Grok 不可达代码不搬运，但 trait 保留未来重新增加 provider 的位置。Image2 provider 永不产生
+仅维护 Image2 provider。Image2 provider 永不产生
 `chat/completions` request，单图 edit 与多图 reference 都只产生 `/v1/images/edits`。
 
 ### 3.7 `ToolService`

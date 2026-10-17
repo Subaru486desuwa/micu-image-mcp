@@ -138,11 +138,7 @@ fn flare_output_failures_do_not_regenerate_identical_paid_requests() -> Result<(
 #[test]
 fn legacy_models_keep_their_configured_response_format() -> Result<()> {
     for format in ["auto", "url", "b64_json"] {
-        for model in [
-            "gpt-image-2",
-            "gpt-image-2-openai",
-            "gpt-image-2.5-sunburst",
-        ] {
+        for model in ["gpt-image-2", "gpt-image-2-openai"] {
             let root = tempfile::tempdir()?;
             let api = MockMicu::new()?;
             let image = root.path().join("source.png");
