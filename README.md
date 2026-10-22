@@ -337,7 +337,3 @@ v0.4.1 发布时的调试和验收记录见[v0.4.1 调试笔记](docs/v0.4.1-deb
 - [安全审计](docs/rust-security-review.md)
 - [Python → Rust 迁移与回滚](docs/migration-from-python.md)
 - [贡献与本地验证](CONTRIBUTING.md)
-
-## Star history
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Subaru486desuwa/micu-image-mcp&type=Date)](https://star-history.com/#Subaru486desuwa/micu-image-mcp&Date)
