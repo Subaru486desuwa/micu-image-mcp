@@ -1,5 +1,19 @@
 # Rust 重写安全评审
 
+## v0.5.2 依赖修补（2026-10-23）
+
+候选 `331e938` 的 CI 检出 `RUSTSEC-2026-0385`：`ctutils 0.4.2` 的掩码生成及
+32 位目标上的 `u128` 比较可能产生依赖秘密值的分支。锁文件将该库单独升级至 0.4.4，
+其余依赖版本不变；[上游发布说明](https://github.com/RustCrypto/utils/pull/1569)记录了
+对应常量时间代码生成修复与验证。
+
+该依赖经 `digest` → `hmac`/`hkdf` → `secret-service` → `keyring` 进入产品，工程工具的
+`sha2` 也使用它。保留此前 TLS 与 rand/chacha20 安全更新，不忽略此 advisory，不修改
+CI 审计门槛。下文为历史安全评审及其当时的验证结果；本次补丁仍须通过新 revision 的
+安全审计和四平台 CI。
+
+## 原始重写评审
+
 评审日期：2026-08-23  
 范围：Rust `src/`、迁移期 Python 安全补丁、安装器、STDIO/HTTP/文件路径 contract tests  
 结论：本机自动化安全检查通过；v0.3.0 tag/release 必须等待跨平台 CI 真实通过，不能只凭本机
