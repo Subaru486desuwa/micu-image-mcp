@@ -313,7 +313,3 @@ That round of MacBook validation passed checks for the five tools, protocols, an
 - [Security review](docs/rust-security-review.md)
 - [Python to Rust migration and rollback](docs/migration-from-python.md)
 - [Contributing and local validation](CONTRIBUTING.md)
-
-## Star history
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Subaru486desuwa/micu-image-mcp&type=Date)](https://star-history.com/#Subaru486desuwa/micu-image-mcp&Date)
