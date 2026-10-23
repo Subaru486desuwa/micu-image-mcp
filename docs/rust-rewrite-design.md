@@ -51,7 +51,7 @@ reference；编译好的 Rust binary 只能通过显式选项配置。
 `domain` 是纯逻辑深模块，`InputStore` 是 capability-based 文件系统深模块：
 
 - `Size`：格式、边长、16 对齐、像素总数、长宽比、size tier；
-- `ModelRoute`：动态 Image2 目录与不支持模型的请求前拒绝、≥1600 自动高质量路由；
+- `ModelRoute`：手动 Image2 目录与不支持模型的请求前拒绝、Flare/Sunburst 旧名称兼容、明确模型拒绝后的后缀补试候选、≥1600 自动高质量路由；
 - `Basename`：字符集、100 字符、路径分量、前导点和 `..`；
 - `ValidatedImage`：保持已打开文件 handle、真实格式/MIME/尺寸/alpha、长度。
 

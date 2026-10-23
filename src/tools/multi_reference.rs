@@ -133,6 +133,8 @@ impl ToolEngine {
         };
         let mut saved = None;
         let mut last_error: Option<String> = None;
+        let mut actual_model = effective_model.clone();
+        let mut used_fallback = false;
         for (format_index, response_format) in self
             .config
             .response_formats_for_model(&effective_model)
@@ -146,11 +148,11 @@ impl ToolEngine {
                     last_error.as_deref().unwrap_or("保存失败")
                 ));
             }
-            let response = self
+            let image_response = self
                 .provider
                 .edit(
                     EditRequest {
-                        model: &effective_model,
+                        model: &actual_model,
                         prompt: &full_prompt,
                         size: &size,
                         quality: quality.as_deref(),
@@ -163,6 +165,9 @@ impl ToolEngine {
                     &mut notes,
                 )
                 .await;
+            actual_model = image_response.model;
+            used_fallback |= image_response.used_fallback;
+            let response = image_response.response;
             if !response.is_success() {
                 last_error = Some(format!(
                     "HTTP {}: {}",
@@ -191,9 +196,9 @@ impl ToolEngine {
         let Some(saved) = saved else {
             let mut output = Map::new();
             output.insert("ok".into(), Value::Bool(false));
-            output.insert("model".into(), Value::String(effective_model));
+            output.insert("model".into(), Value::String(actual_model));
             output.insert("n_references".into(), Value::from(reference_count));
-            output.insert("used_fallback".into(), Value::Bool(false));
+            output.insert("used_fallback".into(), Value::Bool(used_fallback));
             output.insert(
                 "error".into(),
                 Value::String(last_error.unwrap_or_else(|| "保存失败".into())),
@@ -210,9 +215,9 @@ impl ToolEngine {
         let size_honored = parse_size(&size) == Some(saved.actual_size);
         let mut output = Map::new();
         output.insert("ok".into(), Value::Bool(true));
-        output.insert("model".into(), Value::String(effective_model));
+        output.insert("model".into(), Value::String(actual_model));
         output.insert("size".into(), Value::String(size));
-        output.insert("used_fallback".into(), Value::Bool(false));
+        output.insert("used_fallback".into(), Value::Bool(used_fallback));
         output.insert("size_honored".into(), Value::Bool(size_honored));
         output.insert("n_references".into(), Value::from(reference_count));
         output.insert("saved".into(), saved_value(&saved, None)?);
@@ -264,16 +269,19 @@ mod tests {
     impl ImageProvider for FakeProvider {
         async fn generate(
             &self,
-            _request: GenerateRequest<'_>,
+            request: GenerateRequest<'_>,
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
-            ApiResponse {
-                status: 500,
-                headers: reqwest::header::HeaderMap::new(),
-                body: vec![],
-            }
+        ) -> crate::providers::ImageResponse {
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: 500,
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: vec![],
+                },
+                request.model,
+            )
         }
 
         async fn edit(
@@ -282,7 +290,7 @@ mod tests {
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
+        ) -> crate::providers::ImageResponse {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.captured.lock().await.push((
                 request.model.into(),
@@ -296,11 +304,14 @@ mod tests {
                     })
                     .collect(),
             ));
-            ApiResponse {
-                status: 200,
-                headers: reqwest::header::HeaderMap::new(),
-                body: self.body.clone(),
-            }
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: 200,
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: self.body.clone(),
+                },
+                request.model,
+            )
         }
     }
 

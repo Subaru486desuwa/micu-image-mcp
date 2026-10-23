@@ -244,7 +244,13 @@ impl ToolEngine {
 
         let mut saved = Vec::new();
         let mut errors = Vec::new();
+        let mut used_fallback = false;
+        let mut actual_model = effective_model.clone();
         for result in results {
+            used_fallback |= result.used_fallback;
+            if saved.is_empty() {
+                actual_model = result.model.clone();
+            }
             for note in result.notes {
                 push_note_once(&mut notes, note);
             }
@@ -252,7 +258,9 @@ impl ToolEngine {
                 if let Some(note) = size_note(&size, Some(image.actual_size)) {
                     push_note_once(&mut notes, note);
                 }
-                saved.push(saved_value(&image, Some(result.index + 1))?);
+                let mut value = saved_value(&image, Some(result.index + 1))?;
+                value["model"] = Value::String(result.model);
+                saved.push(value);
             }
             if let Some(error) = result.error {
                 errors.push(Value::String(error));
@@ -283,7 +291,7 @@ impl ToolEngine {
                     .to_owned(),
                 instruction,
                 context,
-                model: effective_model.clone(),
+                model: actual_model.clone(),
                 size: size.clone(),
                 quality: quality.clone(),
             });
@@ -301,10 +309,10 @@ impl ToolEngine {
             }
         }
         output.insert("ok".into(), Value::Bool(!saved.is_empty() && committed));
-        output.insert("model".into(), Value::String(effective_model));
+        output.insert("model".into(), Value::String(actual_model));
         output.insert("size".into(), Value::String(size));
         output.insert("requested_n".into(), Value::from(requested_n));
-        output.insert("used_fallback".into(), Value::Bool(false));
+        output.insert("used_fallback".into(), Value::Bool(used_fallback));
         output.insert("size_honored".into(), Value::Bool(size_honored));
         output.insert("saved".into(), Value::Array(saved));
         output.insert("errors".into(), Value::Array(errors));
@@ -365,6 +373,8 @@ impl ToolEngine {
     ) -> GenerateOneResult {
         let mut notes = Vec::new();
         let mut last_error: Option<String> = None;
+        let mut actual_model = model.to_owned();
+        let mut used_fallback = false;
         for (format_index, response_format) in
             self.config.response_formats_for_model(model).enumerate()
         {
@@ -376,11 +386,11 @@ impl ToolEngine {
                     last_error.as_deref().unwrap_or("保存失败")
                 ));
             }
-            let response = self
+            let image_response = self
                 .provider
                 .generate(
                     GenerateRequest {
-                        model,
+                        model: &actual_model,
                         prompt,
                         size,
                         quality,
@@ -391,6 +401,9 @@ impl ToolEngine {
                     &mut notes,
                 )
                 .await;
+            actual_model = image_response.model;
+            used_fallback |= image_response.used_fallback;
+            let response = image_response.response;
             if !response.is_success() {
                 last_error = Some(format!(
                     "#{} HTTP {}: {}",
@@ -416,6 +429,8 @@ impl ToolEngine {
                         saved: Some(saved),
                         error: None,
                         notes,
+                        model: actual_model,
+                        used_fallback,
                     };
                 }
                 Err(error) => {
@@ -428,6 +443,8 @@ impl ToolEngine {
             saved: None,
             error: Some(last_error.unwrap_or_else(|| format!("#{} 保存失败", index + 1))),
             notes,
+            model: actual_model,
+            used_fallback,
         }
     }
 }
@@ -437,6 +454,8 @@ struct GenerateOneResult {
     saved: Option<SavedImage>,
     error: Option<String>,
     notes: Vec<String>,
+    model: String,
+    used_fallback: bool,
 }
 
 fn tier_label(tier: SizeTier) -> &'static str {
@@ -491,7 +510,7 @@ mod tests {
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
+        ) -> crate::providers::ImageResponse {
             self.calls.lock().await.push((
                 request.model.into(),
                 request.size.into(),
@@ -501,25 +520,31 @@ mod tests {
             self.max_active.fetch_max(active, Ordering::SeqCst);
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
             self.active.fetch_sub(1, Ordering::SeqCst);
-            ApiResponse {
-                status: 200,
-                headers: reqwest::header::HeaderMap::new(),
-                body: self.body.clone(),
-            }
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: 200,
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: self.body.clone(),
+                },
+                request.model,
+            )
         }
 
         async fn edit(
             &self,
-            _request: EditRequest<'_>,
+            request: EditRequest<'_>,
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
-            ApiResponse {
-                status: 500,
-                headers: reqwest::header::HeaderMap::new(),
-                body: Vec::new(),
-            }
+        ) -> crate::providers::ImageResponse {
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: 500,
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: Vec::new(),
+                },
+                request.model,
+            )
         }
     }
 
@@ -590,16 +615,12 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result["ok"], true, "{result}");
-        assert_eq!(result["model"], "gpt-image-2.5-flare-openai");
+        assert_eq!(result["model"], "gpt-image-2.5-flare");
         assert_eq!(result["requested_n"], 1);
         assert_eq!(result["saved"][0]["actual_size"], "32x24");
         assert_eq!(
             provider.calls.lock().await.as_slice(),
-            &[(
-                "gpt-image-2.5-flare-openai".into(),
-                "1024x1024".into(),
-                None
-            )]
+            &[("gpt-image-2.5-flare".into(), "1024x1024".into(), None)]
         );
     }
 

@@ -10,6 +10,22 @@ use crate::{
 
 pub use image2::Image2Provider;
 
+pub struct ImageResponse {
+    pub response: ApiResponse,
+    pub model: String,
+    pub used_fallback: bool,
+}
+
+impl ImageResponse {
+    pub fn new(response: ApiResponse, model: &str) -> Self {
+        Self {
+            response,
+            model: model.to_owned(),
+            used_fallback: false,
+        }
+    }
+}
+
 pub struct GenerateRequest<'a> {
     pub model: &'a str,
     pub prompt: &'a str,
@@ -36,7 +52,7 @@ pub trait ImageProvider: Send + Sync {
         key: &SecretString,
         retry: RetryOptions,
         notes: &mut Vec<String>,
-    ) -> ApiResponse;
+    ) -> ImageResponse;
 
     async fn edit(
         &self,
@@ -44,5 +60,5 @@ pub trait ImageProvider: Send + Sync {
         key: &SecretString,
         retry: RetryOptions,
         notes: &mut Vec<String>,
-    ) -> ApiResponse;
+    ) -> ImageResponse;
 }

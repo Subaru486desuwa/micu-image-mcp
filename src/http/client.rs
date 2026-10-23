@@ -24,7 +24,7 @@ use crate::{
     fs::input::ValidatedImage,
     fs::lock::BigRequestGate,
     http::download::ResolvedDownload,
-    http::response::{error_detail, sanitize_sensitive},
+    http::response::{error_detail, model_rejected, sanitize_sensitive},
     http::retry::{NETWORK_RETRY_DELAY, RETRY_JITTER_MAX, effective_retry_status, retry_delay},
 };
 
@@ -54,6 +54,9 @@ pub struct RetryOptions {
 #[async_trait]
 pub trait RequestFactory: Send + Sync {
     async fn build(&self, client: &Client, key: &SecretString) -> Result<Request, String>;
+    fn model(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Clone)]
@@ -64,6 +67,9 @@ pub struct JsonRequestFactory {
 
 #[async_trait]
 impl RequestFactory for JsonRequestFactory {
+    fn model(&self) -> Option<&str> {
+        self.body.get("model").and_then(Value::as_str)
+    }
     async fn build(&self, client: &Client, key: &SecretString) -> Result<Request, String> {
         let body = json_request_bytes(&self.body)?;
         client
@@ -107,6 +113,12 @@ pub struct MultipartRequestFactory {
 
 #[async_trait]
 impl RequestFactory for MultipartRequestFactory {
+    fn model(&self) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|(name, _)| name == "model")
+            .map(|(_, value)| value.as_str())
+    }
     async fn build(&self, client: &Client, key: &SecretString) -> Result<Request, String> {
         let mut form = Form::new();
         for (name, value) in &self.fields {
@@ -156,34 +168,6 @@ struct DownloadClientKey {
 }
 
 impl HttpExecutor {
-    pub async fn fetch_models(config: &Config, key: &SecretString) -> Result<Value, String> {
-        let mut url = config.base_url.clone();
-        url.set_path(&format!("{}/v1/models", url.path().trim_end_matches('/')));
-        url.set_query(None);
-        url.set_fragment(None);
-        let client = configured_client_builder(config.use_shell_proxy)?
-            .build()
-            .map_err(|_| "catalog client unavailable")?;
-        let timeout = config.api_request_timeout.min(Duration::from_secs(5));
-        let response = tokio::time::timeout(timeout, async {
-            let response = client
-                .get(url)
-                .header(AUTHORIZATION, bearer_header(key)?)
-                .timeout(timeout)
-                .send()
-                .await
-                .map_err(|_| "catalog unavailable")?;
-            let response = read_response_capped(response, 1024 * 1024).await;
-            if !response.is_success() {
-                return Err("catalog unavailable".to_owned());
-            }
-            serde_json::from_slice(&response.body).map_err(|_| "invalid catalog".to_owned())
-        })
-        .await
-        .map_err(|_| "catalog timeout")??;
-        Ok(response)
-    }
-
     pub fn new(config: &Config, paths: &AppPaths) -> Result<Self, String> {
         let api_client = configured_client_builder(config.use_shell_proxy)?
             .build()
@@ -250,6 +234,12 @@ impl HttpExecutor {
         }
         let mut retry_attempt = 0_usize;
         while !response.is_success() {
+            if factory
+                .model()
+                .is_some_and(|model| model_rejected(response.status, &response.body, model))
+            {
+                break;
+            }
             let detail = error_detail(&response.body, &[key.expose_secret()]);
             let effective = effective_retry_status(response.status, &detail);
             let jitter = Duration::from_secs_f64(rand::random_range(

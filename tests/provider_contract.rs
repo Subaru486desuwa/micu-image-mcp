@@ -26,7 +26,7 @@ fn generation_sends_utf8_and_current_model_without_an_omitted_quality_field() ->
     assert_eq!(requests[0].path, "/v1/images/generations");
     assert!(requests[0].authorization_valid);
     assert_eq!(requests[0].fields["prompt"], "中文小猫 café");
-    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-flare-openai");
+    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-flare");
     assert!(requests[0].fields.get("quality").is_none());
     assert!(Path::new(result["saved"][0]["path"].as_str().unwrap()).is_file());
     Ok(())
@@ -45,8 +45,8 @@ fn current_models_qualities_sizes_and_large_routing_are_verified_on_the_wire() -
     for model in [
         "gpt-image-2",
         "gpt-image-2-openai",
-        "gpt-image-2.5-flare-openai",
-        "gpt-image-2.5-sunburst-openai",
+        "gpt-image-2.5-flare",
+        "gpt-image-2.5-sunburst",
     ] {
         let qualities: &[Option<&str>] = if model.contains("2.5") {
             &[
@@ -92,7 +92,7 @@ fn current_models_qualities_sizes_and_large_routing_are_verified_on_the_wire() -
         "2048x2048",
         "3840x2160",
     ] {
-        for model in ["gpt-image-2", "gpt-image-2.5-flare-openai"] {
+        for model in ["gpt-image-2", "gpt-image-2.5-flare"] {
             let result = server.call(
                 "image_generate",
                 json!({"prompt":"route","model":model,"size":size,"n":3}),
@@ -278,7 +278,7 @@ fn retries_errors_and_response_limits_are_verified_at_the_http_boundary() -> Res
         let model = if scenario.starts_with("retry_") {
             "gpt-image-2-openai"
         } else {
-            "gpt-image-2.5-flare-openai"
+            "gpt-image-2.5-flare"
         };
         let result = server.call(
             "image_generate",
@@ -402,7 +402,7 @@ fn reference_edits_send_the_selected_image_as_multipart() -> Result<()> {
     assert_eq!(result["ok"], true);
     let requests = api.requests();
     assert_eq!(requests[0].path, "/v1/images/edits");
-    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-sunburst-openai");
+    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-sunburst");
     assert_eq!(requests[0].fields["quality"], "low");
     assert_eq!(requests[0].files[0].name, "image");
     assert_eq!(requests[0].files[0].bytes, bytes);

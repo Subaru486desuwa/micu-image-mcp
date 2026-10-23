@@ -8,7 +8,7 @@
 
 ![Micu Image MCP v0.4.1 上下文记忆海报：沿用同一只小猫，继续细化图片](docs/assets/memory/context-memory-poster.png)
 
-[安装](#安装) · [连续编辑](#上下文记忆) · [模型与质量](#模型与质量) · [尺寸规则](#尺寸规则) · [调试与验证](#调试与验证) · [v0.4.3 发布说明](https://github.com/Subaru486desuwa/micu-image-mcp/releases/tag/v0.4.3)
+[安装](#安装) · [连续编辑](#上下文记忆) · [模型与质量](#模型与质量) · [尺寸规则](#尺寸规则) · [调试与验证](#调试与验证) · [v0.5.2 更新说明](docs/releases/v0.5.2.md)
 
 ## 上下文记忆
 
@@ -76,10 +76,10 @@ Desktop 的 Code 模式读取 `~/.claude.json`；普通 Chat 模式使用独立�
 
 ## 模型与质量
 
-离线兼容基线包含 `gpt-image-2.5-flare-openai`、`gpt-image-2.5-sunburst-openai`、`gpt-image-2` 和 `gpt-image-2-openai`。
-文生图默认 Flare，编辑、批量编辑和多图参考默认 Sunburst。实际可用模型以当前凭据访问 `/v1/models` 的结果为准。
-旧 ID `gpt-image-2.5-flare` 自动映射到 `gpt-image-2.5-flare-openai`，已有 `MICU_MODEL` 配置和图片会话可继续使用。
-Flare、Sunburst 及新发现兼容模型的 Images 请求不发送 `response_format`，直接保存上游返回的 base64 或 URL 图片。下载或响应解析失败时，不通过更换格式重复提交生图请求。所有图像工具只走 `/v1/images/generations` 或 `/v1/images/edits`，不调用 Responses API。
+模型 ID 手动维护：`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和历史质量线路 `gpt-image-2-openai`。
+文生图默认 Flare，编辑、批量编辑和多图参考默认 Sunburst。MCP 不自动请求 `/v1/models`；`server_info` 的 `available_models` 是受支持的手动目录，不保证当前凭据或上游线路可用。
+已有带 `-openai` 后缀的 Flare/Sunburst 配置和图片会话继续可用，先请求同名无后缀 ID。只有上游明确返回模型不存在、不支持或该模型无可用渠道时，才使用带后缀 ID 补试一次。该兼容补试仅限 Flare/Sunburst；`gpt-image-2` 与历史质量线路 `gpt-image-2-openai` 不是别名，保留原有尺寸路由与显式选择。网络异常、超时、认证、限流、余额、内容审核、普通服务错误以及图片下载/解析失败均不触发模型切换。`notes` 说明补试，结果及会话记录实际使用的 ID。
+Flare、Sunburst 的 Images 请求不发送 `response_format`，直接保存上游返回的 base64 或 URL 图片。下载或响应解析失败时，不通过更换格式重复提交生图请求。所有图像工具只走 `/v1/images/generations` 或 `/v1/images/edits`，不调用 Responses API。
 
 2026-10-16，v0.4.3 Release 候选在米醋主站完成默认 Flare 生图与重启后的会话编辑，两次 Images 请求均返回 HTTP 200 和 1024×1024 图片，均省略 `quality` 与 `response_format`。
 
@@ -93,9 +93,7 @@ Flare、Sunburst 及新发现兼容模型的 Images 请求不发送 `response_fo
 
 完整记录见[在线质量档位验证](docs/session-storage.md#在线质量档位验证)。这些结果对应当时的线路和凭据，Flare 使用改名前的 ID。
 工具保留完整参数选项，以兼容其他线路或后续支持；尺寸路由见[尺寸规则](#尺寸规则)。
-旧 Sunburst ID `gpt-image-2.5-sunburst` 已按认证目录映射到 `gpt-image-2.5-sunburst-openai`，旧配置与会话继续可用。
-
-Grok 生图已永久移除。模型目录从可信上游 `/v1/models` 联网读取，成功结果缓存一小时；断网时报告过期缓存或离线基线。兼容 Images 协议的 GPT Image 2 家族新 ID 无需升级程序；模型默认选择不自动变化。
+Grok 生图已永久移除。新增模型 ID 需手动更新目录；已有默认选择不会因网络目录变化而自动切换。
 
 ---
 

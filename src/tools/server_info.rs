@@ -28,6 +28,16 @@ impl ToolEngine {
             "default_model",
             Value::String(self.config.default_model.clone()),
         )?;
+        set_top(
+            &mut info,
+            "available_models",
+            serde_json::json!(crate::domain::routing::SUPPORTED_IMAGE_MODELS),
+        )?;
+        set_top(
+            &mut info,
+            "model_catalog",
+            crate::model_catalog::info(&self.config.default_model, &self.config.default_edit_model),
+        )?;
         set_nested(
             &mut info,
             "default_models",
@@ -180,7 +190,7 @@ mod tests {
         config::{Config, test_paths},
         fs::output_store::OutputStore,
         fs::response_output::OutputSaver,
-        http::client::{ApiResponse, HttpExecutor, RetryOptions},
+        http::client::{HttpExecutor, RetryOptions},
         http::download::SystemResolver,
         providers::{EditRequest, GenerateRequest, ImageProvider},
     };
@@ -197,7 +207,7 @@ mod tests {
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
+        ) -> crate::providers::ImageResponse {
             panic!("server_info must not call provider")
         }
         async fn edit(
@@ -206,7 +216,7 @@ mod tests {
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
+        ) -> crate::providers::ImageResponse {
             panic!("server_info must not call provider")
         }
     }
@@ -245,17 +255,17 @@ mod tests {
             serde_json::json!([
                 "gpt-image-2",
                 "gpt-image-2-openai",
-                "gpt-image-2.5-flare-openai",
-                "gpt-image-2.5-sunburst-openai"
+                "gpt-image-2.5-flare",
+                "gpt-image-2.5-sunburst"
             ])
         );
         assert_eq!(
             info["default_models"]["image_generate"],
-            "gpt-image-2.5-flare-openai"
+            "gpt-image-2.5-flare"
         );
         assert_eq!(
             info["default_models"]["image_edit"],
-            "gpt-image-2.5-sunburst-openai"
+            "gpt-image-2.5-sunburst"
         );
         assert!(info.get("grok_channel_enabled").is_none());
         assert_eq!(info["api_key_configured"], true);

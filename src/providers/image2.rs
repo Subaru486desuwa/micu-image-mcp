@@ -4,11 +4,13 @@ use serde_json::{Map, Value};
 use url::Url;
 
 use crate::{
+    domain::routing::suffix_fallback,
     http::client::{
-        ApiResponse, HttpExecutor, JsonRequestFactory, MultipartRequestFactory, RetryOptions,
+        HttpExecutor, JsonRequestFactory, MultipartRequestFactory, RequestFactory, RetryOptions,
         UploadPart,
     },
-    providers::{EditRequest, GenerateRequest, ImageProvider},
+    http::response::model_rejected,
+    providers::{EditRequest, GenerateRequest, ImageProvider, ImageResponse},
 };
 
 #[derive(Clone)]
@@ -26,6 +28,49 @@ impl Image2Provider {
             http,
         })
     }
+
+    async fn execute<F: ImageRequestFactory>(
+        &self,
+        mut factory: F,
+        model: &str,
+        key: &SecretString,
+        retry: RetryOptions,
+        notes: &mut Vec<String>,
+    ) -> ImageResponse {
+        let response = self.http.execute(&factory, key, retry, notes).await;
+        let Some(fallback) = suffix_fallback(model)
+            .filter(|_| model_rejected(response.status, &response.body, model))
+        else {
+            return ImageResponse::new(response, model);
+        };
+        notes.push(format!(
+            "上游明确拒绝模型 {model} → 使用兼容 ID {fallback} 补试一次"
+        ));
+        factory.set_model(fallback);
+        ImageResponse {
+            response: self.http.execute(&factory, key, retry, notes).await,
+            model: fallback.to_owned(),
+            used_fallback: true,
+        }
+    }
+}
+
+trait ImageRequestFactory: RequestFactory {
+    fn set_model(&mut self, model: &str);
+}
+impl ImageRequestFactory for JsonRequestFactory {
+    fn set_model(&mut self, model: &str) {
+        self.body["model"] = Value::String(model.to_owned());
+    }
+}
+impl ImageRequestFactory for MultipartRequestFactory {
+    fn set_model(&mut self, model: &str) {
+        for (name, value) in &mut self.fields {
+            if name == "model" {
+                *value = model.to_owned();
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -36,7 +81,7 @@ impl ImageProvider for Image2Provider {
         key: &SecretString,
         retry: RetryOptions,
         notes: &mut Vec<String>,
-    ) -> ApiResponse {
+    ) -> ImageResponse {
         let mut body = Map::new();
         body.insert("model".into(), Value::String(request.model.into()));
         body.insert("prompt".into(), Value::String(request.prompt.into()));
@@ -51,17 +96,17 @@ impl ImageProvider for Image2Provider {
         if let Some(quality) = request.quality {
             body.insert("quality".into(), Value::String(quality.into()));
         }
-        self.http
-            .execute(
-                &JsonRequestFactory {
-                    url: self.generations_url.clone(),
-                    body: Value::Object(body),
-                },
-                key,
-                retry,
-                notes,
-            )
-            .await
+        self.execute(
+            JsonRequestFactory {
+                url: self.generations_url.clone(),
+                body: Value::Object(body),
+            },
+            request.model,
+            key,
+            retry,
+            notes,
+        )
+        .await
     }
 
     async fn edit(
@@ -70,7 +115,7 @@ impl ImageProvider for Image2Provider {
         key: &SecretString,
         retry: RetryOptions,
         notes: &mut Vec<String>,
-    ) -> ApiResponse {
+    ) -> ImageResponse {
         let mut fields = vec![
             ("model".into(), request.model.into()),
             ("prompt".into(), request.prompt.into()),
@@ -96,18 +141,18 @@ impl ImageProvider for Image2Provider {
                 size_bytes: mask.size_bytes,
             });
         }
-        self.http
-            .execute(
-                &MultipartRequestFactory {
-                    url: self.edits_url.clone(),
-                    fields,
-                    files,
-                },
-                key,
-                retry,
-                notes,
-            )
-            .await
+        self.execute(
+            MultipartRequestFactory {
+                url: self.edits_url.clone(),
+                fields,
+                files,
+            },
+            request.model,
+            key,
+            retry,
+            notes,
+        )
+        .await
     }
 }
 

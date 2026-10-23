@@ -2,10 +2,10 @@ use super::size::{SizeTier, parse_size, round_to_alignment, size_tier, validate_
 
 pub const STANDARD_MODEL: &str = "gpt-image-2";
 pub const QUALITY_MODEL: &str = "gpt-image-2-openai";
-pub const FLARE_MODEL: &str = "gpt-image-2.5-flare-openai";
-pub const LEGACY_FLARE_MODEL: &str = "gpt-image-2.5-flare";
-pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst-openai";
-pub const LEGACY_SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
+pub const FLARE_MODEL: &str = "gpt-image-2.5-flare";
+pub const LEGACY_FLARE_MODEL: &str = "gpt-image-2.5-flare-openai";
+pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
+pub const LEGACY_SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst-openai";
 pub const SUPPORTED_IMAGE_MODELS: [&str; 4] =
     [STANDARD_MODEL, QUALITY_MODEL, FLARE_MODEL, SUNBURST_MODEL];
 
@@ -14,6 +14,16 @@ pub fn canonical_model(model: &str) -> &str {
         LEGACY_FLARE_MODEL => FLARE_MODEL,
         LEGACY_SUNBURST_MODEL => SUNBURST_MODEL,
         _ => model,
+    }
+}
+
+/// Only renamed aliases of the same model. The standard and historical quality
+/// routes are distinct, not a suffix compatibility pair.
+pub fn suffix_fallback(model: &str) -> Option<&'static str> {
+    match model {
+        FLARE_MODEL => Some(LEGACY_FLARE_MODEL),
+        SUNBURST_MODEL => Some(LEGACY_SUNBURST_MODEL),
+        _ => None,
     }
 }
 
@@ -186,7 +196,7 @@ pub fn size_note(requested: &str, actual: Option<(u32, u32)>) -> Option<String> 
 }
 
 pub fn is_quality_model(model: &str) -> bool {
-    matches!(model, QUALITY_MODEL | SUNBURST_MODEL)
+    matches!(canonical_model(model), QUALITY_MODEL | SUNBURST_MODEL)
 }
 
 pub fn is_large_tier(tier: SizeTier) -> bool {
@@ -287,6 +297,21 @@ mod tests {
     }
 
     #[test]
+    fn suffix_candidates_are_same_model_aliases_not_standard_quality_routes() {
+        assert_eq!(suffix_fallback(FLARE_MODEL), Some(LEGACY_FLARE_MODEL));
+        assert_eq!(suffix_fallback(SUNBURST_MODEL), Some(LEGACY_SUNBURST_MODEL));
+        for model in [
+            STANDARD_MODEL,
+            QUALITY_MODEL,
+            LEGACY_FLARE_MODEL,
+            LEGACY_SUNBURST_MODEL,
+        ] {
+            assert_eq!(suffix_fallback(model), None);
+        }
+        assert!(is_quality_model(LEGACY_SUNBURST_MODEL));
+    }
+
+    #[test]
     fn flare_alias_is_exact_and_preserves_size_and_scheduling_policy() {
         for size in ["1024x1024", "2048x1152", "3840x2160"] {
             assert_eq!(
@@ -295,7 +320,7 @@ mod tests {
             );
             let (model, notes) = resolve_model(Some(LEGACY_FLARE_MODEL), STANDARD_MODEL, size);
             assert_eq!(model, FLARE_MODEL);
-            assert!(notes[0].contains("已更新为 gpt-image-2.5-flare-openai"));
+            assert!(notes[0].contains("已更新为 gpt-image-2.5-flare"));
             assert_eq!(resolve_model(None, LEGACY_FLARE_MODEL, size).0, FLARE_MODEL);
         }
         assert!(!is_quality_model(FLARE_MODEL));

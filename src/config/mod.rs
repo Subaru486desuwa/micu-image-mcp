@@ -34,7 +34,6 @@ pub const ENV_KEYS: &[&str] = &[
     "MICU_ALLOW_FAKE_IP_DOWNLOAD",
     "MICU_CONTRACT_TESTING",
     "MICU_TEST_API_TIMEOUT_MS",
-    "MICU_TEST_CATALOG_TTL_MS",
     "MICU_KEYCHAIN_ACCOUNT",
     "MICU_KEYCHAIN_SERVICE",
 ];
@@ -59,7 +58,6 @@ pub struct Config {
     pub trusted_download_hosts: Vec<String>,
     pub allow_fake_ip_download: bool,
     pub api_request_timeout: Duration,
-    pub catalog_ttl: Duration,
 }
 
 #[derive(Debug, Error)]
@@ -169,18 +167,6 @@ impl Config {
                 true,
             ),
             api_request_timeout,
-            catalog_ttl: if environment
-                .get("MICU_CONTRACT_TESTING")
-                .is_some_and(|v| v == "1")
-            {
-                environment
-                    .get("MICU_TEST_CATALOG_TTL_MS")
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .map(|v| Duration::from_millis(v.max(10)))
-                    .unwrap_or(Duration::from_secs(3600))
-            } else {
-                Duration::from_secs(3600)
-            },
         })
     }
 

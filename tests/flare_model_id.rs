@@ -6,8 +6,8 @@ use micu_devtools::{
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
-const FLARE: &str = "gpt-image-2.5-flare-openai";
-const LEGACY_FLARE: &str = "gpt-image-2.5-flare";
+const FLARE: &str = "gpt-image-2.5-flare";
+const LEGACY_FLARE: &str = "gpt-image-2.5-flare-openai";
 
 #[test]
 fn default_and_explicit_flare_ids_send_the_current_model() -> Result<()> {
@@ -39,7 +39,7 @@ fn default_and_explicit_flare_ids_send_the_current_model() -> Result<()> {
     assert_eq!(info["default_model"], FLARE);
     assert_eq!(
         info["default_models"]["image_edit"],
-        "gpt-image-2.5-sunburst-openai"
+        "gpt-image-2.5-sunburst"
     );
     assert!(
         info["available_models"]

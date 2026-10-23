@@ -21,7 +21,7 @@ fn default_flare_uses_images_api_without_response_format() -> Result<()> {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].path, "/v1/images/generations");
     assert_eq!(result["ok"], true, "{result}");
-    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-flare-openai");
+    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-flare");
     assert!(requests[0].fields.get("response_format").is_none());
     assert!(Path::new(result["saved"][0]["path"].as_str().unwrap()).is_file());
     Ok(())
@@ -69,7 +69,7 @@ fn every_flare_tool_omits_response_format_even_with_explicit_configuration() -> 
                             "/v1/images/edits"
                         }
                     );
-                    assert_eq!(request.fields["model"], "gpt-image-2.5-flare-openai");
+                    assert_eq!(request.fields["model"], "gpt-image-2.5-flare");
                     assert!(request.fields.get("response_format").is_none());
                 }
             }
@@ -93,7 +93,7 @@ fn flare_output_failures_do_not_regenerate_identical_paid_requests() -> Result<(
         fs::write(&a, png(32, 24, 1)?)?;
         fs::write(&b, png(32, 24, 2)?)?;
         let mut env = api.proxy_env();
-        env.push(("MICU_MODEL", "gpt-image-2.5-flare-openai"));
+        env.push(("MICU_MODEL", "gpt-image-2.5-flare"));
         let mut server = Session::new(
             Path::new(env!("CARGO_BIN_EXE_micu-image-mcp")),
             root.path(),

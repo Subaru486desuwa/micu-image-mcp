@@ -43,7 +43,7 @@ impl ToolEngine {
                 total,
             ));
         };
-        let (effective_model, notes) = resolve_model(
+        let (effective_model, mut notes) = resolve_model(
             params.model.as_deref(),
             &self.config.default_edit_model,
             &size,
@@ -133,9 +133,27 @@ impl ToolEngine {
             .iter()
             .filter(|(_, result)| result.get("ok").and_then(Value::as_bool) == Some(true))
             .count();
+        let actual_model = results
+            .iter()
+            .find(|(_, result)| result["ok"] == true)
+            .or_else(|| results.first())
+            .and_then(|(_, result)| result["model"].as_str())
+            .unwrap_or(&effective_model)
+            .to_owned();
+        let used_fallback = results
+            .iter()
+            .any(|(_, result)| result["used_fallback"] == true);
+        if results.iter().any(|(_, result)| {
+            result["model"]
+                .as_str()
+                .is_some_and(|model| model != actual_model)
+        }) {
+            notes.push("批量结果使用了不同兼容 ID；各图片的实际模型见 results[].model".into());
+        }
         let mut output = Map::new();
         output.insert("ok".into(), Value::Bool(succeeded > 0));
-        output.insert("model".into(), Value::String(effective_model));
+        output.insert("model".into(), Value::String(actual_model));
+        output.insert("used_fallback".into(), Value::Bool(used_fallback));
         output.insert("size".into(), Value::String(size));
         output.insert("concurrency".into(), Value::from(concurrency));
         output.insert("total".into(), Value::from(total));
@@ -247,35 +265,41 @@ mod tests {
     impl ImageProvider for FakeProvider {
         async fn generate(
             &self,
-            _request: GenerateRequest<'_>,
+            request: GenerateRequest<'_>,
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
-            ApiResponse {
-                status: 500,
-                headers: reqwest::header::HeaderMap::new(),
-                body: vec![],
-            }
+        ) -> crate::providers::ImageResponse {
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: 500,
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: vec![],
+                },
+                request.model,
+            )
         }
 
         async fn edit(
             &self,
-            _request: EditRequest<'_>,
+            request: EditRequest<'_>,
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
+        ) -> crate::providers::ImageResponse {
             self.starts.lock().await.push(Instant::now());
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_active.fetch_max(active, Ordering::SeqCst);
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
             self.active.fetch_sub(1, Ordering::SeqCst);
-            ApiResponse {
-                status: 200,
-                headers: reqwest::header::HeaderMap::new(),
-                body: self.body.clone(),
-            }
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: 200,
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: self.body.clone(),
+                },
+                request.model,
+            )
         }
     }
 

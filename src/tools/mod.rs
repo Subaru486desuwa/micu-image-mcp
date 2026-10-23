@@ -23,7 +23,6 @@ pub use types::{BatchParams, EditParams, GenerateParams, MultiReferenceParams};
 #[derive(Clone)]
 pub struct ToolEngine {
     pub(crate) config: Arc<Config>,
-    pub(crate) catalog: crate::model_catalog::ModelCatalog,
     pub(crate) paths: Arc<AppPaths>,
     pub(crate) input_store: InputStore,
     pub(crate) output_store: OutputStore,
@@ -41,7 +40,6 @@ impl ToolEngine {
     ) -> Self {
         let input_store = InputStore::new(paths.as_ref());
         Self {
-            catalog: crate::model_catalog::ModelCatalog::new(config.clone()),
             config,
             paths,
             input_store,
@@ -68,9 +66,8 @@ impl ToolEngine {
             .as_ref()
             .filter(|k| !secrecy::ExposeSecret::expose_secret(*k).trim().is_empty())
             .unwrap_or(&self.config.api_key);
-        let snapshot = self.catalog.snapshot(key).await;
         let model = crate::domain::routing::canonical_model(requested.unwrap_or(default));
-        if snapshot.models.iter().any(|v| v == model) {
+        if crate::domain::routing::SUPPORTED_IMAGE_MODELS.contains(&model) {
             None
         } else {
             let model = crate::http::response::sanitize_sensitive(
@@ -82,19 +79,11 @@ impl ToolEngine {
             );
             Some(format!(
                 "不支持 model={model:?}；当前可用模型: {}",
-                snapshot.models.join(" / ")
+                crate::domain::routing::SUPPORTED_IMAGE_MODELS.join(" / ")
             ))
         }
     }
     pub async fn catalog_server_info(&self) -> Result<serde_json::Value, ToolFailure> {
-        let snapshot = self.catalog.snapshot(&self.config.api_key).await;
-        let mut info = self.server_info()?;
-        info["available_models"] = serde_json::json!(snapshot.models);
-        info["model_catalog"] = snapshot.info();
-        info["model_catalog"]["default_generate_available"] =
-            serde_json::json!(snapshot.models.contains(&self.config.default_model));
-        info["model_catalog"]["default_edit_available"] =
-            serde_json::json!(snapshot.models.contains(&self.config.default_edit_model));
-        Ok(info)
+        self.server_info()
     }
 }

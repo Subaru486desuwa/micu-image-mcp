@@ -119,7 +119,7 @@ fn repeated_background_startup_never_requests_credential_ui_and_reports_recovery
                 .unwrap()
                 .contains("credentials authorize")
         );
-        let generation = server.request("tools/call", json!({"name":"image_generate","arguments":{"prompt":"fixture", "model":"gpt-image-2.5-flare-openai"}}))?;
+        let generation = server.request("tools/call", json!({"name":"image_generate","arguments":{"prompt":"fixture", "model":"gpt-image-2.5-flare"}}))?;
         assert!(generation.to_string().contains("credentials authorize"));
     }
     Ok(())

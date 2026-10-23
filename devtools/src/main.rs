@@ -88,7 +88,7 @@ enum Task {
         #[arg(
             long,
             value_delimiter = ',',
-            default_value = "gpt-image-2.5-flare-openai,gpt-image-2.5-sunburst-openai,gpt-image-2,gpt-image-2-openai"
+            default_value = "gpt-image-2.5-flare,gpt-image-2.5-sunburst,gpt-image-2,gpt-image-2-openai"
         )]
         models: Vec<String>,
         #[arg(long, value_delimiter = ',', default_value = "1024x1024")]

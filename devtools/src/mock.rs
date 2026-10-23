@@ -244,7 +244,7 @@ fn split_bytes<'a>(bytes: &'a [u8], separator: &[u8]) -> Vec<&'a [u8]> {
     parts
 }
 
-fn multipart(content_type: &str, bytes: &[u8]) -> Result<(Value, Vec<Upload>)> {
+pub fn multipart(content_type: &str, bytes: &[u8]) -> Result<(Value, Vec<Upload>)> {
     let boundary = content_type
         .split(';')
         .find_map(|part| part.trim().strip_prefix("boundary="))
@@ -804,8 +804,10 @@ impl MockMicu {
                     &[],
                 );
             }
-            if fields["model"] == "gpt-image-2.5-flare-openai"
-                && fields.get("response_format").is_some()
+            if matches!(
+                fields["model"].as_str(),
+                Some("gpt-image-2.5-flare" | "gpt-image-2.5-flare-openai")
+            ) && fields.get("response_format").is_some()
             {
                 return respond_json(
                     request,

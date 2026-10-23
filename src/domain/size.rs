@@ -156,7 +156,7 @@ pub fn validate_quality(
         return (None, None);
     }
     let is_25 = matches!(
-        model,
+        crate::domain::routing::canonical_model(model),
         crate::domain::routing::FLARE_MODEL | crate::domain::routing::SUNBURST_MODEL
     );
     let allowed = matches!(cleaned.as_str(), "auto" | "low" | "medium" | "high")

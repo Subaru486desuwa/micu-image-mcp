@@ -181,6 +181,8 @@ impl ToolEngine {
         let images = [("image", &image)];
         let mut last_error: Option<String> = None;
         let mut saved = None;
+        let mut actual_model = effective_model.clone();
+        let mut used_fallback = false;
         for (format_index, response_format) in self
             .config
             .response_formats_for_model(&effective_model)
@@ -194,11 +196,11 @@ impl ToolEngine {
                     last_error.as_deref().unwrap_or("保存失败")
                 ));
             }
-            let response = self
+            let image_response = self
                 .provider
                 .edit(
                     EditRequest {
-                        model: &effective_model,
+                        model: &actual_model,
                         prompt: &effective_prompt,
                         size: &size,
                         quality: quality.as_deref(),
@@ -211,6 +213,9 @@ impl ToolEngine {
                     &mut notes,
                 )
                 .await;
+            actual_model = image_response.model;
+            used_fallback |= image_response.used_fallback;
+            let response = image_response.response;
             if !response.is_success() {
                 last_error = Some(format!(
                     "HTTP {}: {}",
@@ -239,7 +244,8 @@ impl ToolEngine {
         let Some(saved) = saved else {
             let mut output = Map::new();
             output.insert("ok".into(), Value::Bool(false));
-            output.insert("model".into(), Value::String(effective_model));
+            output.insert("model".into(), Value::String(actual_model));
+            output.insert("used_fallback".into(), Value::Bool(used_fallback));
             output.insert("size".into(), Value::String(size));
             if let Some(session) = &session {
                 output.insert("session".into(), session.unchanged_value());
@@ -274,7 +280,7 @@ impl ToolEngine {
                     .to_owned(),
                 instruction,
                 context,
-                model: effective_model.clone(),
+                model: actual_model.clone(),
                 size: size.clone(),
                 quality: quality.clone(),
             });
@@ -292,9 +298,9 @@ impl ToolEngine {
             }
         }
         output.insert("ok".into(), Value::Bool(true));
-        output.insert("model".into(), Value::String(effective_model));
+        output.insert("model".into(), Value::String(actual_model));
         output.insert("size".into(), Value::String(size));
-        output.insert("used_fallback".into(), Value::Bool(false));
+        output.insert("used_fallback".into(), Value::Bool(used_fallback));
         output.insert("saved".into(), saved_value(&saved, None)?);
         output.insert(
             "notes".into(),
@@ -345,16 +351,19 @@ mod tests {
     impl ImageProvider for FakeProvider {
         async fn generate(
             &self,
-            _request: GenerateRequest<'_>,
+            request: GenerateRequest<'_>,
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
-            ApiResponse {
-                status: 500,
-                headers: reqwest::header::HeaderMap::new(),
-                body: Vec::new(),
-            }
+        ) -> crate::providers::ImageResponse {
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: 500,
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: Vec::new(),
+                },
+                request.model,
+            )
         }
 
         async fn edit(
@@ -363,7 +372,7 @@ mod tests {
             _key: &SecretString,
             _retry: RetryOptions,
             _notes: &mut Vec<String>,
-        ) -> ApiResponse {
+        ) -> crate::providers::ImageResponse {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.edits.lock().await.push((
                 request.model.into(),
@@ -380,11 +389,14 @@ mod tests {
                 request.prompt.into(),
                 std::fs::read(request.images[0].1.file.path()).unwrap(),
             ));
-            ApiResponse {
-                status: self.status.load(Ordering::SeqCst),
-                headers: reqwest::header::HeaderMap::new(),
-                body: self.body.clone(),
-            }
+            crate::providers::ImageResponse::new(
+                ApiResponse {
+                    status: self.status.load(Ordering::SeqCst),
+                    headers: reqwest::header::HeaderMap::new(),
+                    body: self.body.clone(),
+                },
+                request.model,
+            )
         }
     }
 
@@ -475,7 +487,7 @@ mod tests {
         assert_eq!(
             provider.edits.lock().await.as_slice(),
             &[(
-                "gpt-image-2.5-sunburst-openai".into(),
+                "gpt-image-2.5-sunburst".into(),
                 "1024x1024".into(),
                 Some("max".into()),
                 vec!["image".into()],
@@ -569,7 +581,7 @@ mod tests {
         assert_eq!(second["session"]["context"]["identity"], "same face");
         assert_eq!(second["session"]["context"]["clothing"], "red shirt");
         assert_eq!(second["session"]["input_path"], first["saved"]["path"]);
-        assert_eq!(second["model"], "gpt-image-2.5-flare-openai");
+        assert_eq!(second["model"], "gpt-image-2.5-flare");
         assert_eq!(second["size"], "1536x1024");
         let captured = provider.prompts_and_inputs.lock().await;
         assert_eq!(

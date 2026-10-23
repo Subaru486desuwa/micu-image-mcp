@@ -16,8 +16,8 @@
 
 生成的图片会**自动保存到本地磁盘**，返回结果中包含文件的绝对路径，方便你在 IDE 或文件管理器中打开。
 
-当前支持 `gpt-image-2.5-flare-openai`、`gpt-image-2.5-sunburst-openai`、`gpt-image-2` 和
-`gpt-image-2-openai`。旧 ID `gpt-image-2.5-flare` 自动映射到新的 Flare ID，包括已有配置和会话。
+当前手动维护 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
+历史质量线路 `gpt-image-2-openai`。带后缀的旧 Flare/Sunburst 配置与会话继续可用，优先请求无后缀 ID；只有明确的模型拒绝才补试带后缀 ID。
 Grok 生图已永久移除。
 
 ---
@@ -236,7 +236,7 @@ flowchart TD
 | `prompt` | string | ✅ | 图像描述，1–2000 字符 |
 | `size` | string \| null | | `"WxH"` 格式，如 `"1024x1024"`；留空则从 prompt 关键字自动推断 |
 | `n` | int | | 生成张数 1–10；1K 可多张并发，≥2K 强制 n=1 |
-| `model` | string \| null | | MCP 支持 Flare / Sunburst / Image2 / 旧 OpenAI 模型；默认 Flare。本次主站凭据只列出前三者，实际授权以 `/v1/models` 为准 |
+| `model` | string \| null | | MCP 手动维护 Flare / Sunburst / Image2 / 历史质量线路；默认 Flare。目录见 `server_info.available_models`，实际授权与可用性由上游决定 |
 | `quality` | string \| null | | 当前主站实测：Flare/Sunburst 用 `low` / `auto` / 留空；旧 Image2 也接受 `medium` / `high`。完整选项与线路支持见 `server_info.size_rules` |
 | `save_dir` | string \| null | | 输出目录，必须在 `MICU_SAVE_DIR_ROOT` 下 |
 | `basename` | string \| null | | 文件名前缀，仅允许 `[A-Za-z0-9_\-.]` |
@@ -479,9 +479,13 @@ image_edit(
 
 ---
 
-## 六、联网模型目录
+## 六、手动模型目录与兼容补试
 
-`server_info.available_models` 与图像工具共用目录。首次需要时查询 `/v1/models`，成功缓存一小时；失败保留同凭据旧目录（`stale_cache`），没有旧目录则使用 `offline_baseline`。成功空目录不会回退。更换凭据或上游使用独立目录；请求中的 `api_key` 也按其凭据查询。目录不证明每个模型的编辑能力。
+`server_info.available_models` 与图像工具共用手动目录，不自动查询 `/v1/models`；`model_catalog.source` 为 `manual`。新增模型 ID 需手动更新目录。这个目录表示 MCP 支持的名称，不证明当前凭据、上游渠道或每个模型的编辑能力。
+
+Flare/Sunburst 的带后缀旧名称先解析为无后缀名称。上游明确返回模型不存在、不支持或该模型无可用渠道时，才切到带 `-openai` 的兼容 ID 补试一次。该补试仅限 Flare/Sunburst；标准 `gpt-image-2` 与历史质量线路 `gpt-image-2-openai` 不是别名。显式质量线路以及大尺寸自动质量路由保持不变。
+
+网络、超时、认证、限流、余额、审核、参数或普通服务错误不触发模型切换；成功响应后的解析、下载、落盘失败也不触发。`notes` 会说明发生的模型补试，结果和持久会话记录实际模型 ID。
 
 
 ## 七、返回结果字段说明
@@ -491,7 +495,8 @@ image_edit(
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `ok` | bool | 是否至少成功 1 张/次 |
-| `model` | string | 实际使用的模型 |
+| `model` | string | 单张实际使用的模型；多张逐项以 `saved[].model` / `results[].model` 为准 |
+| `used_fallback` | bool | 是否使用过带后缀模型补试 |
 | `size` | string | 请求的尺寸 |
 | `saved` | list/dict | 成功保存的文件信息 |
 | `errors` | list | 失败描述列表 |
@@ -502,6 +507,7 @@ image_edit(
 | 字段 | 说明 |
 |------|------|
 | `path` | 文件绝对路径 |
+| `model` | 文生图各项实际使用的模型 ID |
 | `size_bytes` | 文件字节数 |
 | `actual_size` | 从图片 header 读出的真实像素（如 `"1024x1024"`） |
 | `actual_megapixels` | 实际百万像素 |

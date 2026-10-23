@@ -51,6 +51,17 @@ native harness 支持 `--kind claude|opencode`，四轮独立 CLI 进程通过�
 
 ## 显式在线入口
 
+只验收一张默认 Flare 图片时，使用有界入口，不运行生成加编辑的旧 quick 示例：
+
+```bash
+cargo build --locked --release --all-features
+MICU_RUN_LIVE_TESTS=1 cargo run --locked --release --example live_once -- \
+  --live --config ~/.codex/config.toml --binary target/release/micu-image-mcp \
+  --output target/live-once-<新目录>
+```
+
+该入口要求干净、已提交的候选工作树，复用 Codex 配置解析与禁止 UI 的产品凭据读取；只启动当前工作树的 release binary。固定调用一次 `image_generate`，默认 Flare、1024×1024、`n=1`、新会话，提示为白底蓝色陶瓷杯。可信 HTTPS relay 在转发前预留预算，关闭传输层自动重试，上游图像 POST 总数最多 2；失败后不再发其他付费调用。图片和脱敏报告写入 ignored `target/`，报告记录 revision、版本、实际 ID、请求计数/状态、像素、字节及耗时；不保存凭据、完整配置、任意工具错误或带签名 URL。`--live` 与环境开关缺一都会在读取凭据前停止。
+
 常规 CI 不运行在线请求。`quality-matrix` 默认只输出计划，不读凭据；四模型、生成/编辑、省略和声明质量共 48 项 1K，也可通过 `--sizes 1024x1024,2048x2048,3840x2160` 规划 144 项。真正执行还需要 `--live`、`MICU_RUN_LIVE_TESTS=1`、`--limit` 和新的 `--output` 目录。stdin JSON 的字段为 `api_key`、可选 `origin`；只允许固定米醋 HTTPS 域名。每项最多四次实际 POST，含重试；报告记录实际请求数与状态，错误不冒充成功。
 
 native harness 必须 `MICU_RUN_HARNESS_TESTS=1`；stdin JSON 为 `api_key` 和 `origin`，只允许既定米醋/Anthropic/DeepSeek HTTPS origins，最多 32 次模型 POST。图片默认为本地 fixture；`--live-images` 另外要求 `MICU_RUN_LIVE_TESTS=1` 和 stdin 的 `image_api_key`、可选 `image_origin`，最多 16 次图片 POST。`--cli`、`--model`、`--output` 必填。凭据只在 relay 内存中，不写客户端配置、argv 或报告；真实文字模型授权不代替图片授权。

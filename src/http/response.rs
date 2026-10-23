@@ -50,6 +50,165 @@ struct ErrorObject<'a> {
     message: Option<Cow<'a, str>>,
 }
 
+/// Only an unqualified rejection of the requested model authorizes an alias POST.
+/// Structured model codes cannot override contradictory messages or parameter fields.
+pub fn model_rejected(status: u16, body: &[u8], model: &str) -> bool {
+    if !matches!(status, 400 | 404 | 422 | 503) {
+        return false;
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+    let Some(error) = value.get("error").and_then(serde_json::Value::as_object) else {
+        return false;
+    };
+    // Missing/null metadata is allowed; malformed metadata is not absence.
+    let field = |name| match error.get(name) {
+        None | Some(serde_json::Value::Null) => Some(""),
+        Some(serde_json::Value::String(value)) => Some(value.as_str()),
+        _ => None,
+    };
+    let (Some(code), Some(kind), Some(param), Some(message)) = (
+        field("code"),
+        field("type"),
+        field("param"),
+        field("message"),
+    ) else {
+        return false;
+    };
+    if !param.is_empty() && param != "model" {
+        return false;
+    }
+    let code = code.trim().to_ascii_lowercase();
+    let kind = kind.trim().to_ascii_lowercase();
+    let explicit_model_code = model_failure_code(&code) || model_failure_code(&kind);
+    if (!code.is_empty() && !model_failure_code(&code) && code != "no_available_channel")
+        || (!kind.is_empty()
+            && !model_failure_code(&kind)
+            && !matches!(
+                kind.as_str(),
+                "new_api_error" | "invalid_request_error" | "no_available_channel"
+            ))
+    {
+        return false;
+    }
+    let message = message.trim().to_ascii_lowercase();
+    let message = rejection_sentence(&message);
+    if message.is_empty() {
+        return explicit_model_code;
+    }
+    // A generic model-only message can rely on a structured model code, but a
+    // message naming another model, permissions or an input cannot bypass parsing.
+    if explicit_model_code
+        && [
+            "model not found",
+            "model is not found",
+            "model does not exist",
+            "unsupported model",
+            "unknown model",
+            "invalid model",
+            "model not supported",
+            "model is not supported",
+            "model unavailable",
+            "model is unavailable",
+        ]
+        .contains(&message)
+    {
+        return true;
+    }
+    message_rejects_requested_model(message, model)
+}
+
+fn model_failure_code(code: &str) -> bool {
+    matches!(
+        code,
+        "model_not_found"
+            | "invalid_model"
+            | "unsupported_model"
+            | "model_not_supported"
+            | "model_not_available"
+            | "model_unavailable"
+    )
+}
+
+fn rejection_sentence(message: &str) -> &str {
+    fn trim(text: &str) -> &str {
+        text.trim().trim_end_matches(['.', '!', '。', '！'])
+    }
+    let message = trim(message);
+    // New API appends opaque request IDs. Do not discard arbitrary parenthetical
+    // reasons such as permissions, unsupported parameters, or authentication.
+    for (marker, close) in [
+        (" (request id: ", ")"),
+        (" (request_id: ", ")"),
+        ("（request id: ", "）"),
+    ] {
+        if let Some((sentence, trace)) = message.rsplit_once(marker)
+            && let Some(trace) = trace.strip_suffix(close)
+            && !trace.is_empty()
+            && trace
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+        {
+            return trim(sentence);
+        }
+    }
+    message
+}
+
+fn message_rejects_requested_model(message: &str, model: &str) -> bool {
+    let token = |c: char| c.is_ascii_alphanumeric() || "-._".contains(c);
+    message.match_indices(model).any(|(start, _)| {
+        if message[..start].chars().next_back().is_some_and(token)
+            || message[start + model.len()..]
+                .chars()
+                .next()
+                .is_some_and(token)
+        {
+            return false;
+        }
+        let punctuation = |c: char| c.is_whitespace() || "'\"`:：,，".contains(c);
+        let before = message[..start].trim_end_matches(punctuation);
+        let after = message[start + model.len()..].trim_start_matches(punctuation);
+        // Predicates are complete clauses, not prefixes: "not supported with
+        // background=transparent" is a parameter error, not a missing model ID.
+        ([
+            "model",
+            "the model",
+            "requested model",
+            "the requested model",
+        ]
+        .contains(&before)
+            && [
+                "does not exist",
+                "not found",
+                "was not found",
+                "is not supported",
+                "not supported",
+                "is unavailable",
+                "is not available",
+            ]
+            .contains(&after))
+            || ([
+                "unknown model",
+                "unsupported model",
+                "invalid model",
+                "model not found",
+            ]
+            .contains(&before)
+                && after.is_empty())
+            || ([
+                "no available channel for model",
+                "no available channels for model",
+            ]
+            .contains(&before)
+                && after.is_empty())
+            || ((["模型", "请求的模型", "指定的模型", "当前分组下对于模型"].contains(&before)
+                || (before.starts_with("当前分组 ") && before.ends_with(" 下对于模型")))
+                && ["不存在", "不支持", "无可用渠道", "没有可用渠道"].contains(&after))
+    })
+}
+
 pub fn extract_first_payload(body: &[u8]) -> Result<ImagePayload<'_>, String> {
     if let Ok(response) = serde_json::from_slice::<BorrowedImagesResponse<'_>>(body) {
         let Some(item) = response.data.into_iter().next() else {
@@ -262,5 +421,89 @@ mod tests {
         assert!(!detail.contains("iVBORw0KGgo"));
         assert!(detail.contains("[REDACTED]"));
         assert!(detail.chars().count() <= 400);
+    }
+}
+
+#[cfg(test)]
+mod model_rejection_tests {
+    use super::model_rejected;
+    use serde_json::json;
+
+    #[test]
+    fn only_explicit_model_rejections_are_safe_to_switch() {
+        let model = "gpt-image-2.5-flare";
+        for value in [
+            json!({"error":{"code":"model_not_found"}}),
+            json!({"error":{"code":"unsupported_model","param":"model"}}),
+            json!({"error":{"message":"The model `gpt-image-2.5-flare` does not exist"}}),
+            json!({"error":{"message":"Unknown model gpt-image-2.5-flare"}}),
+            json!({"error":{"message":"No available channel for model gpt-image-2.5-flare"}}),
+            json!({"error":{"message":"当前分组下对于模型 gpt-image-2.5-flare 无可用渠道"}}),
+        ] {
+            for status in [400, 404, 422, 503] {
+                assert!(
+                    model_rejected(status, &serde_json::to_vec(&value).unwrap(), model),
+                    "{status} {value}"
+                );
+            }
+        }
+        for (status, value) in [
+            (200, json!({"error":{"code":"model_not_found"}})),
+            (
+                400,
+                json!({"error":{"message":"The model gpt-image-2.5-flare is not supported for this size"}}),
+            ),
+            (401, json!({"error":{"code":"model_not_found"}})),
+            (403, json!({"error":{"code":"model_not_found"}})),
+            (429, json!({"error":{"code":"model_not_found"}})),
+            (500, json!({"error":{"code":"model_not_found"}})),
+            (503, json!({"error":{"message":"Service unavailable"}})),
+            (
+                404,
+                json!({"error":{"message":"Endpoint not found for model gpt-image-2.5-flare"}}),
+            ),
+            (
+                400,
+                json!({"error":{"message":"Output format not supported for model gpt-image-2.5-flare"}}),
+            ),
+            (
+                503,
+                json!({"error":{"type":"RATE_LIMIT_ERROR","message":"No available channel for model gpt-image-2.5-flare"}}),
+            ),
+            (
+                400,
+                json!({"error":{"code":"invalid_prompt","message":"model gpt-image-2.5-flare not found"}}),
+            ),
+            (
+                404,
+                json!({"message":"model gpt-image-2.5-flare not found"}),
+            ),
+            (
+                400,
+                json!({"error":{"message":"model gpt-image-2.5-flare-openai not found"}}),
+            ),
+            (
+                400,
+                json!({"error":{"message":"model gpt-image-2.5-flare not supported quality"}}),
+            ),
+            (
+                400,
+                json!({"error":{"param":"size","message":"model gpt-image-2.5-flare not supported"}}),
+            ),
+            (
+                503,
+                json!({"error":{"type":"insufficient_quota","message":"No available channel for model gpt-image-2.5-flare"}}),
+            ),
+            (
+                400,
+                json!({"error":{"code":"model_not_found","message":"gpt-image-2.5-flare quota exhausted"}}),
+            ),
+        ] {
+            assert!(
+                !model_rejected(status, &serde_json::to_vec(&value).unwrap(), model),
+                "{status} {value}"
+            );
+        }
+        assert!(!model_rejected(404, b"not a JSON error", model));
     }
 }

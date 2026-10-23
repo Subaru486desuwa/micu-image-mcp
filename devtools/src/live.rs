@@ -18,23 +18,39 @@ pub struct Relay {
     pub http: HttpFixture,
     records: Arc<Mutex<Vec<Value>>>,
 }
+
+pub fn image_origin_allowed(origin: &str) -> bool {
+    matches!(origin, "https://www.micuapi.ai" | "https://sub.micuapi.ai")
+}
+
+fn reserve_event(events: &mut Vec<Value>, limit: usize, event: Value) -> Option<usize> {
+    if events.len() >= limit {
+        return None;
+    }
+    let index = events.len();
+    events.push(event);
+    Some(index)
+}
+
 impl Relay {
     pub fn new(origin: &str, key: &str, images: bool, limit: usize) -> Result<Self> {
-        let allowed = if images {
-            &["https://www.micuapi.ai", "https://sub.micuapi.ai"][..]
+        let approved = if images {
+            image_origin_allowed(origin)
         } else {
-            &[
+            [
                 "https://sub.micuapi.ai",
                 "https://api.anthropic.com",
                 "https://api.deepseek.com",
-            ][..]
+            ]
+            .contains(&origin)
         };
-        if !allowed.contains(&origin) || key.trim().is_empty() {
+        if !approved || key.trim().is_empty() {
             return Err("unapproved provider origin or empty credential".into());
         }
         let client = reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
             .timeout(Duration::from_secs(180))
             .build()?;
         let origin = origin.to_owned();
@@ -68,15 +84,6 @@ impl Relay {
             }
             let index = {
                 let mut events = observed.lock().map_err(|_| "relay lock poisoned")?;
-                if events.len() >= limit {
-                    return respond(
-                        request,
-                        429,
-                        b"request budget exhausted".to_vec(),
-                        "text/plain",
-                        &[],
-                    );
-                }
                 let index = events.len();
                 let mut event = json!({"sequence":index+1,"path":path,"request_bytes":bytes.len()});
                 if images {
@@ -90,8 +97,27 @@ impl Relay {
                             bytes.windows(field.len()).any(|window| window == field)
                         };
                     event["response_format_present"] = json!(response_format_present);
+                    if let Ok(value) = serde_json::from_slice::<Value>(&bytes)
+                        && let Some(model) = value["model"].as_str()
+                        && model.starts_with("gpt-image-2")
+                        && model.len() <= 200
+                        && model
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+                        && !model.contains(&key)
+                    {
+                        event["model"] = json!(model);
+                    }
                 }
-                events.push(event);
+                let Some(index) = reserve_event(&mut events, limit, event) else {
+                    return respond(
+                        request,
+                        429,
+                        b"request budget exhausted".to_vec(),
+                        "text/plain",
+                        &[],
+                    );
+                };
                 index
             };
             let mut target = origin.clone();
@@ -123,6 +149,8 @@ impl Relay {
                         builder = builder.header(name, value);
                     }
                 }
+                observed.lock().map_err(|_| "relay lock poisoned")?[index]["send_started"] =
+                    json!(true);
                 let response = builder
                     .body(bytes)
                     .send()
@@ -148,6 +176,7 @@ impl Relay {
                     .replace(&key, "<REDACTED>");
                 Ok((status, mime, text.into_bytes()))
             })();
+            let upstream_status = result.as_ref().ok().map(|(status, _, _)| *status);
             let (status, mime, bytes) = result.unwrap_or_else(|_| {
                 (
                     502,
@@ -157,6 +186,7 @@ impl Relay {
             });
             let mut events = observed.lock().map_err(|_| "relay lock poisoned")?;
             events[index]["status"] = json!(status);
+            events[index]["upstream_status"] = json!(upstream_status);
             events[index]["wall_seconds"] = json!(began.elapsed().as_secs_f64());
             events[index]["response_bytes"] = json!(bytes.len());
             drop(events);
@@ -170,19 +200,30 @@ impl Relay {
             .map(|values| values.clone())
             .unwrap_or_default()
     }
+
+    /// Stop accepting requests and wait for bounded in-flight sends before audit.
+    pub fn finish(self) -> Result<Vec<Value>> {
+        let Self { http, records } = self;
+        drop(http);
+        let events = records
+            .lock()
+            .map_err(|_| "relay record lock poisoned")?
+            .clone();
+        Ok(events)
+    }
 }
 
 pub fn quality_matrix(models: &[String], sizes: &[String]) -> Result<Vec<Value>> {
     let mut cases = Vec::new();
     for model in models {
         let model = match model.as_str() {
-            "gpt-image-2.5-flare" => "gpt-image-2.5-flare-openai",
-            "gpt-image-2.5-sunburst" => "gpt-image-2.5-sunburst-openai",
+            "gpt-image-2.5-flare-openai" => "gpt-image-2.5-flare",
+            "gpt-image-2.5-sunburst-openai" => "gpt-image-2.5-sunburst",
             model => model,
         };
         if ![
-            "gpt-image-2.5-flare-openai",
-            "gpt-image-2.5-sunburst-openai",
+            "gpt-image-2.5-flare",
+            "gpt-image-2.5-sunburst",
             "gpt-image-2",
             "gpt-image-2-openai",
         ]
@@ -485,4 +526,39 @@ pub fn stress(binary: &Path, highres: bool, output: &Path) -> Result<Value> {
         return Err("live stress failed; see sanitized report".into());
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod relay_budget_tests {
+    use super::*;
+    #[test]
+    fn two_post_budget_is_reserved_before_forwarding_and_never_grows() {
+        let mut events = Vec::new();
+        assert_eq!(
+            reserve_event(&mut events, 2, json!({"sequence":1})),
+            Some(0)
+        );
+        assert_eq!(
+            reserve_event(&mut events, 2, json!({"sequence":2})),
+            Some(1)
+        );
+        for _ in 0..4 {
+            assert_eq!(reserve_event(&mut events, 2, json!({"sequence":3})), None);
+        }
+        assert_eq!(events.len(), 2);
+        assert_eq!(reserve_event(&mut Vec::new(), 0, json!({})), None);
+    }
+    #[test]
+    fn image_origin_is_fixed_not_a_tool_or_config_redirect() {
+        assert!(image_origin_allowed("https://www.micuapi.ai"));
+        assert!(image_origin_allowed("https://sub.micuapi.ai"));
+        for origin in [
+            "http://www.micuapi.ai",
+            "https://www.micuapi.ai.evil.invalid",
+            "https://www.micuapi.ai/path",
+            "https://untrusted.invalid",
+        ] {
+            assert!(!image_origin_allowed(origin));
+        }
+    }
 }
