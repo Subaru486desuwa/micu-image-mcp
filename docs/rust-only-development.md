@@ -57,7 +57,7 @@ native harness 支持 `--kind claude|opencode`，四轮独立 CLI 进程通过�
 cargo build --locked --release --all-features
 MICU_RUN_LIVE_TESTS=1 cargo run --locked --release --example live_once -- \
   --live --config ~/.codex/config.toml --binary target/release/micu-image-mcp \
-  --output target/live-once-<新目录>
+  --output "target/live-once-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
 该入口要求干净、已提交的候选工作树，复用 Codex 配置解析与禁止 UI 的产品凭据读取；只启动当前工作树的 release binary。固定调用一次 `image_generate`，默认 Flare、1024×1024、`n=1`、新会话，提示为白底蓝色陶瓷杯。可信 HTTPS relay 在转发前预留预算，关闭传输层自动重试，上游图像 POST 总数最多 2；失败后不再发其他付费调用。图片和脱敏报告写入 ignored `target/`，报告记录 revision、版本、实际 ID、请求计数/状态、像素、字节及耗时；不保存凭据、完整配置、任意工具错误或带签名 URL。`--live` 与环境开关缺一都会在读取凭据前停止。
@@ -72,7 +72,7 @@ Osaka 是 Linux ARM64，源代码构建和离线验证在该主机执行。正�
 
 `source-audit` 扫描 Git 管理与未忽略的源文件，拒绝 Python/TS/JS 文件、Python 包元数据和可执行脚本/工作流中的解释器入口；不扫描 ignored 依赖目录或历史分支。独立无 Python 环境验收使用 `devtools/no-python.Dockerfile`，并明确检查 Python/Python3 不存在。
 
-付费压力入口 `cargo xtask live-stress --binary target/release/micu-image-mcp --output <新目录>` 保留标准单进程 `n=5` 的实际五并发，另需 `MICU_RUN_LIVE_STRESS=1` 和 `MICU_RUN_LIVE_TESTS=1`。`--highres` 还需 `MICU_RUN_LIVE_HIGHRES_STRESS=1`，同步启动五个真实 MCP 进程，分别请求 2048x1152、1152x2048、2048x2048、3840x2160、2160x3840；验证旧模型自动切换、n 强制为 1、像素、唯一文件、统一版本/锁描述及至少四个跨进程锁等待提示。stdin 凭据字段与质量矩阵一致；先 GET /v1/models 检查凭据与所需模型，最多 20 次实际图片 POST，未授权时在读取凭据前退出。本次不运行付费请求。
+付费压力入口 `cargo xtask live-stress --binary target/release/micu-image-mcp --output "target/live-stress-$(date -u +%Y%m%dT%H%M%SZ)"` 保留标准单进程 `n=5` 的实际五并发，另需 `MICU_RUN_LIVE_STRESS=1` 和 `MICU_RUN_LIVE_TESTS=1`。`--highres` 还需 `MICU_RUN_LIVE_HIGHRES_STRESS=1`，同步启动五个真实 MCP 进程，分别请求 2048x1152、1152x2048、2048x2048、3840x2160、2160x3840；验证旧模型自动切换、n 强制为 1、像素、唯一文件、统一版本/锁描述及至少四个跨进程锁等待提示。stdin 凭据字段与质量矩阵一致；先 GET /v1/models 检查凭据与所需模型，最多 20 次实际图片 POST，未授权时在读取凭据前退出。本次不运行付费请求。
 
 原生 Windows 的系统目录 API 不读取 HOME/LOCALAPPDATA 覆盖值。显式 `MICU_CONTRACT_TESTING=1` 时，测试驱动指定临时 HOME 和数据目录，安装与共享锁验收不会使用个人配置；正常启动继续使用系统目录 API。测试比较规范化路径，包含 macOS 的 /var → /private/var 和 Windows extended path 前缀。
 

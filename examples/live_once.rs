@@ -1,5 +1,6 @@
 //! Explicitly gated, one-call image acceptance against the current clean release.
 //! Configuration and credentials stay in memory; the relay caps upstream sends at two.
+use cap_std::{ambient_authority, fs::Dir};
 use clap::Parser;
 use micu_devtools::{
     Result,
@@ -17,7 +18,7 @@ use serde_json::{Value, json};
 use std::{
     fs,
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
 };
@@ -61,6 +62,69 @@ fn generate_once(call: impl FnOnce(Value) -> Result<Value>) -> Result<Value> {
         "prompt":"A single cobalt blue ceramic coffee cup on a plain white background, centered product photograph, soft light, no text, no logo, no watermark.",
         "size":"1024x1024", "n":1, "session_id":"new", "basename":"blue_ceramic_cup"
     }))
+}
+
+fn create_output_directory(root: &Path, requested: &Path) -> Result<PathBuf> {
+    let target = root.join("target").canonicalize()?;
+    let requested = if requested.is_absolute() {
+        requested.to_owned()
+    } else {
+        root.join(requested)
+    };
+    // Match the product path policy: normalize dots before resolving an existing
+    // ancestor, then create the resolved path rather than the unchecked spelling.
+    let mut normalized = PathBuf::new();
+    for component in requested.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err("output path escapes its filesystem root".into());
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    let mut ancestor = normalized.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    ancestor
+                        .file_name()
+                        .ok_or("output ancestor unavailable")?
+                        .to_owned(),
+                );
+                ancestor = ancestor.parent().ok_or("output ancestor unavailable")?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let mut output = ancestor.canonicalize()?;
+    if !output.is_dir() || !output.starts_with(&target) || missing.is_empty() {
+        return Err("live output must be a new directory under this worktree's target".into());
+    }
+    for component in missing.into_iter().rev() {
+        output.push(component);
+    }
+    let relative = output.strip_prefix(&target)?;
+    let capability = Dir::open_ambient_dir(&target, ambient_authority())?;
+    // Every rejection above is read-only. The existing capability primitive also
+    // prevents an ancestor swap from redirecting subsequent creation outside target.
+    if let Some(parent) = relative
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        capability.create_dir_all(parent)?;
+    }
+    capability.create_dir(relative)?;
+    let output = output.canonicalize()?;
+    if !output.starts_with(&target) {
+        return Err("output no longer belongs to target".into());
+    }
+    Ok(output)
 }
 
 fn run(binary: &Path, output: &Path, config: &Path, report: &mut Value) -> Result<()> {
@@ -195,13 +259,7 @@ fn probe(options: &Options) -> Result<Value> {
     if identity["working_tree_dirty"] != false {
         return Err("candidate must be clean and committed before live validation".into());
     }
-    let parent = options.output.parent().ok_or("output parent missing")?;
-    fs::create_dir_all(parent)?;
-    fs::create_dir(&options.output)?;
-    let output = options.output.canonicalize()?;
-    if !output.starts_with(root.join("target").canonicalize()?) {
-        return Err("live output must be ignored under this worktree's target directory".into());
-    }
+    let output = create_output_directory(&root, &options.output)?;
     let began = Instant::now();
     let mut report = json!({"status":"in_progress","version":env!("CARGO_PKG_VERSION"),"provenance":identity,"upstream_post_budget":2,"upstream_post_attempts":0,"logical_image_calls":0,"visual_review":"pending","phase":"preflight"});
     write_report(&output.join("report.json"), &report)?;
@@ -275,6 +333,85 @@ mod tests {
             Ok(json!({"ok":true}))
         })?;
         assert_eq!(count, 1);
+        Ok(())
+    }
+
+    fn output_fixture() -> Result<tempfile::TempDir> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("target"))?;
+        Ok(root)
+    }
+
+    #[test]
+    fn rejected_non_target_output_does_not_create_new_parents() -> Result<()> {
+        let temp = output_fixture()?;
+        let root = temp.path().canonicalize()?;
+        let outside = root.join("outside");
+        assert!(create_output_directory(&root, &outside.join("new-parent/run")).is_err());
+        assert!(!outside.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn traversal_is_normalized_and_rejected_without_creating_any_parent() -> Result<()> {
+        let temp = output_fixture()?;
+        let root = temp.path().canonicalize()?;
+        let requested = root.join("target/would-be-created/../../outside/new-parent/run");
+        assert!(create_output_directory(&root, &requested).is_err());
+        assert!(!root.join("outside").exists());
+        assert!(!root.join("target/would-be-created").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_target_output_creates_only_its_normalized_in_bounds_path() -> Result<()> {
+        let temp = output_fixture()?;
+        let root = temp.path().canonicalize()?;
+        let output = create_output_directory(&root, Path::new("target/new-parent/run"))?;
+        assert_eq!(output, root.join("target/new-parent/run"));
+        assert!(output.is_dir());
+        let normalized = create_output_directory(&root, Path::new("target/unused/../normalized"))?;
+        assert_eq!(normalized, root.join("target/normalized"));
+        assert!(!root.join("target/unused").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn existing_output_is_rejected_without_overwriting_its_contents() -> Result<()> {
+        let temp = output_fixture()?;
+        let root = temp.path().canonicalize()?;
+        let existing = root.join("target/existing");
+        fs::create_dir(&existing)?;
+        fs::write(existing.join("report.json"), b"preserve")?;
+        assert!(create_output_directory(&root, &existing).is_err());
+        assert_eq!(fs::read(existing.join("report.json"))?, b"preserve");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_symlink_ancestor_cannot_create_directories_outside_target() -> Result<()> {
+        let temp = output_fixture()?;
+        let root = temp.path().canonicalize()?;
+        let outside = tempfile::tempdir()?;
+        std::os::unix::fs::symlink(outside.path(), root.join("target/escape"))?;
+        assert!(create_output_directory(&root, Path::new("target/escape/new-parent/run")).is_err());
+        assert!(!outside.path().join("new-parent").exists());
+        assert_eq!(fs::read_dir(outside.path())?.count(), 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_in_bounds_symlink_ancestor_keeps_the_resolved_output_in_target() -> Result<()> {
+        let temp = output_fixture()?;
+        let root = temp.path().canonicalize()?;
+        let actual = root.join("target/actual");
+        fs::create_dir(&actual)?;
+        std::os::unix::fs::symlink(&actual, root.join("target/alias"))?;
+        let output = create_output_directory(&root, Path::new("target/alias/run"))?;
+        assert_eq!(output, actual.join("run"));
+        assert!(output.is_dir());
         Ok(())
     }
 }
