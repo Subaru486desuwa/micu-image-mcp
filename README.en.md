@@ -8,7 +8,7 @@ For multi-turn editing, the server saves image revisions, successful instruction
 
 ![Micu Image MCP v0.4.1 session memory poster: continuing to edit the same kitten](docs/assets/memory/context-memory-poster.png)
 
-[Installation](#installation) · [Multi-turn editing](#session-memory) · [Models and quality](#models-and-quality) · [Image sizes](#image-sizes) · [Testing and validation](#testing-and-validation) · [v0.5.3 changes](docs/releases/v0.5.3.md)
+[Multi-turn editing](#session-memory) · [Tools](#tools) · [Models and quality](#models-and-quality) · [Installation](#installation) · [Sizes and concurrency](#sizes-and-concurrency) · [Configuration](#configuration) · [Testing and validation](#testing-and-validation) · [v0.5.3 changes](docs/releases/v0.5.3.md)
 
 ## Session memory
 
@@ -46,37 +46,35 @@ See the [multi-turn editing guide](docs/multi-turn-editing.md) and [session stor
 | --- | --- |
 | `image_generate` | Generates images from text using Flare by default; continues editing when given an existing session ID |
 | `image_edit` | Edits an image using one reference and an instruction; defaults to Sunburst and supports a mask |
-| `image_batch_edit` | Applies the same instruction to each input image separately; defaults to serial processing with Sunburst |
+| `image_batch_edit` | Applies the same instruction to each of up to 20 images separately; defaults to serial processing with Sunburst |
 | `image_multi_reference` | Creates one image using 2 to 10 reference images together; defaults to Sunburst |
 | `server_info` | Reports the running version, API endpoint, models, size rules, retry policy, and safety limits |
 
 Before the first image call, ask your client to call `server_info` to check the configuration and tool capabilities.
-
----
-
-## Usage guide
-
-The [MCP usage guide](docs/MCP使用教程.md) covers setup for Cursor, Claude Code, and Codex, tool selection, size rules, environment variables, and image download problems caused by Clash or Surge fake-ip settings.
-
----
-
-## Claude Desktop compatibility
-
-v0.4.1 fixed the `Connected · 0 tools` problem reported in [issue #11](https://github.com/Subaru486desuwa/micu-image-mcp/issues/11). Upgrade the executable your client actually starts, reconnect the MCP server, and call `server_info` to confirm the version.
-
-Desktop's Code mode reads `~/.claude.json`. Regular Chat mode uses a separate `claude_desktop_config.json`, which the installer does not currently update. The [compatibility guide](docs/claude-desktop-compatibility.md) explains the cause, configuration for both modes, and test coverage.
+The [MCP usage guide](docs/MCP使用教程.md) (in Chinese) covers setup for Cursor, Claude Code, and Codex, tool selection, and image download problems caused by Clash or Surge fake-ip settings.
 
 ---
 
 ## Models and quality
 
-Model IDs are maintained manually: `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`, `gpt-image-2`, and the historical quality route `gpt-image-2-openai`. Text-to-image generation defaults to Flare. Editing, batch editing, and multi-reference generation default to Sunburst. MCP does not automatically request `/v1/models`; `server_info.available_models` lists supported IDs, not verified upstream or credential availability.
-Existing Flare/Sunburst settings and editing sessions with an `-openai` suffix remain accepted and try the unsuffixed ID first. An explicit model-not-found, unsupported-model, or model-specific no-channel response triggers one attempt with the suffixed ID. This alias fallback applies only to Flare/Sunburst: `gpt-image-2` and the historical quality route `gpt-image-2-openai` remain distinct, preserving their size routing and explicit selection. Network errors, timeouts, authentication, rate limits, balance, content moderation, ordinary service errors, and image download/parsing failures do not switch model IDs. Notes describe the fallback; results and sessions record the actual ID used.
-Flare and Sunburst omit `response_format` and save the base64 image or URL returned by the backend. A download or parsing failure does not trigger another generation with a different format. All image tools use `/v1/images/generations` or `/v1/images/edits`, never the Responses API.
+| Model | Use |
+| --- | --- |
+| `gpt-image-2.5-flare` | Default for text-to-image generation |
+| `gpt-image-2.5-sunburst` | Default for editing, batch editing, and multi-reference generation |
+| `gpt-image-2` | Standard route; 2K/4K requests switch to `gpt-image-2-openai` |
+| `gpt-image-2-openai` | Historical quality route |
+
+- **Manual directory**: the server never requests `/v1/models`. `server_info.available_models` lists supported IDs, not verified upstream or credential availability. Adding a model ID requires a manual directory update, and network directory changes never change the selected default. Grok image generation has been removed.
+- **Legacy IDs**: Flare/Sunburst settings and sessions with an `-openai` suffix remain accepted and try the unsuffixed ID first. Only an explicit model-not-found, unsupported-model, or model-specific no-channel response triggers one attempt with the suffixed ID. `gpt-image-2` and `gpt-image-2-openai` are not aliases; each keeps its size routing and explicit selection.
+- **No model switch**: network errors, timeouts, authentication, rate limits, balance, content moderation, ordinary service errors, and image download/parsing failures. Notes describe any fallback; results and sessions record the actual ID used.
+- **Response format**: Flare and Sunburst omit `response_format` and save the base64 image or URL returned by the backend. A download or parsing failure never resubmits the generation with a different format.
+- **Endpoints**: all image tools use `/v1/images/generations` or `/v1/images/edits`, never the Responses API.
+
+### Live results
 
 On 2026-10-16, the v0.4.3 release candidate completed default Flare generation and a session edit after restarting MCP against Micu's main endpoint. Both Images requests returned HTTP 200 and 1024×1024 images, with `quality` and `response_format` omitted.
 
-Live tests of 1K generation and single-image editing on Micu's main endpoint on 2026-10-09 produced these results.
+Live tests of 1K generation and single-image editing on Micu's main endpoint on 2026-10-09 produced these results:
 
 | Model | Accepted `quality` values in those tests | Limits |
 | --- | --- | --- |
@@ -84,17 +82,13 @@ Live tests of 1K generation and single-image editing on Micu's main endpoint on 
 | `gpt-image-2` | `low`, `medium`, `high`, `auto`, or omitted | 2K/4K requests switch to `gpt-image-2-openai`; confirm that your credentials support it |
 | `gpt-image-2-openai` | Not tested | The model was absent from the model list for those credentials |
 
-See the [quality validation record](docs/session-storage.md#在线质量档位验证) for details. These results describe the endpoint and credentials used at that time, with Flare using its old ID. The tools retain their full parameter options for other endpoints or future support. See [image sizes](#image-sizes) for routing behavior.
-
-Grok image generation has been removed. Adding a model ID requires a manual directory update; network directory changes never change the selected default model.
+These results describe the endpoint and credentials used at that time, with Flare using its old ID; see the [quality validation record](docs/session-storage.md#在线质量档位验证). The tools retain their full parameter options (Flare/Sunburst also accept `xhigh` and `max`) for other endpoints or future support.
 
 ---
 
-> The MCP server sends Chinese text as UTF-8 JSON. If you write your own PowerShell test scripts, set `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()` first so older PowerShell versions do not replace Chinese characters with `?` in pipelines.
-
 ## Installation
 
-The server is a single Rust executable. Running it without arguments starts the STDIO MCP service. Python is not required. Product code, tests, and engineering tools on `main` use Rust. The historical Python implementation remains on the [`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) branch and is excluded from current builds and releases.
+The server is a single Rust executable. Running it without arguments starts the STDIO MCP service. Python is not required. The historical Python implementation remains on the [`python-reference`](https://github.com/Subaru486desuwa/micu-image-mcp/tree/python-reference) branch and is excluded from current builds and releases.
 
 ### Install with a script
 
@@ -110,13 +104,15 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.ps1 | iex
 ```
 
-The script detects your platform, downloads the executable from the latest GitHub Release, verifies it against that release's `SHA256SUMS`, and runs `install --yes`. By default, the installer adds the `micu-image` configuration to Codex and Claude Code. Claude Code uses `~/.claude.json`. Claude Desktop's regular Chat mode needs [separate configuration](docs/claude-desktop-compatibility.md).
+The script detects your platform, downloads the executable from the latest GitHub Release, verifies it against that release's `SHA256SUMS`, and runs `install --yes`. By default, the installer adds the `micu-image` configuration to Codex and Claude Code. Claude Code uses `~/.claude.json`. Claude Desktop's regular Chat mode needs [separate configuration](#claude-desktop).
 
-The installer does not write API keys to client configuration files. It checks `MICU_API_KEY` and the system credential store first. If neither has a key on first installation, it prompts once in an interactive terminal without echoing your input. After validating the `sk-` prefix, a length of 20 to 512 characters, and the ASCII character set, it saves the key in macOS Keychain, Windows Credential Manager, or Linux Secret Service. The MCP server reads the stored key at startup.
+The installer never writes API keys to client configuration files:
 
-The default API endpoint is `https://www.micuapi.ai`. Use `--baseurl` or `MICU_BASEURL` to configure another endpoint.
+- It checks `MICU_API_KEY` and the system credential store first.
+- If neither has a key on first installation, it prompts once in an interactive terminal without echoing your input.
+- After validating the `sk-` prefix, a length of 20 to 512 characters, and the ASCII character set, it saves the key in macOS Keychain, Windows Credential Manager, or Linux Secret Service. The MCP server reads the stored key at startup.
 
-To configure only Codex on macOS / Linux, pass `--no-claude` to the installer:
+The default API endpoint is `https://www.micuapi.ai`. Use `--baseurl` or `MICU_BASEURL` to configure another endpoint. To configure only Codex on macOS / Linux, pass `--no-claude` to the installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Subaru486desuwa/micu-image-mcp/main/scripts/install.sh \
@@ -137,9 +133,11 @@ MICU_SAVE_DIR="$HOME/Pictures/micu-out" \
 
 `install` copies the executable to a fixed directory for your user account and configures Codex and Claude Code to use that copy. Moving the source repository or running `cargo clean` does not affect the installed server.
 
-- macOS: `~/Library/Application Support/micu-image-mcp/bin/micu-image-mcp`
-- Linux: `~/.local/share/micu-image-mcp/bin/micu-image-mcp`
-- Windows: `%LOCALAPPDATA%\micu-image-mcp\bin\micu-image-mcp.exe`
+| Platform | Install location |
+| --- | --- |
+| macOS | `~/Library/Application Support/micu-image-mcp/bin/micu-image-mcp` |
+| Linux | `~/.local/share/micu-image-mcp/bin/micu-image-mcp` |
+| Windows | `%LOCALAPPDATA%\micu-image-mcp\bin\micu-image-mcp.exe` |
 
 Common commands:
 
@@ -177,9 +175,12 @@ To authorize an existing key, run the **same executable used by your client conf
 "$HOME/Library/Application Support/micu-image-mcp/bin/micu-image-mcp" credentials set
 ```
 
-Only these explicit operations and the installer may request authorization. Denial exits once without retrying. `authorize` verifies noninteractive access before reporting success; reconnect MCP afterward. Updating a binary without a stable signing identity may require renewed authorization, but background startup will not repeatedly prompt. A nonempty `MICU_API_KEY` takes priority and bypasses Keychain entirely.
+- Only these explicit operations and the installer may request authorization. Denial exits once without retrying.
+- `authorize` verifies noninteractive access before reporting success; reconnect MCP afterward.
+- Updating a binary without a stable signing identity may require renewed authorization, but background startup will not repeatedly prompt.
+- A nonempty `MICU_API_KEY` takes priority and bypasses Keychain entirely.
 
-The default item remains service=`micu-image-mcp`, account=`image2-api-key`. Existing custom items can keep the configuration below; set the same `MICU_KEYCHAIN_SERVICE` and `MICU_KEYCHAIN_ACCOUNT` when running the commands above:
+The default item is service=`micu-image-mcp`, account=`image2-api-key`. Existing custom items can keep the configuration below; set the same `MICU_KEYCHAIN_SERVICE` and `MICU_KEYCHAIN_ACCOUNT` when running the commands above:
 
 ```toml
 [mcp_servers.micu-image]
@@ -204,26 +205,17 @@ micu-image-mcp doctor
 cargo xtask smoke --binary /absolute/path/micu-image-mcp
 ```
 
-To roll back installation changes, restore a trusted executable and the configuration backups created by the installer. Keep your images and sessions. See the [migration and rollback guide](docs/migration-from-python.md) and [Rust-only development guide](docs/rust-only-development.md) for details.
+To roll back installation changes, restore a trusted executable and the configuration backups created by the installer. Keep your images and sessions. See the [migration and rollback guide](docs/migration-from-python.md) for details.
 
 ---
 
-## Image sizes
+## Sizes and concurrency
 
 All four supported models use these size checks:
 
 - Width and height must be multiples of 16.
 - Each edge must be between 256 and 3840 pixels, with an aspect ratio no greater than 3:1.
 - Total pixel count must be between 655,360 and 8,294,400.
-
-Routing and concurrency follow these rules:
-
-- Single-image editing, batch editing, and multi-reference generation use `/v1/images/edits`.
-- 2K/4K requests for `gpt-image-2` switch to `gpt-image-2-openai`.
-- 2K/4K requests for Flare or Sunburst keep the selected model.
-- 2K/4K generation forces `n=1`. In-process and cross-process locks serialize high-resolution requests.
-
-Read each image's `saved.actual_size` for the dimensions actually saved. The generation tool returns `saved` as a list.
 
 Common `size` values:
 
@@ -233,9 +225,23 @@ Common `size` values:
 | 2K | `2048x2048`, `2048x1152`, `1152x2048` |
 | 4K | `3840x2160`, `2160x3840` |
 
+Routing and concurrency:
+
+| Case | Behavior |
+| --- | --- |
+| 1K standard routes (Flare, `gpt-image-2`) | `image_generate` with `n>1` and `image_batch_edit` run up to 5 requests at once |
+| Sunburst, `gpt-image-2-openai`, or any 2K/4K size | One request at a time; `image_batch_edit` waits 1.5s between images |
+| 2K/4K generation | Forces `n=1` |
+| 2K/4K requests | Queue behind in-process and cross-process locks, so only one reaches the backend at a time per machine |
+| `gpt-image-2` at 2K/4K | Switches to `gpt-image-2-openai`; Flare and Sunburst keep the selected model |
+
+Single-image editing, batch editing, and multi-reference generation use `/v1/images/edits`. Read each image's `saved.actual_size` for the dimensions actually saved. The generation tool returns `saved` as a list.
+
 ---
 
-## Environment variables
+## Configuration
+
+### Environment variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -248,13 +254,13 @@ Common `size` values:
 | `MICU_SAVE_DIR_ROOT` | Same as output directory | Root directory restricting all output paths |
 | `MICU_INPUT_ROOT` | Empty, unrestricted | Optional root for input images; prevents path and symlink escapes when set |
 | `MICU_USE_SHELL_PROXY` | `0` | Set to `1` to read proxy settings from the process environment |
-| `MICU_RESPONSE_FORMAT` | `auto` | Legacy standard/quality routes accept `auto`, `url`, or `b64_json`; Flare and Sunburst omit this parameter and save the backend response |
+| `MICU_RESPONSE_FORMAT` | `auto` | Used only by `gpt-image-2` and `gpt-image-2-openai`: `auto`, `url`, or `b64_json`; Flare and Sunburst omit this parameter and save the backend response |
 | `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | Trusted download hosts, separated by commas |
 | `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | Allows fake-ip downloads in 198.18.0.0/15 only for trusted hosts |
 
 Path bases are fixed at server startup. Relative `MICU_SAVE_DIR` and tool `save_dir` paths resolve against the output root. When `MICU_INPUT_ROOT` is set, relative input paths resolve against it; otherwise they resolve against the startup working directory. Paths expand only `~`, `~/...`, and Windows `~\...`. The server rejects `~someone`.
 
-## Manual configuration
+### Manual configuration
 
 Claude Code uses this JSON configuration:
 
@@ -289,19 +295,23 @@ Replace `command` with the actual executable path and adjust the output director
 
 These JSON/TOML examples do not store API keys. Credentials come from the MCP process environment, the system credential store, or the tool's `api_key` parameter.
 
+### Claude Desktop
+
+v0.4.1 fixed the `Connected · 0 tools` problem reported in [issue #11](https://github.com/Subaru486desuwa/micu-image-mcp/issues/11). Upgrade the executable your client actually starts, reconnect the MCP server, and call `server_info` to confirm the version.
+
+Desktop's Code mode reads `~/.claude.json`. Regular Chat mode uses a separate `claude_desktop_config.json`, which the installer does not currently update. The [compatibility guide](docs/claude-desktop-compatibility.md) explains the cause, configuration for both modes, and test coverage.
+
 ---
 
 ## Testing and validation
 
 The current Rust test suite uses real MCP STDIO calls and local HTTP fixtures to check tool protocols, request parameters, image downloads, path limits, session recovery, failure handling, and installer configuration. Offline tests do not incur image fees. They cannot replace visual inspection of actual generated images. See [Rust-only development and validation](docs/rust-only-development.md) for the full check commands.
 
-Records from the v0.4.1 release are available in the [debugging notes](docs/v0.4.1-debugging-notes.md), [native client validation report](docs/harness-validation.md), [CI run at that time](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884013213), and [release workflow](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884913631). These historical records include Python tests and performance data from before the Rust-only migration. They do not describe current test counts or the latest platform validation.
+> The MCP server sends Chinese text as UTF-8 JSON. If you write your own PowerShell test scripts, set `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()` first so older PowerShell versions do not replace Chinese characters with `?` in pipelines.
 
-That round of MacBook validation passed checks for the five tools, protocols, and `server_info`. Image generation through the Claude Desktop window still requires user acceptance.
+Records from the v0.4.1 release are available in the [debugging notes](docs/v0.4.1-debugging-notes.md), [native client validation report](docs/harness-validation.md), [CI run at that time](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884013213), and [release workflow](https://github.com/Subaru486desuwa/micu-image-mcp/actions/runs/37884913631). They include Python tests and performance data from before the Rust-only migration and do not describe current test counts or the latest platform validation. That round of MacBook validation passed checks for the five tools, protocols, and `server_info`; image generation through the Claude Desktop window still requires user acceptance.
 
----
-
-## Engineering documentation
+### Engineering documentation
 
 - [Rust-only development and validation](docs/rust-only-development.md)
 - [Historical Rust / Python benchmarks](docs/rust-benchmark.md)
