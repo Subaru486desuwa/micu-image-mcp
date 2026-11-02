@@ -8,7 +8,7 @@ For multi-turn editing, the server saves image revisions, successful instruction
 
 ![Micu Image MCP v0.4.1 session memory poster: continuing to edit the same kitten](docs/assets/memory/context-memory-poster.png)
 
-[Installation](#installation) · [Multi-turn editing](#session-memory) · [Models and quality](#models-and-quality) · [Image sizes](#image-sizes) · [Testing and validation](#testing-and-validation) · [v0.5.2 changes](docs/releases/v0.5.2.md)
+[Installation](#installation) · [Multi-turn editing](#session-memory) · [Models and quality](#models-and-quality) · [Image sizes](#image-sizes) · [Testing and validation](#testing-and-validation) · [v0.5.3 changes](docs/releases/v0.5.3.md)
 
 ## Session memory
 
