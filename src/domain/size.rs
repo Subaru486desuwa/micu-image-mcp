@@ -132,52 +132,6 @@ pub fn validate_n(n: &serde_json::Value) -> Option<String> {
     None
 }
 
-pub fn validate_quality(
-    quality: Option<&serde_json::Value>,
-    model: &str,
-) -> (Option<String>, Option<String>) {
-    let Some(value) = quality else {
-        return (None, None);
-    };
-    if value.is_null() {
-        return (None, None);
-    }
-    let Some(raw) = value.as_str() else {
-        return (
-            None,
-            Some(format!(
-                "quality 必须是字符串，收到 {}",
-                json_type_name(value)
-            )),
-        );
-    };
-    let cleaned = raw.trim().to_ascii_lowercase();
-    if cleaned.is_empty() {
-        return (None, None);
-    }
-    let is_25 = matches!(
-        crate::domain::routing::canonical_model(model),
-        crate::domain::routing::FLARE_MODEL | crate::domain::routing::SUNBURST_MODEL
-    );
-    let allowed = matches!(cleaned.as_str(), "auto" | "low" | "medium" | "high")
-        || (is_25 && matches!(cleaned.as_str(), "xhigh" | "max"));
-    if !allowed {
-        let choices = if is_25 {
-            "auto / high / low / max / medium / xhigh"
-        } else {
-            "auto / high / low / medium"
-        };
-        return (
-            None,
-            Some(format!(
-                "quality 不支持 {}；可选 {choices}",
-                python_string_repr(raw),
-            )),
-        );
-    }
-    (Some(cleaned), None)
-}
-
 pub fn round_to_alignment(value: u32) -> u32 {
     let quotient = value / SIZE_ALIGNMENT;
     let remainder = value % SIZE_ALIGNMENT;
@@ -258,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn n_quality_and_alignment_match_the_reference_literals() {
+    fn n_and_alignment_match_the_reference_literals() {
         assert_eq!(
             validate_n(&json!(true)),
             Some("n 必须是整数，收到 bool".into())
@@ -268,24 +222,6 @@ mod tests {
             Some("n 必须 ≤ 10，收到 11（防止意外 burn quota）".into())
         );
         assert_eq!(validate_n(&json!(5)), None);
-        assert_eq!(
-            validate_quality(Some(&json!(" HIGH ")), crate::domain::routing::FLARE_MODEL),
-            (Some("high".into()), None)
-        );
-        assert!(
-            validate_quality(Some(&json!("ultra")), crate::domain::routing::FLARE_MODEL)
-                .1
-                .is_some()
-        );
-        assert_eq!(
-            validate_quality(Some(&json!("MAX")), crate::domain::routing::SUNBURST_MODEL),
-            (Some("max".into()), None)
-        );
-        assert!(
-            validate_quality(Some(&json!("max")), crate::domain::routing::STANDARD_MODEL)
-                .1
-                .is_some()
-        );
         assert_eq!(round_to_alignment(1080), 1088);
         assert_eq!(round_to_alignment(1000), 992);
     }

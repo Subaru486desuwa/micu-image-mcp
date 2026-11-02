@@ -5,13 +5,10 @@ use serde_json::{Map, Value};
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{
-            infer_size_from_prompt, is_large_tier, is_quality_model, resolve_model, size_note,
-        },
-        size::{SizeTier, size_tier, validate_n, validate_quality, validate_size},
+        routing::{ModelRoute, infer_size_from_prompt, size_note},
+        size::{validate_n, validate_size},
     },
     fs::output_store::{OutputDirectory, SavedImage},
-    http::client::RetryOptions,
     http::response::{error_detail, sanitize_sensitive},
     providers::GenerateRequest,
 };
@@ -51,14 +48,11 @@ impl ToolEngine {
         if params.session_id.is_some() && params.prompt.chars().count() > MAX_PROMPT_CHARS {
             return Ok(validation_error("prompt 最多 32000 个字符"));
         }
-        if let Some(error) = self
-            .model_error(
-                params.model.as_deref(),
-                &self.config.default_model,
-                params.api_key.as_ref(),
-            )
-            .await
-        {
+        if let Some(error) = self.model_error(
+            params.model.as_deref(),
+            &self.config.default_model,
+            params.api_key.as_ref(),
+        ) {
             return Ok(validation_error(error));
         }
         let safe_stem = params
@@ -91,26 +85,12 @@ impl ToolEngine {
                 size_error.unwrap_or_else(|| "size 校验失败".into()),
             ));
         };
-        let (effective_model, mut notes) =
-            resolve_model(params.model.as_deref(), &self.config.default_model, &size);
-        if let Some(error) = self
-            .model_error(
-                Some(&effective_model),
-                &self.config.default_model,
-                params.api_key.as_ref(),
-            )
-            .await
-        {
-            return Ok(validation_error(error));
-        }
-        let quality_value = params
-            .quality
-            .as_ref()
-            .map(|value| Value::String(value.clone()));
-        let (quality, quality_error) = validate_quality(quality_value.as_ref(), &effective_model);
-        if let Some(error) = quality_error {
-            return Ok(validation_error(error));
-        }
+        let (route, mut notes) =
+            ModelRoute::resolve(params.model.as_deref(), &self.config.default_model, &size);
+        let quality = match route.validate_quality(params.quality.as_deref()) {
+            Ok(quality) => quality,
+            Err(error) => return Ok(validation_error(error)),
+        };
         let location = match self
             .output_store
             .resolve_save_dir(params.save_dir.as_deref())
@@ -161,29 +141,14 @@ impl ToolEngine {
             Ok(prompt) => prompt.unwrap_or_else(|| params.prompt.clone()),
             Err(error) => return Ok(validation_error(error)),
         };
-        let tier = size_tier(&size);
-        let mut requested_n = params.n as usize;
-        if is_large_tier(tier) && requested_n > 1 {
-            notes.push(format!(
-                "{} 强制 N=1，已忽略请求的 n={requested_n}",
-                tier_label(tier).to_ascii_uppercase()
-            ));
-            requested_n = 1;
-        }
-        let quality_route = is_quality_model(&effective_model);
-        let concurrency = if requested_n > 1
-            && matches!(tier, SizeTier::Small | SizeTier::OneK)
-            && !quality_route
-        {
-            5
+        let (requested_n, n_note) = route.cap_n(params.n as usize);
+        notes.extend(n_note);
+        let concurrency = if requested_n > 1 {
+            route.parallel_limit()
         } else {
             1
         };
         let stem = safe_stem.unwrap_or_else(|| default_basename("gen"));
-        let retry = RetryOptions {
-            enabled: quality_route || is_large_tier(tier),
-            big_size: is_large_tier(tier),
-        };
 
         let mut results = if concurrency > 1 {
             stream::iter(0..requested_n)
@@ -191,7 +156,7 @@ impl ToolEngine {
                     let engine = self.clone();
                     let prompt = effective_prompt.clone();
                     let size = size.clone();
-                    let model = effective_model.clone();
+                    let route = route.clone();
                     let quality = quality.clone();
                     let location = location.clone();
                     let stem = stem.clone();
@@ -202,12 +167,11 @@ impl ToolEngine {
                                 index,
                                 &prompt,
                                 &size,
-                                &model,
+                                &route,
                                 quality.as_deref(),
                                 &location,
                                 &stem,
                                 &key,
-                                retry,
                             )
                             .await
                     }
@@ -223,12 +187,11 @@ impl ToolEngine {
                         index,
                         &effective_prompt,
                         &size,
-                        &effective_model,
+                        &route,
                         quality.as_deref(),
                         &location,
                         &stem,
                         &key,
-                        retry,
                     )
                     .await,
                 );
@@ -245,7 +208,7 @@ impl ToolEngine {
         let mut saved = Vec::new();
         let mut errors = Vec::new();
         let mut used_fallback = false;
-        let mut actual_model = effective_model.clone();
+        let mut actual_model = route.model().to_owned();
         for result in results {
             used_fallback |= result.used_fallback;
             if saved.is_empty() {
@@ -364,19 +327,19 @@ impl ToolEngine {
         index: usize,
         prompt: &str,
         size: &str,
-        model: &str,
+        route: &ModelRoute,
         quality: Option<&str>,
         location: &OutputDirectory,
         stem: &str,
         key: &SecretString,
-        retry: RetryOptions,
     ) -> GenerateOneResult {
         let mut notes = Vec::new();
         let mut last_error: Option<String> = None;
-        let mut actual_model = model.to_owned();
+        let mut actual_model = route.model().to_owned();
         let mut used_fallback = false;
-        for (format_index, response_format) in
-            self.config.response_formats_for_model(model).enumerate()
+        for (format_index, response_format) in route
+            .response_formats(&self.config.response_formats_to_try)
+            .enumerate()
         {
             if format_index > 0
                 && let Some(response_format) = response_format
@@ -397,7 +360,7 @@ impl ToolEngine {
                         response_format,
                     },
                     key,
-                    retry,
+                    route.retry(),
                     &mut notes,
                 )
                 .await;
@@ -456,16 +419,6 @@ struct GenerateOneResult {
     notes: Vec<String>,
     model: String,
     used_fallback: bool,
-}
-
-fn tier_label(tier: SizeTier) -> &'static str {
-    match tier {
-        SizeTier::Unknown => "unknown",
-        SizeTier::Small => "small",
-        SizeTier::OneK => "1k",
-        SizeTier::TwoK => "2k",
-        SizeTier::FourK => "4k",
-    }
 }
 
 #[cfg(test)]

@@ -4,11 +4,10 @@ use serde_json::{Map, Value};
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{is_large_tier, is_quality_model, resolve_model, size_note},
-        size::{size_tier, validate_quality, validate_size},
+        routing::{ModelRoute, size_note},
+        size::validate_size,
     },
     fs::input::validate_mask,
-    http::client::RetryOptions,
     http::response::{error_detail, sanitize_sensitive},
     providers::EditRequest,
 };
@@ -51,14 +50,11 @@ impl ToolEngine {
             .model
             .as_deref()
             .or(parent.map(|parent| parent.model.as_str()));
-        if let Some(error) = self
-            .model_error(
-                requested_model,
-                &self.config.default_edit_model,
-                params.api_key.as_ref(),
-            )
-            .await
-        {
+        if let Some(error) = self.model_error(
+            requested_model,
+            &self.config.default_edit_model,
+            params.api_key.as_ref(),
+        ) {
             return Ok(validation_error(error));
         }
         let requested_size = params
@@ -72,27 +68,16 @@ impl ToolEngine {
                 size_error.unwrap_or_else(|| "size 校验失败".into()),
             ));
         };
-        let (effective_model, mut notes) =
-            resolve_model(requested_model, &self.config.default_edit_model, &size);
-        if let Some(error) = self
-            .model_error(
-                Some(&effective_model),
-                &self.config.default_model,
-                params.api_key.as_ref(),
-            )
-            .await
-        {
-            return Ok(validation_error(error));
-        }
+        let (route, mut notes) =
+            ModelRoute::resolve(requested_model, &self.config.default_edit_model, &size);
         let requested_quality = params
             .quality
             .as_deref()
             .or(parent.and_then(|parent| parent.quality.as_deref()));
-        let quality_value = requested_quality.map(|value| Value::String(value.to_owned()));
-        let (quality, quality_error) = validate_quality(quality_value.as_ref(), &effective_model);
-        if let Some(error) = quality_error {
-            return Ok(validation_error(error));
-        }
+        let quality = match route.validate_quality(requested_quality) {
+            Ok(quality) => quality,
+            Err(error) => return Ok(validation_error(error)),
+        };
         let safe_stem = params
             .basename
             .as_deref()
@@ -173,19 +158,13 @@ impl ToolEngine {
             None
         };
         let stem = safe_stem.unwrap_or_else(|| default_basename("edit"));
-        let tier = size_tier(&size);
-        let retry = RetryOptions {
-            enabled: is_quality_model(&effective_model) || is_large_tier(tier),
-            big_size: is_large_tier(tier),
-        };
         let images = [("image", &image)];
         let mut last_error: Option<String> = None;
         let mut saved = None;
-        let mut actual_model = effective_model.clone();
+        let mut actual_model = route.model().to_owned();
         let mut used_fallback = false;
-        for (format_index, response_format) in self
-            .config
-            .response_formats_for_model(&effective_model)
+        for (format_index, response_format) in route
+            .response_formats(&self.config.response_formats_to_try)
             .enumerate()
         {
             if format_index > 0
@@ -209,7 +188,7 @@ impl ToolEngine {
                         mask: mask.as_ref(),
                     },
                     &key,
-                    retry,
+                    route.retry(),
                     &mut notes,
                 )
                 .await;

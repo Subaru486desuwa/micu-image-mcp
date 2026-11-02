@@ -27,38 +27,128 @@ pub fn suffix_fallback(model: &str) -> Option<&'static str> {
     }
 }
 
-pub fn model_error(requested: Option<&str>, default_model: &str) -> Option<String> {
-    let model = requested.unwrap_or(default_model);
-    if SUPPORTED_IMAGE_MODELS.contains(&canonical_model(model)) {
-        return None;
-    }
-    Some(format!(
-        "不支持 model={}；当前可用模型: {}",
-        python_string_repr(model),
-        SUPPORTED_IMAGE_MODELS.join(" / ")
-    ))
+const BASE_QUALITY_VALUES: [&str; 4] = ["auto", "high", "low", "medium"];
+const EXTENDED_QUALITY_VALUES: [&str; 6] = ["auto", "high", "low", "max", "medium", "xhigh"];
+const STANDARD_PARALLEL_LIMIT: usize = 5;
+
+pub fn is_supported_model(model: &str) -> bool {
+    SUPPORTED_IMAGE_MODELS.contains(&canonical_model(model))
 }
 
-pub fn resolve_model(
-    requested: Option<&str>,
-    default_model: &str,
-    size: &str,
-) -> (String, Vec<String>) {
-    let requested_model = requested.unwrap_or(default_model);
-    let mut model = canonical_model(requested_model).to_owned();
-    let tier = size_tier(size);
-    let mut notes = Vec::new();
-    if model != requested_model {
-        notes.push(format!("模型 ID {requested_model} 已更新为 {model}"));
+/// Accepted `quality` values, sorted as the public server_info contract lists them.
+pub fn quality_values(model: &str) -> &'static [&'static str] {
+    match canonical_model(model) {
+        FLARE_MODEL | SUNBURST_MODEL => &EXTENDED_QUALITY_VALUES,
+        _ => &BASE_QUALITY_VALUES,
     }
-    if is_large_tier(tier) && model == STANDARD_MODEL {
-        notes.push(format!(
-            "size={size} ({}) 已自动切到高质量线路 {QUALITY_MODEL}",
-            tier_label(tier)
-        ));
-        model = QUALITY_MODEL.to_owned();
+}
+
+/// Upstream retry scheduling chosen by the route; the HTTP executor only applies it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetryOptions {
+    pub enabled: bool,
+    pub big_size: bool,
+}
+
+/// How one supported model runs at one validated size: the effective model,
+/// quality choices, retry schedule, parallelism and response-format negotiation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelRoute {
+    model: String,
+    tier: SizeTier,
+}
+
+impl ModelRoute {
+    /// `size` must already pass `validate_size`, and callers reject unsupported
+    /// models first so that model errors keep precedence over size errors.
+    pub fn resolve(
+        requested: Option<&str>,
+        default_model: &str,
+        size: &str,
+    ) -> (Self, Vec<String>) {
+        let requested_model = requested.unwrap_or(default_model);
+        let mut model = canonical_model(requested_model).to_owned();
+        let tier = size_tier(size);
+        let mut notes = Vec::new();
+        if model != requested_model {
+            notes.push(format!("模型 ID {requested_model} 已更新为 {model}"));
+        }
+        if is_large_tier(tier) && model == STANDARD_MODEL {
+            notes.push(format!(
+                "size={size} ({}) 已自动切到高质量线路 {QUALITY_MODEL}",
+                tier_label(tier)
+            ));
+            model = QUALITY_MODEL.to_owned();
+        }
+        (Self { model, tier }, notes)
     }
-    (model, notes)
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn retry(&self) -> RetryOptions {
+        let big_size = is_large_tier(self.tier);
+        RetryOptions {
+            enabled: is_quality_model(&self.model) || big_size,
+            big_size,
+        }
+    }
+
+    /// Only standard ≤1K routes fan out; quality and ≥2K routes run one request at a time.
+    pub fn parallel_limit(&self) -> usize {
+        if matches!(self.tier, SizeTier::Small | SizeTier::OneK) && !is_quality_model(&self.model) {
+            STANDARD_PARALLEL_LIMIT
+        } else {
+            1
+        }
+    }
+
+    /// 2K/4K generations are limited to one image per call.
+    pub fn cap_n(&self, requested: usize) -> (usize, Option<String>) {
+        if is_large_tier(self.tier) && requested > 1 {
+            let note = format!(
+                "{} 强制 N=1，已忽略请求的 n={requested}",
+                tier_label(self.tier).to_ascii_uppercase()
+            );
+            (1, Some(note))
+        } else {
+            (requested, None)
+        }
+    }
+
+    pub fn validate_quality(&self, quality: Option<&str>) -> Result<Option<String>, String> {
+        let Some(raw) = quality else {
+            return Ok(None);
+        };
+        let cleaned = raw.trim().to_ascii_lowercase();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let allowed = quality_values(&self.model);
+        if allowed.contains(&cleaned.as_str()) {
+            Ok(Some(cleaned))
+        } else {
+            Err(format!(
+                "quality 不支持 {}；可选 {}",
+                python_string_repr(raw),
+                allowed.join(" / ")
+            ))
+        }
+    }
+
+    /// Only the two legacy routes negotiate response format. Modern Images
+    /// routes select it upstream; repeating an unchanged payload can charge twice.
+    pub fn response_formats<'a>(
+        &self,
+        configured: &'a [&'static str],
+    ) -> impl Iterator<Item = Option<&'static str>> + 'a {
+        let explicit = matches!(self.model.as_str(), STANDARD_MODEL | QUALITY_MODEL);
+        configured
+            .iter()
+            .take(if explicit { configured.len() } else { 1 })
+            .map(move |format| explicit.then_some(*format))
+    }
 }
 
 pub fn infer_size_from_prompt(prompt: &str) -> Option<(String, String)> {
@@ -279,20 +369,146 @@ fn python_string_repr(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn route(model: &str, size: &str) -> ModelRoute {
+        ModelRoute::resolve(Some(model), STANDARD_MODEL, size).0
+    }
+
     #[test]
-    fn model_contract_is_exact_and_preserves_grok_public_error() {
-        assert_eq!(model_error(Some(STANDARD_MODEL), STANDARD_MODEL), None);
-        assert_eq!(model_error(Some(QUALITY_MODEL), STANDARD_MODEL), None);
-        assert_eq!(model_error(Some(FLARE_MODEL), STANDARD_MODEL), None);
-        assert_eq!(model_error(Some(LEGACY_FLARE_MODEL), STANDARD_MODEL), None);
-        assert_eq!(model_error(Some(SUNBURST_MODEL), STANDARD_MODEL), None);
-        assert!(
-            model_error(Some(" gpt-image-2 "), STANDARD_MODEL)
-                .is_some_and(|text| text.contains("不支持 model=' gpt-image-2 '"))
+    fn model_contract_is_exact() {
+        for model in [
+            STANDARD_MODEL,
+            QUALITY_MODEL,
+            FLARE_MODEL,
+            LEGACY_FLARE_MODEL,
+            SUNBURST_MODEL,
+            LEGACY_SUNBURST_MODEL,
+        ] {
+            assert!(is_supported_model(model), "{model}");
+        }
+        for model in [" gpt-image-2 ", "GROK-imagine-image", "grok-imagine-image"] {
+            assert!(!is_supported_model(model), "{model}");
+        }
+    }
+
+    #[test]
+    fn route_table_covers_every_model_and_size_tier() {
+        // (model, size, effective model, retry enabled, big size, parallel limit, formats tried)
+        let table = [
+            (
+                STANDARD_MODEL,
+                "1024x1024",
+                STANDARD_MODEL,
+                false,
+                false,
+                5,
+                2,
+            ),
+            (STANDARD_MODEL, "2048x1152", QUALITY_MODEL, true, true, 1, 2),
+            (STANDARD_MODEL, "3840x2160", QUALITY_MODEL, true, true, 1, 2),
+            (QUALITY_MODEL, "1024x1024", QUALITY_MODEL, true, false, 1, 2),
+            (QUALITY_MODEL, "2048x1152", QUALITY_MODEL, true, true, 1, 2),
+            (FLARE_MODEL, "1024x1024", FLARE_MODEL, false, false, 5, 1),
+            (FLARE_MODEL, "2048x1152", FLARE_MODEL, true, true, 1, 1),
+            (FLARE_MODEL, "3840x2160", FLARE_MODEL, true, true, 1, 1),
+            (
+                LEGACY_FLARE_MODEL,
+                "2048x1152",
+                FLARE_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
+            (
+                SUNBURST_MODEL,
+                "1024x1024",
+                SUNBURST_MODEL,
+                true,
+                false,
+                1,
+                1,
+            ),
+            (
+                SUNBURST_MODEL,
+                "2048x1152",
+                SUNBURST_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
+            (
+                LEGACY_SUNBURST_MODEL,
+                "1024x1024",
+                SUNBURST_MODEL,
+                true,
+                false,
+                1,
+                1,
+            ),
+        ];
+        let configured = ["url", "b64_json"];
+        for (model, size, effective, enabled, big_size, parallel, formats) in table {
+            let route = route(model, size);
+            let case = format!("{model} @ {size}");
+            assert_eq!(route.model(), effective, "{case}");
+            assert_eq!(route.retry(), RetryOptions { enabled, big_size }, "{case}");
+            assert_eq!(route.parallel_limit(), parallel, "{case}");
+            let tried = route.response_formats(&configured).collect::<Vec<_>>();
+            assert_eq!(tried.len(), formats, "{case}");
+            if formats == 1 {
+                assert_eq!(
+                    tried,
+                    vec![None],
+                    "{case}: modern routes omit response_format"
+                );
+            } else {
+                assert_eq!(tried, vec![Some("url"), Some("b64_json")], "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn large_tiers_cap_generation_count_with_public_note() {
+        assert_eq!(route(FLARE_MODEL, "1024x1024").cap_n(4), (4, None));
+        assert_eq!(
+            route(FLARE_MODEL, "2048x1152").cap_n(4),
+            (1, Some("2K 强制 N=1，已忽略请求的 n=4".into()))
         );
+        assert_eq!(route(FLARE_MODEL, "3840x2160").cap_n(1), (1, None));
+    }
+
+    #[test]
+    fn quality_values_depend_on_the_effective_model() {
+        assert_eq!(
+            route(FLARE_MODEL, "1024x1024").validate_quality(Some(" HIGH ")),
+            Ok(Some("high".into()))
+        );
+        assert_eq!(
+            route(SUNBURST_MODEL, "1024x1024").validate_quality(Some("MAX")),
+            Ok(Some("max".into()))
+        );
+        assert_eq!(
+            route(FLARE_MODEL, "1024x1024").validate_quality(Some("  ")),
+            Ok(None)
+        );
+        assert_eq!(
+            route(FLARE_MODEL, "1024x1024").validate_quality(None),
+            Ok(None)
+        );
+        assert_eq!(
+            route(FLARE_MODEL, "1024x1024").validate_quality(Some("ultra")),
+            Err("quality 不支持 'ultra'；可选 auto / high / low / max / medium / xhigh".into())
+        );
+        assert_eq!(
+            route(STANDARD_MODEL, "1024x1024").validate_quality(Some("max")),
+            Err("quality 不支持 'max'；可选 auto / high / low / medium".into())
+        );
+        // 2K gpt-image-2 switches to the quality route before quality is checked.
         assert!(
-            model_error(Some("GROK-imagine-image"), STANDARD_MODEL)
-                .is_some_and(|text| text.contains("不支持 model="))
+            route(STANDARD_MODEL, "2048x1152")
+                .validate_quality(Some("xhigh"))
+                .is_err()
         );
     }
 
@@ -314,14 +530,14 @@ mod tests {
     #[test]
     fn flare_alias_is_exact_and_preserves_size_and_scheduling_policy() {
         for size in ["1024x1024", "2048x1152", "3840x2160"] {
-            assert_eq!(
-                resolve_model(Some(FLARE_MODEL), STANDARD_MODEL, size),
-                (FLARE_MODEL.into(), vec![])
-            );
-            let (model, notes) = resolve_model(Some(LEGACY_FLARE_MODEL), STANDARD_MODEL, size);
-            assert_eq!(model, FLARE_MODEL);
+            let (route, notes) = ModelRoute::resolve(Some(FLARE_MODEL), STANDARD_MODEL, size);
+            assert_eq!((route.model(), notes.len()), (FLARE_MODEL, 0));
+            let (route, notes) =
+                ModelRoute::resolve(Some(LEGACY_FLARE_MODEL), STANDARD_MODEL, size);
+            assert_eq!(route.model(), FLARE_MODEL);
             assert!(notes[0].contains("已更新为 gpt-image-2.5-flare"));
-            assert_eq!(resolve_model(None, LEGACY_FLARE_MODEL, size).0, FLARE_MODEL);
+            let (route, _) = ModelRoute::resolve(None, LEGACY_FLARE_MODEL, size);
+            assert_eq!(route.model(), FLARE_MODEL);
         }
         assert!(!is_quality_model(FLARE_MODEL));
         for invalid in [
@@ -330,18 +546,16 @@ mod tests {
             "gpt-image-2.5-flare ",
             "GPT-IMAGE-2.5-FLARE-OPENAI",
         ] {
-            assert!(model_error(Some(invalid), FLARE_MODEL).is_some());
+            assert!(!is_supported_model(invalid));
         }
     }
 
     #[test]
     fn high_resolution_routes_to_quality_with_public_note() {
-        assert_eq!(
-            resolve_model(None, STANDARD_MODEL, "1024x1024"),
-            (STANDARD_MODEL.into(), vec![])
-        );
-        let (model, notes) = resolve_model(Some(STANDARD_MODEL), STANDARD_MODEL, "2048x1152");
-        assert_eq!(model, QUALITY_MODEL);
+        let (route, notes) = ModelRoute::resolve(None, STANDARD_MODEL, "1024x1024");
+        assert_eq!((route.model(), notes.len()), (STANDARD_MODEL, 0));
+        let (route, notes) = ModelRoute::resolve(Some(STANDARD_MODEL), STANDARD_MODEL, "2048x1152");
+        assert_eq!(route.model(), QUALITY_MODEL);
         assert_eq!(
             notes,
             vec!["size=2048x1152 (2k) 已自动切到高质量线路 gpt-image-2-openai"]

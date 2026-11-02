@@ -1,10 +1,7 @@
 use futures_util::{StreamExt, stream};
 use serde_json::{Map, Value};
 
-use crate::domain::{
-    routing::{is_quality_model, resolve_model},
-    size::{validate_quality, validate_size},
-};
+use crate::domain::{routing::ModelRoute, size::validate_size};
 
 use super::{
     BatchParams, EditParams, SecretArg, ToolEngine, ToolFailure,
@@ -26,14 +23,11 @@ impl ToolEngine {
                 total,
             ));
         }
-        if let Some(error) = self
-            .model_error(
-                params.model.as_deref(),
-                &self.config.default_edit_model,
-                params.api_key.as_ref(),
-            )
-            .await
-        {
+        if let Some(error) = self.model_error(
+            params.model.as_deref(),
+            &self.config.default_edit_model,
+            params.api_key.as_ref(),
+        ) {
             return Ok(batch_validation_error(error, total));
         }
         let (cleaned_size, size_error) = validate_size(Some(&params.size), false);
@@ -43,29 +37,15 @@ impl ToolEngine {
                 total,
             ));
         };
-        let (effective_model, mut notes) = resolve_model(
+        let (route, mut notes) = ModelRoute::resolve(
             params.model.as_deref(),
             &self.config.default_edit_model,
             &size,
         );
-        if let Some(error) = self
-            .model_error(
-                Some(&effective_model),
-                &self.config.default_model,
-                params.api_key.as_ref(),
-            )
-            .await
-        {
-            return Ok(batch_validation_error(error, total));
-        }
-        let quality_value = params
-            .quality
-            .as_ref()
-            .map(|value| Value::String(value.clone()));
-        let (quality, quality_error) = validate_quality(quality_value.as_ref(), &effective_model);
-        if let Some(error) = quality_error {
-            return Ok(batch_validation_error(error, total));
-        }
+        let quality = match route.validate_quality(params.quality.as_deref()) {
+            Ok(quality) => quality,
+            Err(error) => return Ok(batch_validation_error(error, total)),
+        };
         let location = match self
             .output_store
             .resolve_save_dir(params.save_dir.as_deref())
@@ -73,11 +53,9 @@ impl ToolEngine {
             Ok(location) => location,
             Err(error) => return Ok(batch_validation_error(error, total)),
         };
-        let concurrency = if is_quality_model(&effective_model) {
-            1
-        } else {
-            5
-        };
+        // Serial routes keep a 1.5s gap between images, as server_info documents.
+        let concurrency = route.parallel_limit();
+        let effective_model = route.model().to_owned();
         let output_dir = location
             .absolute
             .to_str()
@@ -406,6 +384,29 @@ mod tests {
         assert_eq!(result["concurrency"], 1, "{result}");
         let starts = provider.starts.lock().await;
         assert_eq!(starts.len(), 2);
+        assert!(starts[1].duration_since(starts[0]) >= std::time::Duration::from_secs_f64(1.45));
+    }
+
+    #[tokio::test]
+    async fn large_standard_batch_is_serial_with_inter_request_gap() {
+        let (_temp, engine, provider, paths) = fixture();
+        let result = engine
+            .image_batch_edit(BatchParams {
+                prompt: "upscale".into(),
+                image_paths: paths[..2].to_vec(),
+                size: "2048x1152".into(),
+                model: Some("gpt-image-2.5-flare".into()),
+                quality: None,
+                save_dir: None,
+                api_key: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(result["succeeded"], 2, "{result}");
+        assert_eq!(result["model"], "gpt-image-2.5-flare");
+        assert_eq!(result["concurrency"], 1);
+        assert_eq!(provider.max_active.load(Ordering::SeqCst), 1);
+        let starts = provider.starts.lock().await;
         assert!(starts[1].duration_since(starts[0]) >= std::time::Duration::from_secs_f64(1.45));
     }
 }

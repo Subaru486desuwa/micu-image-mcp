@@ -51,7 +51,8 @@ impl ToolEngine {
 }
 
 impl ToolEngine {
-    async fn model_error(
+    /// Runs before size validation so an unsupported model is reported first.
+    fn model_error(
         &self,
         requested: Option<&str>,
         default: &str,
@@ -67,7 +68,7 @@ impl ToolEngine {
             .filter(|k| !secrecy::ExposeSecret::expose_secret(*k).trim().is_empty())
             .unwrap_or(&self.config.api_key);
         let model = crate::domain::routing::canonical_model(requested.unwrap_or(default));
-        if crate::domain::routing::SUPPORTED_IMAGE_MODELS.contains(&model) {
+        if crate::domain::routing::is_supported_model(model) {
             None
         } else {
             let model = crate::http::response::sanitize_sensitive(

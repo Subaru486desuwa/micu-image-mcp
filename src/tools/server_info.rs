@@ -1,7 +1,7 @@
 use secrecy::ExposeSecret;
 use serde_json::Value;
 
-use crate::config::ResponseFormat;
+use crate::{config::ResponseFormat, domain::routing::SUPPORTED_IMAGE_MODELS};
 
 use super::{ToolEngine, ToolFailure};
 
@@ -31,12 +31,12 @@ impl ToolEngine {
         set_top(
             &mut info,
             "available_models",
-            serde_json::json!(crate::domain::routing::SUPPORTED_IMAGE_MODELS),
+            serde_json::json!(SUPPORTED_IMAGE_MODELS),
         )?;
         set_top(
             &mut info,
             "model_catalog",
-            crate::model_catalog::info(&self.config.default_model, &self.config.default_edit_model),
+            model_catalog(&self.config.default_model, &self.config.default_edit_model),
         )?;
         set_nested(
             &mut info,
@@ -137,6 +137,19 @@ impl ToolEngine {
         )?;
         Ok(info)
     }
+}
+
+/// Manually maintained Images-protocol model directory. Never performs network I/O.
+fn model_catalog(default_generate: &str, default_edit: &str) -> Value {
+    serde_json::json!({
+        "source": "manual",
+        "refresh_status": "not_applicable",
+        "last_success_unix": null,
+        "ttl_seconds": null,
+        "capabilities": "Manually maintained Images protocol models; upstream availability and per-model edit capabilities are not verified",
+        "default_generate_available": SUPPORTED_IMAGE_MODELS.contains(&default_generate),
+        "default_edit_available": SUPPORTED_IMAGE_MODELS.contains(&default_edit)
+    })
 }
 
 fn path_text(path: &std::path::Path, context: &str) -> Result<String, ToolFailure> {
@@ -284,5 +297,27 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("bigsize.lock") && text.contains("Python/Rust"))
         );
+    }
+
+    #[test]
+    fn documented_quality_values_match_model_routes() {
+        let fixture: Value = serde_json::from_str(include_str!("../contracts/server-info.json"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        let documented = fixture
+            .pointer("/result/structuredContent/size_rules/quality_values_by_model")
+            .and_then(Value::as_object)
+            .unwrap_or_else(|| panic!("contract lacks quality_values_by_model"));
+        assert!(
+            SUPPORTED_IMAGE_MODELS
+                .iter()
+                .all(|model| documented.contains_key(*model))
+        );
+        for (model, values) in documented {
+            assert_eq!(
+                values,
+                &serde_json::json!(crate::domain::routing::quality_values(model)),
+                "{model}"
+            );
+        }
     }
 }

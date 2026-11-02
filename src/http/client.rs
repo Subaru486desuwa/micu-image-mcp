@@ -45,11 +45,7 @@ impl ApiResponse {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RetryOptions {
-    pub enabled: bool,
-    pub big_size: bool,
-}
+pub use crate::domain::routing::RetryOptions;
 
 #[async_trait]
 pub trait RequestFactory: Send + Sync {

@@ -4,9 +4,7 @@ use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
-use crate::domain::routing::{
-    FLARE_MODEL, QUALITY_MODEL, STANDARD_MODEL, SUNBURST_MODEL, canonical_model,
-};
+use crate::domain::routing::{FLARE_MODEL, SUNBURST_MODEL, canonical_model};
 
 mod env;
 mod paths;
@@ -168,23 +166,6 @@ impl Config {
             ),
             api_request_timeout,
         })
-    }
-
-    /// Only the two legacy routes negotiate response format. Modern Images
-    /// routes select it upstream; repeating an unchanged payload can charge twice.
-    pub fn response_formats_for_model(
-        &self,
-        model: &str,
-    ) -> impl Iterator<Item = Option<&'static str>> + '_ {
-        let explicit = matches!(canonical_model(model), STANDARD_MODEL | QUALITY_MODEL);
-        self.response_formats_to_try
-            .iter()
-            .take(if explicit {
-                self.response_formats_to_try.len()
-            } else {
-                1
-            })
-            .map(move |format| explicit.then_some(*format))
     }
 }
 
