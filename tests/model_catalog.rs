@@ -35,7 +35,9 @@ fn manual_directory_never_fetches_upstream_and_removes_grok_fields() -> Result<(
                 "gpt-image-2",
                 "gpt-image-2-openai",
                 "gpt-image-2.5-flare",
-                "gpt-image-2.5-sunburst"
+                "gpt-image-2.5-sunburst",
+                "gpt-image-2.6-flare",
+                "gpt-image-2.6-sunburst"
             ])
         );
         assert_eq!(info["model_catalog"]["source"], "manual");

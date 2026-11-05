@@ -96,6 +96,9 @@ impl ImageProvider for Image2Provider {
         if let Some(quality) = request.quality {
             body.insert("quality".into(), Value::String(quality.into()));
         }
+        if let Some(output_format) = request.output_format {
+            body.insert("output_format".into(), Value::String(output_format.into()));
+        }
         self.execute(
             JsonRequestFactory {
                 url: self.generations_url.clone(),
@@ -126,6 +129,9 @@ impl ImageProvider for Image2Provider {
         }
         if let Some(quality) = request.quality {
             fields.push(("quality".into(), quality.into()));
+        }
+        if let Some(output_format) = request.output_format {
+            fields.push(("output_format".into(), output_format.into()));
         }
         let mut files = request
             .images

@@ -22,6 +22,8 @@ pub struct OutputStore {
 pub struct SavedImage {
     pub path: PathBuf,
     pub size_bytes: u64,
+    pub format: &'static str,
+    pub frame_count: Option<u32>,
     pub actual_size: (u32, u32),
     pub actual_megapixels: f64,
 }
@@ -168,6 +170,8 @@ impl OutputStore {
         Ok(SavedImage {
             path,
             size_bytes,
+            format: info.format_id,
+            frame_count: info.frame_count,
             actual_size: info.dimensions,
             actual_megapixels: (megapixels * 100.0).round() / 100.0,
         })

@@ -10,7 +10,7 @@ use micu_devtools::{
 };
 use micu_image_mcp::{
     config::{ENV_KEYS, EnvironmentSnapshot},
-    domain::routing::{FLARE_MODEL, LEGACY_FLARE_MODEL},
+    domain::routing::FLARE_2_6_MODEL,
     installer::codex::parse_config_launch,
 };
 use secrecy::{ExposeSecret, SecretString};
@@ -176,7 +176,7 @@ fn run(binary: &Path, output: &Path, config: &Path, report: &mut Value) -> Resul
     let info = session.call("server_info", json!({}))?;
     if initialized["result"]["serverInfo"]["version"] != env!("CARGO_PKG_VERSION")
         || info["version"] != env!("CARGO_PKG_VERSION")
-        || info["default_model"] != FLARE_MODEL
+        || info["default_model"] != FLARE_2_6_MODEL
         || info["model_catalog"]["source"] != "manual"
         || tools["result"]["tools"].as_array().map(Vec::len) != Some(5)
     {
@@ -204,7 +204,7 @@ fn run(binary: &Path, output: &Path, config: &Path, report: &mut Value) -> Resul
     report["used_fallback"] = result["used_fallback"].clone();
     let actual = result["model"]
         .as_str()
-        .filter(|model| [FLARE_MODEL, LEGACY_FLARE_MODEL].contains(model))
+        .filter(|model| *model == FLARE_2_6_MODEL)
         .ok_or("unexpected reported model")?;
     report["actual_model"] = json!(actual);
     if result["ok"] != true {

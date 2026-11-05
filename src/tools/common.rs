@@ -71,6 +71,10 @@ pub fn saved_value(saved: &SavedImage, index: Option<usize>) -> Result<Value, To
         .ok_or_else(|| ToolFailure("输出路径不是合法 Unicode，无法无损写入 MCP JSON".into()))?;
     value.insert("path".into(), Value::String(path.to_owned()));
     value.insert("size_bytes".into(), Value::from(saved.size_bytes));
+    value.insert("format".into(), Value::String(saved.format.into()));
+    if let Some(frame_count) = saved.frame_count {
+        value.insert("frame_count".into(), Value::from(frame_count));
+    }
     value.insert(
         "actual_size".into(),
         Value::String(format!("{}x{}", saved.actual_size.0, saved.actual_size.1)),

@@ -8,10 +8,14 @@ use image::{GenericImageView, ImageFormat, ImageReader, Limits};
 pub const MAX_DECODED_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 pub const MAX_DECODED_IMAGE_EDGE: u32 = 8_192;
 pub const MAX_DECODE_ALLOC_BYTES: u64 = 96 * 1024 * 1024;
+pub const MAX_GIF_FRAMES: u32 = 1_024;
+pub const MAX_GIF_COMPOSITED_PIXELS: u64 = 1 << 30;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DecodedImageInfo {
     pub format: ImageFormat,
+    pub format_id: &'static str,
+    pub frame_count: Option<u32>,
     pub mime: &'static str,
     pub extension: &'static str,
     pub dimensions: (u32, u32),
@@ -29,19 +33,24 @@ pub fn inspect_image_file(
         validate_decode_dimensions(width, height, label)?;
     }
     let (format, dimensions) = decode_image(file, label)?;
-    let (mime, extension) = match format {
-        ImageFormat::Png => ("image/png", "png"),
-        ImageFormat::Jpeg => ("image/jpeg", "jpg"),
-        ImageFormat::WebP => ("image/webp", "webp"),
-        ImageFormat::Gif => ("image/gif", "gif"),
+    let (format_id, mime, extension) = match format {
+        ImageFormat::Png => ("png", "image/png", "png"),
+        ImageFormat::Jpeg => ("jpeg", "image/jpeg", "jpg"),
+        ImageFormat::WebP => ("webp", "image/webp", "webp"),
+        ImageFormat::Gif => ("gif", "image/gif", "gif"),
         _ => {
             return Err(format!(
                 "{label} 不是受支持的图片格式（PNG/JPEG/WebP/GIF magic 不匹配）"
             ));
         }
     };
+    let frame_count = (format == ImageFormat::Gif)
+        .then(|| count_gif_frames(file, dimensions, label))
+        .transpose()?;
     Ok(DecodedImageInfo {
         format,
+        format_id,
+        frame_count,
         mime,
         extension,
         dimensions,
@@ -51,6 +60,15 @@ pub fn inspect_image_file(
             None
         },
     })
+}
+
+/// Lets input validation refuse GIF, which it never accepts, before decoding any frame.
+pub fn has_gif_header(file: &File) -> bool {
+    read_header(file).is_ok_and(|header| is_gif_header(&header))
+}
+
+fn is_gif_header(header: &[u8]) -> bool {
+    header.starts_with(b"GIF87a") || header.starts_with(b"GIF89a")
 }
 
 fn read_header(file: &File) -> std::io::Result<Vec<u8>> {
@@ -69,8 +87,7 @@ fn validate_magic(header: &[u8], size_bytes: u64, label: &str) -> Result<(), Str
     let png = header.starts_with(b"\x89PNG\r\n\x1a\n");
     let jpeg = header.starts_with(b"\xff\xd8\xff");
     let webp = header.starts_with(b"RIFF") && header.get(8..12) == Some(b"WEBP");
-    let gif = header.starts_with(b"GIF87a") || header.starts_with(b"GIF89a");
-    if png || jpeg || webp || gif {
+    if png || jpeg || webp || is_gif_header(header) {
         Ok(())
     } else {
         Err(format!(
@@ -139,6 +156,36 @@ fn decode_image(file: &File, label: &str) -> Result<(ImageFormat, (u32, u32)), S
     Ok((format, dimensions))
 }
 
+/// `decode()` stops at the first GIF frame, so walk the rest under a pixel budget.
+/// Frames must fit the canvas, which makes canvas pixels an upper bound per frame.
+fn count_gif_frames(file: &File, dimensions: (u32, u32), label: &str) -> Result<u32, String> {
+    let corrupt = || format!("{label} 无法完整解码（文件可能截断、损坏或格式标记错误）");
+    let mut clone = file.try_clone().map_err(|_| corrupt())?;
+    clone.seek(SeekFrom::Start(0)).map_err(|_| corrupt())?;
+    let mut options = gif::DecodeOptions::new();
+    options.check_frame_consistency(true);
+    let mut decoder = options
+        .read_info(BufReader::new(clone))
+        .map_err(|_| corrupt())?;
+    let mut frames = 0_u32;
+    while decoder.read_next_frame().map_err(|_| corrupt())?.is_some() {
+        frames += 1;
+        if gif_budget_exceeded(frames, dimensions) {
+            return Err(format!(
+                "{label} 的 GIF 超过 {MAX_GIF_FRAMES} 帧或 {MAX_GIF_COMPOSITED_PIXELS} 合成像素上限，已拒绝（防解压炸弹）"
+            ));
+        }
+    }
+    Ok(frames)
+}
+
+fn gif_budget_exceeded(frames: u32, (width, height): (u32, u32)) -> bool {
+    let composited = u64::from(frames)
+        .saturating_mul(u64::from(width))
+        .saturating_mul(u64::from(height));
+    frames > MAX_GIF_FRAMES || composited > MAX_GIF_COMPOSITED_PIXELS
+}
+
 fn validate_decode_dimensions(width: u32, height: u32, label: &str) -> Result<(), String> {
     if width > MAX_DECODED_IMAGE_EDGE || height > MAX_DECODED_IMAGE_EDGE {
         return Err(format!(
@@ -166,9 +213,11 @@ pub(crate) fn format_name(format: ImageFormat) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs};
+    use std::{borrow::Cow, collections::BTreeMap, fs};
 
-    use image::{ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
+    use image::{
+        Delay, Frame, ImageFormat, Rgb, RgbImage, Rgba, RgbaImage, codecs::gif::GifEncoder,
+    };
 
     use crate::{
         config::{PathPolicy, test_paths},
@@ -199,6 +248,120 @@ mod tests {
         image
             .save_with_format(path, format)
             .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    fn gif_bytes(frames: u32) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        let mut encoder = GifEncoder::new(&mut encoded);
+        for index in 0..frames {
+            let pixel = Rgba([(index % 251) as u8, 90, 160, 255]);
+            encoder
+                .encode_frame(Frame::from_parts(
+                    RgbaImage::from_pixel(16, 16, pixel),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                ))
+                .unwrap();
+        }
+        drop(encoder);
+        encoded
+    }
+
+    /// One indexed frame per `(left, width)`, drawn on a 16×16 canvas.
+    fn gif_with_frames(frames: &[(u16, u16)]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        let mut encoder = gif::Encoder::new(&mut encoded, 16, 16, &[0, 0, 0, 255, 255, 255])
+            .unwrap_or_else(|error| panic!("{error}"));
+        for &(left, width) in frames {
+            let buffer = vec![0_u8; usize::from(width) * usize::from(width)];
+            encoder
+                .write_frame(&gif::Frame {
+                    left,
+                    width,
+                    height: width,
+                    buffer: Cow::Owned(buffer),
+                    ..gif::Frame::default()
+                })
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+        drop(encoder);
+        encoded
+    }
+
+    fn inspect_bytes(bytes: &[u8]) -> Result<DecodedImageInfo, String> {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("sample.gif");
+        fs::write(&path, bytes).unwrap();
+        inspect_image_file(&File::open(path).unwrap(), bytes.len() as u64, "sample")
+    }
+
+    #[test]
+    fn gif_inspection_reports_every_frame() {
+        let info = inspect_bytes(&gif_bytes(3)).unwrap();
+        assert_eq!(info.format_id, "gif");
+        assert_eq!(info.extension, "gif");
+        assert_eq!(info.frame_count, Some(3));
+        assert_eq!(info.dimensions, (16, 16));
+    }
+
+    #[test]
+    fn gif_truncated_after_the_first_frame_is_rejected() {
+        let bytes = gif_bytes(3);
+        let error = inspect_bytes(&bytes[..bytes.len() * 2 / 3]).unwrap_err();
+        assert!(error.contains("无法完整解码"), "{error}");
+    }
+
+    #[test]
+    fn gif_frame_budget_rejects_excess_frames() {
+        let error = inspect_bytes(&gif_bytes(MAX_GIF_FRAMES + 1)).unwrap_err();
+        assert!(error.contains("防解压炸弹"), "{error}");
+    }
+
+    #[test]
+    fn gif_frames_larger_than_the_canvas_are_rejected() {
+        for frames in [&[(0, 2_048)][..], &[(0, 16), (0, 2_048)]] {
+            let error = inspect_bytes(&gif_with_frames(frames)).unwrap_err();
+            assert!(error.contains("无法完整解码"), "{error}");
+        }
+    }
+
+    #[test]
+    fn gif_frames_extending_past_the_canvas_are_rejected() {
+        let error = inspect_bytes(&gif_with_frames(&[(0, 16), (8, 16)])).unwrap_err();
+        assert!(error.contains("无法完整解码"), "{error}");
+    }
+
+    #[test]
+    fn gif_sub_rectangle_frames_inside_the_canvas_stay_valid() {
+        let info = inspect_bytes(&gif_with_frames(&[(0, 16), (8, 8), (0, 4)])).unwrap();
+        assert_eq!(info.frame_count, Some(3));
+    }
+
+    #[test]
+    fn gif_composition_budget_counts_canvas_pixels() {
+        assert!(!gif_budget_exceeded(1_024, (1_024, 1_024)));
+        assert!(gif_budget_exceeded(1_025, (16, 16)));
+        assert!(gif_budget_exceeded(65, (4_096, 4_096)));
+    }
+
+    #[test]
+    fn gif_input_is_rejected_from_its_header_before_any_frame_is_decoded() {
+        let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+        let input = temp.path().join("input");
+        fs::create_dir_all(&input).unwrap_or_else(|error| panic!("{error}"));
+        // Everything after the logical screen descriptor is undecodable on purpose:
+        // reaching the decoder would report a corrupt file instead of the format.
+        let mut bytes = gif_bytes(1);
+        bytes.truncate(16);
+        bytes.resize(64, 0xff);
+        let path = input.join("animation.gif");
+        fs::write(&path, bytes).unwrap_or_else(|error| panic!("{error}"));
+        let error =
+            validate_input_image(&config(temp.path()), &path.to_string_lossy(), "image_path")
+                .err()
+                .unwrap_or_default();
+        assert!(error.contains("格式 GIF 不受上游支持"), "{error}");
     }
 
     #[test]

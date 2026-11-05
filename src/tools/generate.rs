@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{ModelRoute, infer_size_from_prompt, size_note},
+        routing::{ModelRoute, infer_size_from_prompt, output_format_note, size_note},
         size::{validate_n, validate_size},
     },
     fs::output_store::{OutputDirectory, SavedImage},
@@ -91,6 +91,10 @@ impl ToolEngine {
             Ok(quality) => quality,
             Err(error) => return Ok(validation_error(error)),
         };
+        let output_format = match route.validate_output_format(params.output_format.as_deref()) {
+            Ok(output_format) => output_format,
+            Err(error) => return Ok(validation_error(error)),
+        };
         let location = match self
             .output_store
             .resolve_save_dir(params.save_dir.as_deref())
@@ -158,6 +162,7 @@ impl ToolEngine {
                     let size = size.clone();
                     let route = route.clone();
                     let quality = quality.clone();
+                    let output_format = output_format.clone();
                     let location = location.clone();
                     let stem = stem.clone();
                     let key = key.clone();
@@ -169,6 +174,7 @@ impl ToolEngine {
                                 &size,
                                 &route,
                                 quality.as_deref(),
+                                output_format.as_deref(),
                                 &location,
                                 &stem,
                                 &key,
@@ -189,6 +195,7 @@ impl ToolEngine {
                         &size,
                         &route,
                         quality.as_deref(),
+                        output_format.as_deref(),
                         &location,
                         &stem,
                         &key,
@@ -218,7 +225,15 @@ impl ToolEngine {
                 push_note_once(&mut notes, note);
             }
             if let Some(image) = result.saved {
-                if let Some(note) = size_note(&size, Some(image.actual_size)) {
+                if let Some(note) = size_note(
+                    &size,
+                    Some(image.actual_size),
+                    output_format.as_deref(),
+                    image.format,
+                ) {
+                    push_note_once(&mut notes, note);
+                }
+                if let Some(note) = output_format_note(output_format.as_deref(), image.format) {
                     push_note_once(&mut notes, note);
                 }
                 let mut value = saved_value(&image, Some(result.index + 1))?;
@@ -297,6 +312,7 @@ impl ToolEngine {
                 size: params.size,
                 model: params.model,
                 quality: params.quality,
+                output_format: params.output_format,
                 save_dir: params.save_dir,
                 basename: params.basename,
                 api_key: params.api_key,
@@ -329,6 +345,7 @@ impl ToolEngine {
         size: &str,
         route: &ModelRoute,
         quality: Option<&str>,
+        output_format: Option<&str>,
         location: &OutputDirectory,
         stem: &str,
         key: &SecretString,
@@ -358,6 +375,7 @@ impl ToolEngine {
                         size,
                         quality,
                         response_format,
+                        output_format,
                     },
                     key,
                     route.retry(),
@@ -551,6 +569,7 @@ mod tests {
             n: 1,
             model: None,
             quality: None,
+            output_format: None,
             save_dir: None,
             basename: Some("test".into()),
             api_key: None,
@@ -568,12 +587,12 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result["ok"], true, "{result}");
-        assert_eq!(result["model"], "gpt-image-2.5-flare");
+        assert_eq!(result["model"], "gpt-image-2.6-flare");
         assert_eq!(result["requested_n"], 1);
         assert_eq!(result["saved"][0]["actual_size"], "32x24");
         assert_eq!(
             provider.calls.lock().await.as_slice(),
-            &[("gpt-image-2.5-flare".into(), "1024x1024".into(), None)]
+            &[("gpt-image-2.6-flare".into(), "1024x1024".into(), None)]
         );
     }
 

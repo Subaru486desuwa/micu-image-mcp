@@ -99,7 +99,7 @@ fn primary_success_does_not_probe_catalog_or_submit_fallback() -> Result<()> {
     let mut server = api.server(root.path(), None)?;
     let result = server.call(
         "image_generate",
-        json!({"prompt":"red cube","session_id":"new"}),
+        json!({"prompt":"red cube","session_id":"new","model":"gpt-image-2.5-flare"}),
     )?;
     assert_eq!(result["ok"], true, "{result}");
     assert_eq!(result["model"], "gpt-image-2.5-flare");
@@ -208,7 +208,10 @@ fn explicit_model_channel_rejection_skips_generic_503_retries() -> Result<()> {
     let mut server = api.server(root.path(), None)?;
     let a = root.path().join("a.png");
     fs::write(&a, png(32, 24, 1)?)?;
-    let result = server.call("image_edit", json!({"prompt":"edit","image_path":a}))?;
+    let result = server.call(
+        "image_edit",
+        json!({"prompt":"edit","image_path":a,"model":"gpt-image-2.5-sunburst"}),
+    )?;
     assert_eq!(result["ok"], true, "{result}");
     assert_eq!(result["model"], "gpt-image-2.5-sunburst-openai");
     assert_eq!(api.requests.lock().unwrap().len(), 2);
@@ -231,7 +234,10 @@ fn fallback_failure_does_not_switch_back_or_reinterpret_postprocessing_errors() 
         };
         let api = Fixture::new(404, missing_model(), status, Some(response))?;
         let mut server = api.server(root.path(), None)?;
-        let result = server.call("image_generate", json!({"prompt":"x"}))?;
+        let result = server.call(
+            "image_generate",
+            json!({"prompt":"x","model":"gpt-image-2.5-flare"}),
+        )?;
         assert_eq!(result["ok"], false, "{result}");
         assert_eq!(api.requests.lock().unwrap().len(), 2, "{result}");
         assert_eq!(result["model"], "gpt-image-2.5-flare-openai");
@@ -267,11 +273,43 @@ fn unrelated_errors_never_switch_models() -> Result<()> {
         let root = tempfile::tempdir()?;
         let api = Fixture::new(status, error, 200, None)?;
         let mut server = api.server(root.path(), None)?;
-        let result = server.call("image_generate", json!({"prompt":"x"}))?;
+        let result = server.call(
+            "image_generate",
+            json!({"prompt":"x","model":"gpt-image-2.5-flare"}),
+        )?;
         assert_eq!(result["ok"], false, "{status}: {result}");
         let requests = api.requests.lock().unwrap();
         assert_eq!(requests.len(), 1, "{status}: {result}");
         assert_eq!(requests[0].fields["model"], "gpt-image-2.5-flare");
+    }
+    Ok(())
+}
+
+#[test]
+fn image_2_6_rejection_has_no_suffix_or_previous_generation_fallback() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let image = root.path().join("a.png");
+    fs::write(&image, png(32, 24, 1)?)?;
+    let api = Fixture::new(404, missing_model(), 200, None)?;
+    let mut server = api.server(root.path(), None)?;
+    for (tool, args, model) in [
+        (
+            "image_generate",
+            json!({"prompt":"x"}),
+            "gpt-image-2.6-flare",
+        ),
+        (
+            "image_edit",
+            json!({"prompt":"x","image_path":image}),
+            "gpt-image-2.6-sunburst",
+        ),
+    ] {
+        api.requests.lock().unwrap().clear();
+        let result = server.call(tool, args)?;
+        assert_eq!(result["ok"], false, "{result}");
+        let requests = api.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1, "{result}");
+        assert_eq!(requests[0].fields["model"], model);
     }
     Ok(())
 }
@@ -345,7 +383,10 @@ fn network_failure_only_uses_existing_same_model_retry() -> Result<()> {
         &[("MICU_API_KEY", "fixture-key"), ("MICU_BASEURL", &http.url)],
     )?;
     server.initialize()?;
-    let result = server.call("image_generate", json!({"prompt":"x"}))?;
+    let result = server.call(
+        "image_generate",
+        json!({"prompt":"x","model":"gpt-image-2.5-flare"}),
+    )?;
     assert_eq!(result["ok"], false, "{result}");
     assert_eq!(
         *models.lock().unwrap(),
@@ -550,7 +591,7 @@ fn model_refusal_requires_consistent_model_and_error_context() -> Result<()> {
         let mut server = api.server(root.path(), None)?;
         let result = server.call(
             "image_generate",
-            json!({"prompt":"context regression","session_id":"new"}),
+            json!({"prompt":"context regression","session_id":"new","model":model}),
         )?;
         assert_eq!(result["used_fallback"], expected, "{name}: {result}");
         let requests = api.requests.lock().unwrap();

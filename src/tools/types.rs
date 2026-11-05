@@ -51,6 +51,8 @@ pub struct GenerateParams {
     #[serde(default)]
     pub quality: Option<String>,
     #[serde(default)]
+    pub output_format: Option<String>,
+    #[serde(default)]
     pub save_dir: Option<String>,
     #[serde(default)]
     pub basename: Option<String>,
@@ -77,6 +79,8 @@ pub struct EditParams {
     pub model: Option<String>,
     #[serde(default)]
     pub quality: Option<String>,
+    #[serde(default)]
+    pub output_format: Option<String>,
     #[serde(default)]
     pub save_dir: Option<String>,
     #[serde(default)]

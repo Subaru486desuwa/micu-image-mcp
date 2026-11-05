@@ -168,6 +168,7 @@ impl ToolEngine {
                 size: Some(size),
                 model: Some(model),
                 quality,
+                output_format: None,
                 save_dir: Some(output_dir),
                 basename: Some(format!("{}_{}", default_basename("batch"), index + 1)),
                 api_key,

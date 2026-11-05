@@ -37,9 +37,9 @@ fn matrix_plan_is_offline_and_paid_modes_require_explicit_switches() {
         .unwrap();
     assert!(plan.status.success());
     let value: serde_json::Value = serde_json::from_slice(&plan.stdout).unwrap();
-    assert_eq!(value["cases"].as_array().unwrap().len(), 48);
+    assert_eq!(value["cases"].as_array().unwrap().len(), 76);
     assert_eq!(value["paid_requests"], 0);
-    assert_eq!(value["cases"][0]["model"], "gpt-image-2.5-flare");
+    assert_eq!(value["cases"][0]["model"], "gpt-image-2.6-flare");
     for model in ["gpt-image-2.5-flare", "gpt-image-2.5-flare-openai"] {
         let plan = Command::new(binary)
             .args(["quality-matrix", "--models", model])

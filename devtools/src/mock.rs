@@ -806,7 +806,7 @@ impl MockMicu {
             }
             if matches!(
                 fields["model"].as_str(),
-                Some("gpt-image-2.5-flare" | "gpt-image-2.5-flare-openai")
+                Some("gpt-image-2.6-flare" | "gpt-image-2.5-flare" | "gpt-image-2.5-flare-openai")
             ) && fields.get("response_format").is_some()
             {
                 return respond_json(

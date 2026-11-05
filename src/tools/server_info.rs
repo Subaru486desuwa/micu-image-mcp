@@ -269,16 +269,18 @@ mod tests {
                 "gpt-image-2",
                 "gpt-image-2-openai",
                 "gpt-image-2.5-flare",
-                "gpt-image-2.5-sunburst"
+                "gpt-image-2.5-sunburst",
+                "gpt-image-2.6-flare",
+                "gpt-image-2.6-sunburst"
             ])
         );
         assert_eq!(
             info["default_models"]["image_generate"],
-            "gpt-image-2.5-flare"
+            "gpt-image-2.6-flare"
         );
         assert_eq!(
             info["default_models"]["image_edit"],
-            "gpt-image-2.5-sunburst"
+            "gpt-image-2.6-sunburst"
         );
         assert!(info.get("grok_channel_enabled").is_none());
         assert_eq!(info["api_key_configured"], true);
@@ -297,6 +299,28 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("bigsize.lock") && text.contains("Python/Rust"))
         );
+    }
+
+    #[test]
+    fn documented_output_format_values_match_model_routes() {
+        let fixture: Value = serde_json::from_str(include_str!("../contracts/server-info.json"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        let documented = fixture
+            .pointer("/result/structuredContent/size_rules/output_format_values_by_model")
+            .and_then(Value::as_object)
+            .unwrap_or_else(|| panic!("contract lacks output_format_values_by_model"));
+        assert!(
+            SUPPORTED_IMAGE_MODELS
+                .iter()
+                .all(|model| documented.contains_key(*model))
+        );
+        for (model, values) in documented {
+            assert_eq!(
+                values,
+                &serde_json::json!(crate::domain::routing::output_format_values(model)),
+                "{model}"
+            );
+        }
     }
 
     #[test]

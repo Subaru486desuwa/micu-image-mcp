@@ -224,6 +224,8 @@ pub fn quality_matrix(models: &[String], sizes: &[String]) -> Result<Vec<Value>>
         if ![
             "gpt-image-2.5-flare",
             "gpt-image-2.5-sunburst",
+            "gpt-image-2.6-flare",
+            "gpt-image-2.6-sunburst",
             "gpt-image-2",
             "gpt-image-2-openai",
         ]
@@ -256,7 +258,9 @@ pub fn quality_matrix(models: &[String], sizes: &[String]) -> Result<Vec<Value>>
                     Some("xhigh"),
                     Some("max"),
                 ] {
-                    if !model.contains("2.5") && matches!(quality, Some("xhigh" | "max")) {
+                    if matches!(model, "gpt-image-2" | "gpt-image-2-openai")
+                        && matches!(quality, Some("xhigh" | "max"))
+                    {
                         continue;
                     }
                     cases.push(json!({"index":cases.len()+1,"model":model,"size":size,"tool":tool,"quality":quality}));

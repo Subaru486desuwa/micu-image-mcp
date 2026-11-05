@@ -8,7 +8,7 @@
 
 ![Micu Image MCP v0.4.1 上下文记忆海报：沿用同一只小猫，继续细化图片](docs/assets/memory/context-memory-poster.png)
 
-[连续编辑](#上下文记忆) · [功能](#功能) · [模型与质量](#模型与质量) · [安装](#安装) · [尺寸与并发](#尺寸与并发) · [配置](#配置) · [调试与验证](#调试与验证) · [v0.5.3 更新说明](docs/releases/v0.5.3.md)
+[连续编辑](#上下文记忆) · [功能](#功能) · [模型与质量](#模型与质量) · [安装](#安装) · [尺寸与并发](#尺寸与并发) · [配置](#配置) · [调试与验证](#调试与验证) · [v0.6.0 更新说明](docs/releases/v0.6.0.md)
 
 ## 上下文记忆
 
@@ -62,18 +62,41 @@ Cursor、Claude Code 和 Codex 的配置、工具选择，以及 Clash/Surge fak
 
 | 模型 | 用途 |
 |---|---|
-| `gpt-image-2.5-flare` | 文生图默认模型 |
-| `gpt-image-2.5-sunburst` | 编辑、批量编辑和多图参考的默认模型 |
+| `gpt-image-2.6-flare` | 文生图默认模型 |
+| `gpt-image-2.6-sunburst` | 编辑、批量编辑和多图参考的默认模型 |
+| `gpt-image-2.5-flare` | 上一代 Flare，需显式选择 |
+| `gpt-image-2.5-sunburst` | 上一代 Sunburst，需显式选择 |
 | `gpt-image-2` | 标准线路；2K/4K 自动切换到 `gpt-image-2-openai` |
 | `gpt-image-2-openai` | 历史质量线路 |
 
 - **手动目录**：MCP 不请求 `/v1/models`。`server_info` 的 `available_models` 是受支持的模型列表，不保证当前凭据或上游线路可用。新增模型 ID 需要手动更新目录，默认选择不会随网络目录变化而切换。Grok 生图已永久移除。
-- **旧 ID 兼容**：带 `-openai` 后缀的 Flare/Sunburst 配置和图片会话继续可用，先请求无后缀 ID；只有上游明确返回模型不存在、不支持或无可用渠道时，才用带后缀 ID 补试一次。`gpt-image-2` 与 `gpt-image-2-openai` 不是别名，各自保留尺寸路由与显式选择。
+- **旧 ID 兼容**：带 `-openai` 后缀的 2.5 Flare/Sunburst 配置和图片会话继续可用，先请求无后缀 ID；只有上游明确返回模型不存在、不支持或无可用渠道时，才用带后缀 ID 补试一次。2.6 没有后缀别名，被上游拒绝时直接返回错误，不会改用 2.5。`gpt-image-2` 与 `gpt-image-2-openai` 不是别名，各自保留尺寸路由与显式选择。
 - **不切换模型的情况**：网络异常、超时、认证、限流、余额、内容审核、普通服务错误以及图片下载/解析失败。`notes` 说明补试，结果及会话记录实际使用的 ID。
 - **返回格式**：Flare、Sunburst 不发送 `response_format`，直接保存上游返回的 base64 或 URL 图片；下载或解析失败时，不会换格式重复提交生图请求。
+- **输出格式**：`image_generate` 与 `image_edit` 可选 `output_format`（`png`、`jpeg`、`webp`；`gif` 仅 2.6），省略时不发送。`saved[].format` 与扩展名由文件内容决定，与请求不一致时 `notes` 会提示。GIF 校验全部帧并返回 `saved[].frame_count`，`actual_size` 为画布尺寸，上限 1024 帧、2^30 合成像素，超出画布的帧会被拒绝。
+- **GIF 触发**：动图由 prompt 触发。要 GIF 时必须在 prompt 中明确要求动画，只传 `output_format=gif` 可能返回静态图，省略该参数也可能返回 GIF。`output_format` 只是请求值，结果以 `saved[].format` 为准。
+- **GIF 尺寸与时序**：GIF 尺寸由上游决定，通常约 414×414，不保证遵循 `size`，个别结果比例可超过 3:1，以 `saved[].actual_size` 为准。`notes` 只说明实际尺寸，不会建议换用不支持 GIF 的线路；`size_honored` 仍如实返回。帧数、帧间隔和循环由上游决定：直接发送 `frame_count`、`frame_duration_ms` 时上游会接受但不按请求生效，因此 MCP 不提供这些参数。`size` 的本地校验与静态图相同：返回约 400 像素的 GIF，不代表可以请求 `400x400`。
+- **GIF 与会话**：GIF 不能作为编辑输入。会话可用 `parent_revision` 选择非 GIF 版本，或把图片转换为 PNG/JPEG/WebP 后用 `session_id="new"` 开始新会话。
 - **接口**：所有图像工具只走 `/v1/images/generations` 或 `/v1/images/edits`，不调用 Responses API。
 
 ### 在线实测
+
+2026-11-05，MCP 与 HTML 在米醋主站共完成 15 次 2.6 图像调用，全部返回 HTTP 200，覆盖 Flare 和 Sunburst 的生成、PNG → GIF 编辑以及 HTML 批处理编辑。
+
+| 调用 | 结果 |
+| --- | --- |
+| 13 次动画提示词（12 次带 `output_format=gif`） | 全部为无限循环的多帧 GIF：8、9 或 16 帧，周期 1.92–2.25 秒 |
+| 动画提示词，省略 `output_format`（1 次，已含在上行） | GIF，411×412 |
+| 静态提示词 + `output_format=gif`（1 次） | PNG，1254×1254 |
+| 静态提示词，省略 `output_format`（1 次） | PNG，1254×1254 |
+
+请求 `1024x1024` 的 GIF 实际尺寸从 215×882 到 444×395，最大比例约 4.1:1；请求 `1536x1024` 得到 384×267。两次触发对照各只有一次调用。
+
+同日另一份 `quality=low` 批量报告共 18 次生成请求，17 次成功。静态 PNG 在 1536×1024、2048×2048、3840×2160 三个尺寸都按请求返回，这与上表 `1024x1024` 返回 1254×1254 不同。11 个 GIF 请求 512×512 或 1024×1024 时实际边长为 410–414 像素；`frame_count` 为 9–64、`frame_duration_ms` 为 200 或 500 时，实际都是 8–9 帧、每帧 180 ms。Flare 的 32 帧请求约 94 秒后连接中断，没有拿到文件，也无法确认是否计费。
+
+GIF 输入、GIF 2K/4K 和 `low` 以外的 `quality` 档位未做验收。
+
+以下结果来自 2.5 及更早线路。
 
 2026-10-16，v0.4.3 Release 候选在米醋主站完成默认 Flare 生图与重启后的会话编辑，两次 Images 请求均返回 HTTP 200 和 1024×1024 图片，均省略 `quality` 与 `response_format`。
 
@@ -81,11 +104,11 @@ Cursor、Claude Code 和 Codex 的配置、工具选择，以及 Clash/Surge fak
 
 | 模型 | 实测可用的 `quality` | 限制 |
 | --- | --- | --- |
-| Flare / Sunburst | `low`、`auto` 或省略 | `medium`、`high`、`xhigh`、`max` 返回 HTTP 400，上游提示只支持 `low` |
+| 2.5 Flare / Sunburst | `low`、`auto` 或省略 | `medium`、`high`、`xhigh`、`max` 返回 HTTP 400，上游提示只支持 `low` |
 | `gpt-image-2` | `low`、`medium`、`high`、`auto` 或省略 | 2K/4K 会自动切换到 `gpt-image-2-openai`，需确认凭据支持该模型 |
 | `gpt-image-2-openai` | 未验证 | 当次凭据的模型列表未包含该模型 |
 
-这些结果对应当时的线路和凭据，Flare 使用改名前的 ID；完整记录见[在线质量档位验证](docs/session-storage.md#在线质量档位验证)。
+这些结果对应当时的线路和凭据，2.5 Flare 使用改名前的 ID；完整记录见[在线质量档位验证](docs/session-storage.md#在线质量档位验证)。
 工具保留完整参数选项（Flare/Sunburst 另接受 `xhigh`、`max`），以兼容其他线路或后续支持。
 
 ---
@@ -258,7 +281,7 @@ cargo xtask smoke --binary /absolute/path/micu-image-mcp
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 图像接口地址 |
 | `MICU_KEYCHAIN_SERVICE` | `micu-image-mcp` | 系统安全凭据的 service 名称 |
 | `MICU_KEYCHAIN_ACCOUNT` | `image2-api-key` | 系统安全凭据的 account 名称 |
-| `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 Flare，编辑类默认 Sunburst |
+| `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 2.6 Flare，编辑类默认 2.6 Sunburst |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同输出目录 | 输出安全根目录 |
 | `MICU_INPUT_ROOT` | 空（不限制） | 可选输入图片白名单根；启用后阻止路径/符号链接逃逸 |

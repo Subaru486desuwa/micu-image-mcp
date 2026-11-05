@@ -10,7 +10,7 @@ use image::ImageFormat;
 
 use crate::config::{AppPaths, PathError, PathPolicy};
 
-use super::image::{format_name, inspect_image_file};
+use super::image::{format_name, has_gif_header, inspect_image_file};
 
 pub const MAX_INPUT_FILE_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_TOTAL_INPUT_BYTES: u64 = 8 * 1024 * 1024;
@@ -90,15 +90,15 @@ pub fn validate_input_image(
         .as_file_mut()
         .flush()
         .map_err(|error| format!("{label} 安全输入快照 flush 失败: {error}"))?;
+    if has_gif_header(snapshot.as_file()) {
+        return Err(unsupported_format_error(label, ImageFormat::Gif));
+    }
     let info = inspect_image_file(snapshot.as_file(), size_bytes, label)?;
     if !matches!(
         info.format,
         ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP
     ) {
-        return Err(format!(
-            "{label} 格式 {} 不受上游支持；请转换为 PNG、JPEG 或 WebP",
-            format_name(info.format)
-        ));
+        return Err(unsupported_format_error(label, info.format));
     }
     if info.dimensions.0 < 16 || info.dimensions.1 < 16 {
         return Err(format!(
@@ -153,6 +153,13 @@ pub fn validate_mask(mask: &ValidatedImage, image: &ValidatedImage) -> Result<()
         ));
     }
     Ok(())
+}
+
+fn unsupported_format_error(label: &str, format: ImageFormat) -> String {
+    format!(
+        "{label} 格式 {} 不受上游支持；请转换为 PNG、JPEG 或 WebP",
+        format_name(format)
+    )
 }
 
 fn open_input_file(

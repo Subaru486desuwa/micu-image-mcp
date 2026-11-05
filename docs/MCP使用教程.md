@@ -16,8 +16,8 @@
 
 生成的图片会**自动保存到本地磁盘**，返回结果中包含文件的绝对路径，方便你在 IDE 或文件管理器中打开。
 
-当前手动维护 `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
-历史质量线路 `gpt-image-2-openai`。带后缀的旧 Flare/Sunburst 配置与会话继续可用，优先请求无后缀 ID；只有明确的模型拒绝才补试带后缀 ID。
+当前手动维护 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
+历史质量线路 `gpt-image-2-openai`。带后缀的旧 2.5 Flare/Sunburst 配置与会话继续可用，优先请求无后缀 ID；只有明确的模型拒绝才补试带后缀 ID。2.6 没有后缀别名，被上游拒绝时直接报错。
 Grok 生图已永久移除。
 
 ---
@@ -88,7 +88,7 @@ Desktop 的 Code 模式使用 `~/.claude.json`；普通 Chat 模式使用独立�
 | `MICU_BASEURL` | `https://www.micuapi.ai` | 米醋 API 地址 |
 | `MICU_KEYCHAIN_SERVICE` | `micu-image-mcp` | 系统安全凭据 service；通常无需手动设置 |
 | `MICU_KEYCHAIN_ACCOUNT` | `image2-api-key` | 系统安全凭据 account；通常无需手动设置 |
-| `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 Flare，编辑类默认 Sunburst |
+| `MICU_MODEL` | 空 | 可选全局覆盖；未设置时生成默认 2.6 Flare，编辑类默认 2.6 Sunburst |
 | `MICU_SAVE_DIR` | `~/Pictures/micu-out` | 默认输出目录 |
 | `MICU_SAVE_DIR_ROOT` | 同 `MICU_SAVE_DIR` | 安全根目录，所有输出必须在其下 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取系统 shell 代理 |
@@ -236,8 +236,9 @@ flowchart TD
 | `prompt` | string | ✅ | 图像描述，1–2000 字符 |
 | `size` | string \| null | | `"WxH"` 格式，如 `"1024x1024"`；留空则从 prompt 关键字自动推断 |
 | `n` | int | | 生成张数 1–10；1K 可多张并发，≥2K 强制 n=1 |
-| `model` | string \| null | | MCP 手动维护 Flare / Sunburst / Image2 / 历史质量线路；默认 Flare。目录见 `server_info.available_models`，实际授权与可用性由上游决定 |
-| `quality` | string \| null | | 当前主站实测：Flare/Sunburst 用 `low` / `auto` / 留空；旧 Image2 也接受 `medium` / `high`。完整选项与线路支持见 `server_info.size_rules` |
+| `model` | string \| null | | MCP 手动维护 2.6 / 2.5 Flare、Sunburst，Image2 与历史质量线路；默认 `gpt-image-2.6-flare`。目录见 `server_info.available_models`，实际授权与可用性由上游决定 |
+| `quality` | string \| null | | 2026-10-09 主站实测：2.5 Flare/Sunburst 用 `low` / `auto` / 留空，2.6 已观察到 `low` 与留空可用，其余档位未验证；旧 Image2 也接受 `medium` / `high`。完整选项与线路支持见 `server_info.size_rules` |
+| `output_format` | string \| null | | 可选 `png` / `jpeg` / `webp`；`gif` 仅 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`，2026-11-05 已在线验证生成与编辑。动图由 prompt 触发，要 GIF 时必须在 `prompt` 中明确要求动画，只传 `gif` 可能返回静态图。尺寸由上游决定，通常约 414×414，不保证遵循 `size`；帧数、帧间隔和循环同样由上游决定。省略时不发送。实际格式见 `saved[].format`，GIF 另返回 `saved[].frame_count` |
 | `save_dir` | string \| null | | 输出目录，必须在 `MICU_SAVE_DIR_ROOT` 下 |
 | `basename` | string \| null | | 文件名前缀，仅允许 `[A-Za-z0-9_\-.]` |
 | `api_key` | string \| null | | 临时覆盖环境变量中的 Key |
@@ -301,6 +302,7 @@ image_generate(
 | `mask_path` | string \| null | | 可选 alpha mask PNG；透明区域 = 编辑区，不透明 = 保留 |
 | `size` | string | | 输出尺寸，默认 `1024x1024` |
 | `model` | string \| null | | 模型，≥2K 自动切 `gpt-image-2-openai` |
+| `output_format` | string \| null | | 同 `image_generate`；省略时不发送 |
 | `save_dir` | string \| null | | 输出目录 |
 | `basename` | string \| null | | 文件名前缀 |
 | `api_key` | string \| null | | 临时覆盖 Key |
@@ -483,7 +485,7 @@ image_edit(
 
 `server_info.available_models` 与图像工具共用手动目录，不自动查询 `/v1/models`；`model_catalog.source` 为 `manual`。新增模型 ID 需手动更新目录。这个目录表示 MCP 支持的名称，不证明当前凭据、上游渠道或每个模型的编辑能力。
 
-Flare/Sunburst 的带后缀旧名称先解析为无后缀名称。上游明确返回模型不存在、不支持或该模型无可用渠道时，才切到带 `-openai` 的兼容 ID 补试一次。该补试仅限 Flare/Sunburst；标准 `gpt-image-2` 与历史质量线路 `gpt-image-2-openai` 不是别名。显式质量线路以及大尺寸自动质量路由保持不变。
+2.5 Flare/Sunburst 的带后缀旧名称先解析为无后缀名称。上游明确返回模型不存在、不支持或该模型无可用渠道时，才切到带 `-openai` 的兼容 ID 补试一次。该补试仅限 2.5 Flare/Sunburst，2.6 不补试；标准 `gpt-image-2` 与历史质量线路 `gpt-image-2-openai` 不是别名。显式质量线路以及大尺寸自动质量路由保持不变。
 
 网络、超时、认证、限流、余额、审核、参数或普通服务错误不触发模型切换；成功响应后的解析、下载、落盘失败也不触发。`notes` 会说明发生的模型补试，结果和持久会话记录实际模型 ID。
 
@@ -512,7 +514,7 @@ Flare/Sunburst 的带后缀旧名称先解析为无后缀名称。上游明确�
 | `actual_size` | 从图片 header 读出的真实像素（如 `"1024x1024"`） |
 | `actual_megapixels` | 实际百万像素 |
 
-> **注意**：米醋后端可能重映射自定义尺寸；始终以 `saved.actual_size` 为准。需要精确像素时优先用 `gpt-image-2-openai`。
+> **注意**：米醋后端可能重映射自定义尺寸；始终以 `saved.actual_size` 为准。需要精确像素的静态图优先用 `gpt-image-2-openai`；该线路不支持 GIF，目前没有能保证 GIF 尺寸的线路。
 
 ---
 

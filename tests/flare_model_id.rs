@@ -8,9 +8,10 @@ use std::{fs, path::Path};
 
 const FLARE: &str = "gpt-image-2.5-flare";
 const LEGACY_FLARE: &str = "gpt-image-2.5-flare-openai";
+const DEFAULT_FLARE: &str = "gpt-image-2.6-flare";
 
 #[test]
-fn default_and_explicit_flare_ids_send_the_current_model() -> Result<()> {
+fn explicit_flare_ids_send_the_current_model() -> Result<()> {
     let root = tempfile::tempdir()?;
     let api = MockMicu::new()?;
     let mut server = Session::new(
@@ -19,7 +20,7 @@ fn default_and_explicit_flare_ids_send_the_current_model() -> Result<()> {
         &api.env(),
     )?;
     server.initialize()?;
-    for model in [None, Some(FLARE), Some(LEGACY_FLARE)] {
+    for model in [FLARE, LEGACY_FLARE] {
         for size in ["1024x1024", "2048x1152", "3840x2160"] {
             let result = server.call(
                 "image_generate",
@@ -36,10 +37,10 @@ fn default_and_explicit_flare_ids_send_the_current_model() -> Result<()> {
         }
     }
     let info = server.call("server_info", json!({}))?;
-    assert_eq!(info["default_model"], FLARE);
+    assert_eq!(info["default_model"], DEFAULT_FLARE);
     assert_eq!(
         info["default_models"]["image_edit"],
-        "gpt-image-2.5-sunburst"
+        "gpt-image-2.6-sunburst"
     );
     assert!(
         info["available_models"]

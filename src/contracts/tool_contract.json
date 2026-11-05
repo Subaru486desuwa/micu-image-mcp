@@ -4,7 +4,7 @@
   "result": {
     "tools": [
       {
-        "description": "Create one NEW, independent image task from text. ALWAYS pass session_id=\"new\" on its first generation and save the returned session.id for later edits. A new subject or another independent picture in the same chat MUST start a new session; do not copy prior-image constraints. Example: cat parachuting → new A; replace its parachute → image_edit(A); generate a beach portrait → new B; return to the cat → image_edit(A). Do not show IDs to the user. Defaults: gpt-image-2.5-flare, n=1; session mode requires n=1. The -openai aliases remain accepted. IDs are maintained manually; explicit Flare/Sunburst model-ID rejection triggers one -openai compatibility attempt. Use low/auto/omitted quality for Image2.5; call server_info for dated quality observations. Size must be valid 16-aligned WxH; call server_info for limits/models. Save paths must stay within MICU_SAVE_DIR_ROOT; basename is a filename stem. Returns saved[] and session{id,revision,context}. Explicit existing session_id remains supported for continuing an image, but prefer image_edit for modifications.",
+        "description": "Create one NEW, independent image task from text. ALWAYS pass session_id=\"new\" on its first generation and save the returned session.id for later edits. A new subject or another independent picture in the same chat MUST start a new session; do not copy prior-image constraints. Example: cat parachuting → new A; replace its parachute → image_edit(A); generate a beach portrait → new B; return to the cat → image_edit(A). Do not show IDs to the user. Defaults: gpt-image-2.6-flare, n=1; session mode requires n=1. The 2.5 -openai aliases remain accepted. IDs are maintained manually; explicit 2.5 Flare/Sunburst model-ID rejection triggers one -openai compatibility attempt; 2.6 has no alias and never falls back. Use low/auto/omitted quality for Image2.5; call server_info for dated quality observations. output_format is optional; gif needs Image2.6 and saved[] reports format/frame_count. Size must be valid 16-aligned WxH; call server_info for limits/models. Save paths must stay within MICU_SAVE_DIR_ROOT; basename is a filename stem. Returns saved[] and session{id,revision,context}. Explicit existing session_id remains supported for continuing an image, but prefer image_edit for modifications.",
         "inputSchema": {
           "properties": {
             "api_key": {
@@ -64,6 +64,19 @@
               "default": null,
               "title": "Quality",
               "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。已有会话省略时继承所选版本。"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format",
+              "description": "可选输出格式：png/jpeg/webp；gif 仅 gpt-image-2.6-flare 与 gpt-image-2.6-sunburst。省略时不发送此字段。实际格式以 saved[].format 为准。动图由 prompt 触发：要 GIF 时必须在 prompt 中明确要求动画，只传 gif 可能返回静态图。GIF 尺寸由上游决定，通常约 414×414，不保证遵循 size；帧数、帧间隔和循环同样由上游决定。"
             },
             "save_dir": {
               "anyOf": [
@@ -153,7 +166,7 @@
         }
       },
       {
-        "description": "Modify an EXISTING image task. If the image already has a returned session.id, ALWAYS reuse that ID, including when returning to an earlier picture after creating another image. The selected session supplies the previous output image, successful branch history and constraints; image_path can be omitted. For an external image without a session, pass image_path and session_id=\"new\". Optional parent_revision selects a branch; defaults use latest successful revision. context strings replace named constraints; null removes them. Update the constraint key when changing a lasting attribute. Current prompt wins; failures do not advance revisions. Omitted model/size/quality inherit. Mask is PNG, input-sized: transparent pixels are edited, opaque retained; mask applies only this turn. Default new edits: Sunburst, quality low/auto/omitted. Input formats/roots/4MiB file limit remain enforced. Returns saved{} and session. IDs are internal; ask only if the referenced image is ambiguous.",
+        "description": "Modify an EXISTING image task. If the image already has a returned session.id, ALWAYS reuse that ID, including when returning to an earlier picture after creating another image. The selected session supplies the previous output image, successful branch history and constraints; image_path can be omitted. For an external image without a session, pass image_path and session_id=\"new\". Optional parent_revision selects a branch; defaults use latest successful revision. context strings replace named constraints; null removes them. Update the constraint key when changing a lasting attribute. Current prompt wins; failures do not advance revisions. Omitted model/size/quality inherit. Mask is PNG, input-sized: transparent pixels are edited, opaque retained; mask applies only this turn. Default new edits: gpt-image-2.6-sunburst; Image2.5 quality low/auto/omitted. A GIF revision cannot be edited: pick a non-GIF parent_revision or start session_id=new from a converted image. Input formats/roots/4MiB file limit remain enforced. Returns saved{} and session. IDs are internal; ask only if the referenced image is ambiguous.",
         "inputSchema": {
           "properties": {
             "api_key": {
@@ -233,6 +246,19 @@
               "default": null,
               "title": "Quality",
               "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。已有会话省略时继承所选版本。"
+            },
+            "output_format": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Format",
+              "description": "可选输出格式：png/jpeg/webp；gif 仅 gpt-image-2.6-flare 与 gpt-image-2.6-sunburst。省略时不发送此字段。实际格式以 saved[].format 为准。动图由 prompt 触发：要 GIF 时必须在 prompt 中明确要求动画，只传 gif 可能返回静态图。GIF 尺寸由上游决定，通常约 414×414，不保证遵循 size；帧数、帧间隔和循环同样由上游决定。"
             },
             "save_dir": {
               "anyOf": [
@@ -322,7 +348,7 @@
         }
       },
       {
-        "description": "Apply one instruction independently to 2-10 images (N inputs → N outputs). This is not a joint multi-reference composition. Default Sunburst; current Image2.5 quality low/auto/omitted. Standard 1K batches have at most 5 concurrent requests; quality/large-size requests follow serial policy. Each input is PNG/JPEG/WebP and ≤4MiB; path and output-root checks apply. For successive modifications to a single remembered picture, use image_edit with its session.id instead. Returns per-image saved/error results.",
+        "description": "Apply one instruction independently to 2-10 images (N inputs → N outputs). This is not a joint multi-reference composition. Default gpt-image-2.6-sunburst; Image2.5 quality low/auto/omitted. Standard 1K batches have at most 5 concurrent requests; quality/large-size requests follow serial policy. Each input is PNG/JPEG/WebP and ≤4MiB; path and output-root checks apply. For successive modifications to a single remembered picture, use image_edit with its session.id instead. Returns per-image saved/error results.",
         "inputSchema": {
           "properties": {
             "api_key": {
@@ -406,7 +432,7 @@
         }
       },
       {
-        "description": "Combine 2-10 reference images into ONE new image (N inputs → 1 output). Use for shared style, subject or composition references, not independent batch editing. Default Sunburst; current Image2.5 quality low/auto/omitted. Inputs PNG/JPEG/WebP, each ≤4MiB and total ≤8MiB. Requests use edits/image[] and supported 1K/2K/4K sizes; validate actual returned pixels. Output paths stay inside MICU_SAVE_DIR_ROOT. This tool does not maintain an editing session; to refine its output, use image_edit(image_path=saved.path, session_id=\"new\").",
+        "description": "Combine 2-10 reference images into ONE new image (N inputs → 1 output). Use for shared style, subject or composition references, not independent batch editing. Default gpt-image-2.6-sunburst; Image2.5 quality low/auto/omitted. Inputs PNG/JPEG/WebP, each ≤4MiB and total ≤8MiB. Requests use edits/image[] and supported 1K/2K/4K sizes; validate actual returned pixels. Output paths stay inside MICU_SAVE_DIR_ROOT. This tool does not maintain an editing session; to refine its output, use image_edit(image_path=saved.path, session_id=\"new\").",
         "inputSchema": {
           "properties": {
             "api_key": {

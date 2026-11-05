@@ -4,7 +4,7 @@ use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
-use crate::domain::routing::{FLARE_MODEL, SUNBURST_MODEL, canonical_model};
+use crate::domain::routing::{FLARE_2_6_MODEL, SUNBURST_2_6_MODEL, canonical_model};
 
 mod env;
 mod paths;
@@ -154,8 +154,8 @@ impl Config {
                 .cloned()
                 .unwrap_or_default()
                 .into(),
-            default_model: model_override.unwrap_or(FLARE_MODEL).to_owned(),
-            default_edit_model: model_override.unwrap_or(SUNBURST_MODEL).to_owned(),
+            default_model: model_override.unwrap_or(FLARE_2_6_MODEL).to_owned(),
+            default_edit_model: model_override.unwrap_or(SUNBURST_2_6_MODEL).to_owned(),
             use_shell_proxy: env_truthy(environment.get("MICU_USE_SHELL_PROXY"), false),
             response_format,
             response_formats_to_try,
@@ -190,7 +190,7 @@ pub fn is_safe_base_url(url: &Url) -> bool {
 }
 
 pub fn default_model() -> &'static str {
-    FLARE_MODEL
+    FLARE_2_6_MODEL
 }
 
 fn env_truthy(value: Option<&String>, default: bool) -> bool {
@@ -223,8 +223,8 @@ mod tests {
     fn config_freezes_current_environment_and_redacts_secrets() {
         let config = Config::from_map(&base_env()).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(config.base_url.as_str(), "https://www.micuapi.ai/");
-        assert_eq!(config.default_model, FLARE_MODEL);
-        assert_eq!(config.default_edit_model, SUNBURST_MODEL);
+        assert_eq!(config.default_model, FLARE_2_6_MODEL);
+        assert_eq!(config.default_edit_model, SUNBURST_2_6_MODEL);
         assert_eq!(config.api_key.expose_secret(), "sk-super-secret");
         assert!(!format!("{config:?}").contains("sk-super-secret"));
         assert_eq!(config.response_formats_to_try, ["url", "b64_json"]);

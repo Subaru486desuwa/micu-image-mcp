@@ -133,6 +133,7 @@ impl ToolEngine {
                         size: &size,
                         quality: quality.as_deref(),
                         response_format,
+                        output_format: None,
                         images: &image_fields,
                         mask: None,
                     },
@@ -185,7 +186,7 @@ impl ToolEngine {
             );
             return Ok(Value::Object(output));
         };
-        if let Some(note) = size_note(&size, Some(saved.actual_size)) {
+        if let Some(note) = size_note(&size, Some(saved.actual_size), None, saved.format) {
             push_note_once(&mut notes, note);
         }
         let size_honored = parse_size(&size) == Some(saved.actual_size);

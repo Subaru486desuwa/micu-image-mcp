@@ -6,8 +6,16 @@ pub const FLARE_MODEL: &str = "gpt-image-2.5-flare";
 pub const LEGACY_FLARE_MODEL: &str = "gpt-image-2.5-flare-openai";
 pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
 pub const LEGACY_SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst-openai";
-pub const SUPPORTED_IMAGE_MODELS: [&str; 4] =
-    [STANDARD_MODEL, QUALITY_MODEL, FLARE_MODEL, SUNBURST_MODEL];
+pub const FLARE_2_6_MODEL: &str = "gpt-image-2.6-flare";
+pub const SUNBURST_2_6_MODEL: &str = "gpt-image-2.6-sunburst";
+pub const SUPPORTED_IMAGE_MODELS: [&str; 6] = [
+    STANDARD_MODEL,
+    QUALITY_MODEL,
+    FLARE_MODEL,
+    SUNBURST_MODEL,
+    FLARE_2_6_MODEL,
+    SUNBURST_2_6_MODEL,
+];
 
 pub fn canonical_model(model: &str) -> &str {
     match model {
@@ -29,6 +37,9 @@ pub fn suffix_fallback(model: &str) -> Option<&'static str> {
 
 const BASE_QUALITY_VALUES: [&str; 4] = ["auto", "high", "low", "medium"];
 const EXTENDED_QUALITY_VALUES: [&str; 6] = ["auto", "high", "low", "max", "medium", "xhigh"];
+const GIF_FORMAT: &str = "gif";
+const OUTPUT_FORMAT_VALUES: [&str; 3] = ["jpeg", "png", "webp"];
+const ANIMATED_OUTPUT_FORMAT_VALUES: [&str; 4] = ["gif", "jpeg", "png", "webp"];
 const STANDARD_PARALLEL_LIMIT: usize = 5;
 
 pub fn is_supported_model(model: &str) -> bool {
@@ -38,8 +49,18 @@ pub fn is_supported_model(model: &str) -> bool {
 /// Accepted `quality` values, sorted as the public server_info contract lists them.
 pub fn quality_values(model: &str) -> &'static [&'static str] {
     match canonical_model(model) {
-        FLARE_MODEL | SUNBURST_MODEL => &EXTENDED_QUALITY_VALUES,
+        FLARE_MODEL | SUNBURST_MODEL | FLARE_2_6_MODEL | SUNBURST_2_6_MODEL => {
+            &EXTENDED_QUALITY_VALUES
+        }
         _ => &BASE_QUALITY_VALUES,
+    }
+}
+
+/// Accepted `output_format` values, sorted as the public server_info contract lists them.
+pub fn output_format_values(model: &str) -> &'static [&'static str] {
+    match canonical_model(model) {
+        FLARE_2_6_MODEL | SUNBURST_2_6_MODEL => &ANIMATED_OUTPUT_FORMAT_VALUES,
+        _ => &OUTPUT_FORMAT_VALUES,
     }
 }
 
@@ -118,23 +139,11 @@ impl ModelRoute {
     }
 
     pub fn validate_quality(&self, quality: Option<&str>) -> Result<Option<String>, String> {
-        let Some(raw) = quality else {
-            return Ok(None);
-        };
-        let cleaned = raw.trim().to_ascii_lowercase();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let allowed = quality_values(&self.model);
-        if allowed.contains(&cleaned.as_str()) {
-            Ok(Some(cleaned))
-        } else {
-            Err(format!(
-                "quality 不支持 {}；可选 {}",
-                python_string_repr(raw),
-                allowed.join(" / ")
-            ))
-        }
+        validate_choice("quality", quality, quality_values(&self.model))
+    }
+
+    pub fn validate_output_format(&self, format: Option<&str>) -> Result<Option<String>, String> {
+        validate_choice("output_format", format, output_format_values(&self.model))
     }
 
     /// Only the two legacy routes negotiate response format. Modern Images
@@ -149,6 +158,41 @@ impl ModelRoute {
             .take(if explicit { configured.len() } else { 1 })
             .map(move |format| explicit.then_some(*format))
     }
+}
+
+fn validate_choice(
+    field: &str,
+    value: Option<&str>,
+    allowed: &[&str],
+) -> Result<Option<String>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let cleaned = raw.trim().to_ascii_lowercase();
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+    if allowed.contains(&cleaned.as_str()) {
+        Ok(Some(cleaned))
+    } else {
+        Err(format!(
+            "{field} 不支持 {}；可选 {}",
+            python_string_repr(raw),
+            allowed.join(" / ")
+        ))
+    }
+}
+
+pub fn output_format_note(requested: Option<&str>, actual: &str) -> Option<String> {
+    let requested = requested?;
+    (requested != actual).then(|| {
+        let hint = if requested == GIF_FORMAT {
+            "；动图需要在 prompt 中明确要求动画"
+        } else {
+            ""
+        };
+        format!("⚠ 请求 output_format={requested}，实际返回 {actual}；以 saved[].format 为准{hint}")
+    })
 }
 
 pub fn infer_size_from_prompt(prompt: &str) -> Option<(String, String)> {
@@ -271,22 +315,42 @@ pub fn infer_size_from_prompt(prompt: &str) -> Option<(String, String)> {
     None
 }
 
-pub fn size_note(requested: &str, actual: Option<(u32, u32)>) -> Option<String> {
+/// A returned GIF gets a neutral note because the upstream service picks its size.
+/// A static answer to a GIF request also skips the exact-pixel route, which has no GIF.
+pub fn size_note(
+    requested: &str,
+    actual: Option<(u32, u32)>,
+    requested_format: Option<&str>,
+    actual_format: &str,
+) -> Option<String> {
     let (requested_width, requested_height) = parse_size(requested)?;
     let (actual_width, actual_height) = actual?;
     if (requested_width, requested_height) == (actual_width, actual_height) {
         return None;
     }
+    if actual_format == GIF_FORMAT {
+        return Some(format!(
+            "GIF 实际 {actual_width}×{actual_height}：尺寸由上游决定，通常约 414×414，不保证遵循 size；以 saved[].actual_size 为准。"
+        ));
+    }
     let requested_megapixels =
         f64::from(requested_width) * f64::from(requested_height) / 1_000_000.0;
     let actual_megapixels = f64::from(actual_width) * f64::from(actual_height) / 1_000_000.0;
+    let guidance = if requested_format == Some(GIF_FORMAT) {
+        "涉及 GIF 时尺寸和宽高比不保证遵循请求，请以 saved[].actual_size 为准。"
+    } else {
+        "米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+    };
     Some(format!(
-        "⚠ 实际 {actual_width}×{actual_height} ({actual_megapixels:.2}MP) ≠ 请求 {requested_width}×{requested_height} ({requested_megapixels:.2}MP)；米醋后端可能重映射自定义尺寸。需要精确像素时请使用 gpt-image-2-openai，并核对 saved.actual_size。"
+        "⚠ 实际 {actual_width}×{actual_height} ({actual_megapixels:.2}MP) ≠ 请求 {requested_width}×{requested_height} ({requested_megapixels:.2}MP)；{guidance}"
     ))
 }
 
 pub fn is_quality_model(model: &str) -> bool {
-    matches!(canonical_model(model), QUALITY_MODEL | SUNBURST_MODEL)
+    matches!(
+        canonical_model(model),
+        QUALITY_MODEL | SUNBURST_MODEL | SUNBURST_2_6_MODEL
+    )
 }
 
 pub fn is_large_tier(tier: SizeTier) -> bool {
@@ -374,6 +438,54 @@ mod tests {
     }
 
     #[test]
+    fn output_format_is_optional_and_gif_is_limited_to_image_2_6() {
+        for model in [FLARE_2_6_MODEL, SUNBURST_2_6_MODEL] {
+            let route = route(model, "1024x1024");
+            assert_eq!(route.validate_output_format(None), Ok(None));
+            assert_eq!(route.validate_output_format(Some("  ")), Ok(None));
+            assert_eq!(
+                route.validate_output_format(Some(" GIF ")),
+                Ok(Some("gif".into()))
+            );
+        }
+        for model in [
+            STANDARD_MODEL,
+            QUALITY_MODEL,
+            FLARE_MODEL,
+            LEGACY_SUNBURST_MODEL,
+        ] {
+            let route = route(model, "1024x1024");
+            assert_eq!(
+                route.validate_output_format(Some("webp")),
+                Ok(Some("webp".into()))
+            );
+            assert!(
+                route
+                    .validate_output_format(Some("gif"))
+                    .is_err_and(|error| error.contains("output_format 不支持 'gif'"))
+            );
+        }
+        assert!(
+            route(FLARE_2_6_MODEL, "1024x1024")
+                .validate_output_format(Some("jpg"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn output_format_note_only_reports_a_mismatch() {
+        assert_eq!(output_format_note(None, "png"), None);
+        assert_eq!(output_format_note(Some("gif"), "gif"), None);
+        assert!(
+            output_format_note(Some("gif"), "png")
+                .is_some_and(|note| note.contains("png") && note.contains("prompt"))
+        );
+        assert!(
+            output_format_note(Some("webp"), "png").is_some_and(|note| !note.contains("prompt"))
+        );
+    }
+
+    #[test]
     fn model_contract_is_exact() {
         for model in [
             STANDARD_MODEL,
@@ -382,10 +494,18 @@ mod tests {
             LEGACY_FLARE_MODEL,
             SUNBURST_MODEL,
             LEGACY_SUNBURST_MODEL,
+            FLARE_2_6_MODEL,
+            SUNBURST_2_6_MODEL,
         ] {
             assert!(is_supported_model(model), "{model}");
         }
-        for model in [" gpt-image-2 ", "GROK-imagine-image", "grok-imagine-image"] {
+        for model in [
+            " gpt-image-2 ",
+            "GROK-imagine-image",
+            "grok-imagine-image",
+            "gpt-image-2.6-flare-openai",
+            "gpt-image-2.6-sunburst-openai",
+        ] {
             assert!(!is_supported_model(model), "{model}");
         }
     }
@@ -407,6 +527,60 @@ mod tests {
             (STANDARD_MODEL, "3840x2160", QUALITY_MODEL, true, true, 1, 2),
             (QUALITY_MODEL, "1024x1024", QUALITY_MODEL, true, false, 1, 2),
             (QUALITY_MODEL, "2048x1152", QUALITY_MODEL, true, true, 1, 2),
+            (
+                FLARE_2_6_MODEL,
+                "1024x1024",
+                FLARE_2_6_MODEL,
+                false,
+                false,
+                5,
+                1,
+            ),
+            (
+                FLARE_2_6_MODEL,
+                "2048x1152",
+                FLARE_2_6_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
+            (
+                FLARE_2_6_MODEL,
+                "3840x2160",
+                FLARE_2_6_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
+            (
+                SUNBURST_2_6_MODEL,
+                "1024x1024",
+                SUNBURST_2_6_MODEL,
+                true,
+                false,
+                1,
+                1,
+            ),
+            (
+                SUNBURST_2_6_MODEL,
+                "2048x1152",
+                SUNBURST_2_6_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
+            (
+                SUNBURST_2_6_MODEL,
+                "3840x2160",
+                SUNBURST_2_6_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
             (FLARE_MODEL, "1024x1024", FLARE_MODEL, false, false, 5, 1),
             (FLARE_MODEL, "2048x1152", FLARE_MODEL, true, true, 1, 1),
             (FLARE_MODEL, "3840x2160", FLARE_MODEL, true, true, 1, 1),
@@ -586,10 +760,41 @@ mod tests {
 
     #[test]
     fn size_mismatch_note_is_stable() {
-        assert_eq!(size_note("1024x1024", Some((1024, 1024))), None);
-        let note = size_note("3840x2160", Some((2048, 1152)));
-        assert!(note.is_some_and(
-            |text| text.contains("实际 2048×1152") && text.contains("≠ 请求 3840×2160")
-        ));
+        assert_eq!(
+            size_note("1024x1024", Some((1024, 1024)), None, "png"),
+            None
+        );
+        for requested_format in [None, Some("png"), Some("webp")] {
+            let note = size_note("3840x2160", Some((2048, 1152)), requested_format, "png");
+            assert!(note.is_some_and(|text| text.contains("实际 2048×1152")
+                && text.contains("≠ 请求 3840×2160")
+                && text.contains(QUALITY_MODEL)));
+        }
+    }
+
+    #[test]
+    fn gif_size_note_never_recommends_a_route_without_gif() {
+        assert_eq!(
+            size_note("1024x1024", Some((1024, 1024)), Some("gif"), "gif"),
+            None
+        );
+        for (requested_format, actual_format) in [
+            (Some("gif"), "gif"),
+            (None, "gif"),
+            (Some("png"), "gif"),
+            (Some("gif"), "png"),
+        ] {
+            let note = size_note(
+                "1024x1024",
+                Some((410, 410)),
+                requested_format,
+                actual_format,
+            )
+            .unwrap_or_default();
+            assert!(note.contains("实际 410×410"), "{note}");
+            assert!(note.contains("GIF"), "{note}");
+            assert!(!note.contains(QUALITY_MODEL), "{note}");
+            assert_eq!(note.starts_with('⚠'), actual_format != "gif", "{note}");
+        }
     }
 }

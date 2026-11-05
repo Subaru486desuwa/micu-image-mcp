@@ -21,7 +21,7 @@ fn default_flare_uses_images_api_without_response_format() -> Result<()> {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].path, "/v1/images/generations");
     assert_eq!(result["ok"], true, "{result}");
-    assert_eq!(requests[0].fields["model"], "gpt-image-2.5-flare");
+    assert_eq!(requests[0].fields["model"], "gpt-image-2.6-flare");
     assert!(requests[0].fields.get("response_format").is_none());
     assert!(Path::new(result["saved"][0]["path"].as_str().unwrap()).is_file());
     Ok(())

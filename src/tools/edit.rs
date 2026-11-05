@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{ModelRoute, size_note},
+        routing::{ModelRoute, output_format_note, size_note},
         size::validate_size,
     },
     fs::input::validate_mask,
@@ -20,6 +20,14 @@ use super::{
     },
     edit_session::{EditSession, MAX_PROMPT_CHARS, Revision, sanitize_context},
 };
+
+const GIF_SESSION_INPUT_ERROR: &str = "所选会话版本是 GIF，不能作为编辑输入；用 parent_revision 选择非 GIF 版本，或转换为 PNG、JPEG、WebP 后用 session_id=new 开始新会话";
+
+fn is_gif_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
+}
 
 impl ToolEngine {
     pub async fn image_edit(&self, params: EditParams) -> Result<Value, ToolFailure> {
@@ -78,6 +86,10 @@ impl ToolEngine {
             Ok(quality) => quality,
             Err(error) => return Ok(validation_error(error)),
         };
+        let output_format = match route.validate_output_format(params.output_format.as_deref()) {
+            Ok(output_format) => output_format,
+            Err(error) => return Ok(validation_error(error)),
+        };
         let safe_stem = params
             .basename
             .as_deref()
@@ -95,6 +107,9 @@ impl ToolEngine {
             Ok(location) => location,
             Err(error) => return Ok(validation_error(error)),
         };
+        if parent.is_some_and(|parent| is_gif_path(&parent.output_path)) {
+            return Ok(validation_error(GIF_SESSION_INPUT_ERROR));
+        }
         let Some(image_path) = params
             .image_path
             .as_deref()
@@ -184,6 +199,7 @@ impl ToolEngine {
                         size: &size,
                         quality: quality.as_deref(),
                         response_format,
+                        output_format: output_format.as_deref(),
                         images: &images,
                         mask: mask.as_ref(),
                     },
@@ -239,7 +255,15 @@ impl ToolEngine {
             );
             return Ok(Value::Object(output));
         };
-        if let Some(note) = size_note(&size, Some(saved.actual_size)) {
+        if let Some(note) = size_note(
+            &size,
+            Some(saved.actual_size),
+            output_format.as_deref(),
+            saved.format,
+        ) {
+            push_note_once(&mut notes, note);
+        }
+        if let Some(note) = output_format_note(output_format.as_deref(), saved.format) {
             push_note_once(&mut notes, note);
         }
         let mut output = Map::new();
@@ -452,6 +476,7 @@ mod tests {
                 size: Some("1024x1024".into()),
                 model: None,
                 quality: Some("max".into()),
+                output_format: None,
                 save_dir: None,
                 basename: Some("edited".into()),
                 api_key: None,
@@ -466,7 +491,7 @@ mod tests {
         assert_eq!(
             provider.edits.lock().await.as_slice(),
             &[(
-                "gpt-image-2.5-sunburst".into(),
+                "gpt-image-2.6-sunburst".into(),
                 "1024x1024".into(),
                 Some("max".into()),
                 vec!["image".into()],
@@ -486,6 +511,7 @@ mod tests {
                 size: Some("3840x2160".into()),
                 model: Some("gpt-image-2".into()),
                 quality: None,
+                output_format: None,
                 save_dir: None,
                 basename: Some("high".into()),
                 api_key: None,
@@ -504,6 +530,7 @@ mod tests {
                 size: Some("1024x1024".into()),
                 model: None,
                 quality: None,
+                output_format: None,
                 save_dir: None,
                 basename: None,
                 api_key: None,
