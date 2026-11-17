@@ -364,10 +364,38 @@ impl ToolEngine {
                 output.insert("size_honored".into(), Value::Bool(false));
                 Ok(Value::Object(output))
             }
-            // Existing shape: a rejected or failed continuation keeps the single-image edit shape.
-            outcome @ (EditOutcome::Invalid(_) | EditOutcome::Failed { .. }) => {
-                outcome.into_edit_value()
+            EditOutcome::Failed {
+                model,
+                used_fallback,
+                size,
+                notes,
+                error,
+                session,
+            } => {
+                // The fields and key order of the edit failure shape come first; the list
+                // fields follow, so one caller can handle both kinds of failed generation.
+                // The error carries no `#N ` prefix and the continuation note is not added.
+                let mut output = Map::new();
+                output.insert("ok".into(), Value::Bool(false));
+                output.insert("model".into(), Value::String(model));
+                output.insert("used_fallback".into(), Value::Bool(used_fallback));
+                output.insert("size".into(), Value::String(size));
+                if let Some(session) = session {
+                    output.insert("session".into(), session);
+                }
+                output.insert("error".into(), Value::String(error.clone()));
+                output.insert(
+                    "notes".into(),
+                    Value::Array(notes.into_iter().map(Value::String).collect()),
+                );
+                output.insert("saved".into(), Value::Array(Vec::new()));
+                output.insert("requested_n".into(), Value::from(1));
+                output.insert("size_honored".into(), Value::Bool(false));
+                output.insert("errors".into(), Value::Array(vec![Value::String(error)]));
+                Ok(Value::Object(output))
             }
+            // Existing shape: a rejected continuation keeps the validation-error shape.
+            outcome @ EditOutcome::Invalid(_) => outcome.into_edit_value(),
         }
     }
 

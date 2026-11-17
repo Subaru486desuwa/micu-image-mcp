@@ -654,11 +654,11 @@ async fn continued_generation_success_keeps_list_shape_with_index_last() {
     );
 }
 
-// Existing defect, fixed later as a separate change: an upstream failure of a
-// continued generation returns the edit shape, without `saved`, `errors`,
-// `requested_n` or `size_honored`, and its error has no `#1 ` prefix.
+// A failed continued generation keeps every field and the key order of the edit
+// failure shape, then appends the list fields of `image_generate`. Its error
+// has no `#1 ` prefix, and the continuation note is not added.
 #[tokio::test]
-async fn continued_generation_upstream_failure_returns_edit_shape() {
+async fn continued_generation_upstream_failure_appends_list_fields_to_edit_shape() {
     let fixture = Fixture::new(scripted());
     let id = started_session(&fixture).await;
 
@@ -685,13 +685,38 @@ async fn continued_generation_upstream_failure_returns_edit_shape() {
             },
             "error": "HTTP 500: upstream exploded",
             "notes": [],
+            "saved": [],
+            "requested_n": 1,
+            "size_honored": false,
+            "errors": ["HTTP 500: upstream exploded"],
         }),
     );
     assert!(!fixture.revision_record(&id, 2).exists());
+
+    // The session did not advance: a retry continues from revision 1.
+    fixture
+        .provider
+        .enqueue(Reply::image(&gray_1024x1024_png()));
+    let retry = generate(
+        &fixture,
+        json!({"prompt": "换成夜晚", "session_id": id, "basename": "v2"}),
+    )
+    .await;
+    fixture.assert_public_json(
+        &retry["session"],
+        json!({
+            "id": "edit_<SESSION>",
+            "revision": 2,
+            "parent_revision": 1,
+            "input_path": "<TMP>/out/v1_1.png",
+            "context": {"style": "flat"},
+            "history_length": 2,
+        }),
+    );
 }
 
 #[tokio::test]
-async fn continued_generation_save_failure_returns_edit_shape() {
+async fn continued_generation_save_failure_appends_list_fields_to_edit_shape() {
     let fixture = Fixture::new(scripted());
     let id = started_session(&fixture).await;
 
@@ -715,6 +740,10 @@ async fn continued_generation_save_failure_returns_edit_shape() {
             },
             "error": "保存失败: 响应中未识别到图片",
             "notes": [],
+            "saved": [],
+            "requested_n": 1,
+            "size_honored": false,
+            "errors": ["保存失败: 响应中未识别到图片"],
         }),
     );
     assert_eq!(fixture.provider.calls().len(), 2);
