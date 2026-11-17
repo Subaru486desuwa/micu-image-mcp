@@ -6,6 +6,7 @@ mod batch;
 mod edit;
 mod generate;
 mod multi_reference;
+mod seedream;
 
 use std::{
     collections::BTreeMap,

@@ -90,6 +90,19 @@ impl ToolEngine {
             ))
         }
     }
+    /// `model_error` for the tools that send input images upstream.
+    fn edit_model_error(&self, requested: Option<&str>, key: Option<&SecretArg>) -> Option<String> {
+        let default = &self.config.default_edit_model;
+        self.model_error(requested, default, key).or_else(|| {
+            let model = crate::domain::routing::canonical_model(requested.unwrap_or(default));
+            (!crate::domain::routing::supports_edit(model)).then(|| {
+                format!(
+                    "模型 {model} 只支持 image_generate 文生图，不能用于编辑、批量编辑或多图参考；请显式传入 gpt-image 系列的 model"
+                )
+            })
+        })
+    }
+
     pub async fn catalog_server_info(&self) -> Result<serde_json::Value, ToolFailure> {
         self.server_info()
     }

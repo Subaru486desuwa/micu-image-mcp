@@ -8,13 +8,15 @@ pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
 pub const LEGACY_SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst-openai";
 pub const FLARE_2_6_MODEL: &str = "gpt-image-2.6-flare";
 pub const SUNBURST_2_6_MODEL: &str = "gpt-image-2.6-sunburst";
-pub const SUPPORTED_IMAGE_MODELS: [&str; 6] = [
+pub const SEEDREAM_5_5_MODEL: &str = "doubao-seedream-5-5-261028";
+pub const SUPPORTED_IMAGE_MODELS: [&str; 7] = [
     STANDARD_MODEL,
     QUALITY_MODEL,
     FLARE_MODEL,
     SUNBURST_MODEL,
     FLARE_2_6_MODEL,
     SUNBURST_2_6_MODEL,
+    SEEDREAM_5_5_MODEL,
 ];
 
 pub fn canonical_model(model: &str) -> &str {
@@ -40,10 +42,19 @@ const EXTENDED_QUALITY_VALUES: [&str; 6] = ["auto", "high", "low", "max", "mediu
 const GIF_FORMAT: &str = "gif";
 const OUTPUT_FORMAT_VALUES: [&str; 3] = ["jpeg", "png", "webp"];
 const ANIMATED_OUTPUT_FORMAT_VALUES: [&str; 4] = ["gif", "jpeg", "png", "webp"];
+const SEEDREAM_OUTPUT_FORMAT_VALUES: [&str; 2] = ["jpeg", "png"];
+/// Image area the upstream service accepts for Seedream, from its 400 answers on 2026-11-16.
+const SEEDREAM_PIXEL_RANGE: std::ops::RangeInclusive<u64> = 921_600..=4_624_220;
 const STANDARD_PARALLEL_LIMIT: usize = 5;
 
 pub fn is_supported_model(model: &str) -> bool {
     SUPPORTED_IMAGE_MODELS.contains(&canonical_model(model))
+}
+
+/// Seedream is text-to-image only: the upstream edits endpoint accepts it but
+/// ignores the input images, so sending an edit there bills an unrelated image.
+pub fn supports_edit(model: &str) -> bool {
+    canonical_model(model) != SEEDREAM_5_5_MODEL
 }
 
 /// Accepted `quality` values, sorted as the public server_info contract lists them.
@@ -52,6 +63,7 @@ pub fn quality_values(model: &str) -> &'static [&'static str] {
         FLARE_MODEL | SUNBURST_MODEL | FLARE_2_6_MODEL | SUNBURST_2_6_MODEL => {
             &EXTENDED_QUALITY_VALUES
         }
+        SEEDREAM_5_5_MODEL => &[],
         _ => &BASE_QUALITY_VALUES,
     }
 }
@@ -60,6 +72,7 @@ pub fn quality_values(model: &str) -> &'static [&'static str] {
 pub fn output_format_values(model: &str) -> &'static [&'static str] {
     match canonical_model(model) {
         FLARE_2_6_MODEL | SUNBURST_2_6_MODEL => &ANIMATED_OUTPUT_FORMAT_VALUES,
+        SEEDREAM_5_5_MODEL => &SEEDREAM_OUTPUT_FORMAT_VALUES,
         _ => &OUTPUT_FORMAT_VALUES,
     }
 }
@@ -108,8 +121,23 @@ impl ModelRoute {
         &self.model
     }
 
+    /// Seedream tops out near 2K and answers in seconds, so the 2K/4K policy
+    /// (one image per call, serialized behind the large-size lock) does not apply to it.
+    fn is_large(&self) -> bool {
+        is_large_tier(self.tier) && !self.is_seedream()
+    }
+
+    fn is_seedream(&self) -> bool {
+        self.model == SEEDREAM_5_5_MODEL
+    }
+
+    /// Seedream stamps a visible "AI生成" mark unless asked not to; other models have no such field.
+    pub fn watermark(&self) -> Option<bool> {
+        self.is_seedream().then_some(false)
+    }
+
     pub fn retry(&self) -> RetryOptions {
-        let big_size = is_large_tier(self.tier);
+        let big_size = self.is_large();
         RetryOptions {
             enabled: is_quality_model(&self.model) || big_size,
             big_size,
@@ -118,16 +146,26 @@ impl ModelRoute {
 
     /// Only standard ≤1K routes fan out; quality and ≥2K routes run one request at a time.
     pub fn parallel_limit(&self) -> usize {
-        if matches!(self.tier, SizeTier::Small | SizeTier::OneK) && !is_quality_model(&self.model) {
+        let fans_out = matches!(self.tier, SizeTier::Small | SizeTier::OneK) || self.is_seedream();
+        if fans_out && !is_quality_model(&self.model) {
             STANDARD_PARALLEL_LIMIT
         } else {
             1
         }
     }
 
+    /// Names the route in the note that reports a parallel generation.
+    pub fn parallel_label(&self) -> &'static str {
+        if self.is_seedream() {
+            "Seedream"
+        } else {
+            "1K + 标准线路"
+        }
+    }
+
     /// 2K/4K generations are limited to one image per call.
     pub fn cap_n(&self, requested: usize) -> (usize, Option<String>) {
-        if is_large_tier(self.tier) && requested > 1 {
+        if self.is_large() && requested > 1 {
             let note = format!(
                 "{} 强制 N=1，已忽略请求的 n={requested}",
                 tier_label(self.tier).to_ascii_uppercase()
@@ -138,8 +176,41 @@ impl ModelRoute {
         }
     }
 
+    /// Model limits narrower than the shared size rules; `size` is already validated.
+    pub fn size_error(&self, size: &str) -> Option<String> {
+        if !self.is_seedream() {
+            return None;
+        }
+        let (width, height) = parse_size(size)?;
+        let area = u64::from(width) * u64::from(height);
+        (!SEEDREAM_PIXEL_RANGE.contains(&area)).then(|| {
+            format!(
+                "模型 {} 的总像素必须在 [921,600, 4,624,220] 范围内（如 1280x720、2048x2048、2560x1440）；{size} 超出范围",
+                self.model
+            )
+        })
+    }
+
+    /// A model without a `quality` parameter accepts any value and sends none.
     pub fn validate_quality(&self, quality: Option<&str>) -> Result<Option<String>, String> {
-        validate_choice("quality", quality, quality_values(&self.model))
+        let allowed = quality_values(&self.model);
+        if allowed.is_empty() {
+            return Ok(None);
+        }
+        validate_choice("quality", quality, allowed)
+    }
+
+    /// Tells the caller that its `quality` was not sent.
+    pub fn dropped_quality_note(&self, quality: Option<&str>) -> Option<String> {
+        let quality = quality
+            .map(str::trim)
+            .filter(|quality| !quality.is_empty())?;
+        quality_values(&self.model).is_empty().then(|| {
+            format!(
+                "模型 {} 没有 quality 参数，已忽略 quality={quality}",
+                self.model
+            )
+        })
     }
 
     pub fn validate_output_format(&self, format: Option<&str>) -> Result<Option<String>, String> {
@@ -496,6 +567,7 @@ mod tests {
             LEGACY_SUNBURST_MODEL,
             FLARE_2_6_MODEL,
             SUNBURST_2_6_MODEL,
+            SEEDREAM_5_5_MODEL,
         ] {
             assert!(is_supported_model(model), "{model}");
         }
@@ -505,6 +577,8 @@ mod tests {
             "grok-imagine-image",
             "gpt-image-2.6-flare-openai",
             "gpt-image-2.6-sunburst-openai",
+            "doubao-seedream-5-5",
+            "doubao-seed-2-1-pro-260915",
         ] {
             assert!(!is_supported_model(model), "{model}");
         }
@@ -620,6 +694,24 @@ mod tests {
                 1,
                 1,
             ),
+            (
+                SEEDREAM_5_5_MODEL,
+                "1024x1024",
+                SEEDREAM_5_5_MODEL,
+                false,
+                false,
+                5,
+                1,
+            ),
+            (
+                SEEDREAM_5_5_MODEL,
+                "2048x2048",
+                SEEDREAM_5_5_MODEL,
+                false,
+                false,
+                5,
+                1,
+            ),
         ];
         let configured = ["url", "b64_json"];
         for (model, size, effective, enabled, big_size, parallel, formats) in table {
@@ -684,6 +776,90 @@ mod tests {
                 .validate_quality(Some("xhigh"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn seedream_has_no_quality_and_only_static_png_or_jpeg() {
+        let route = route(SEEDREAM_5_5_MODEL, "1024x1024");
+        assert_eq!(route.validate_quality(None), Ok(None));
+        assert_eq!(route.validate_quality(Some("  ")), Ok(None));
+        assert_eq!(route.validate_quality(Some("auto")), Ok(None));
+        assert_eq!(route.dropped_quality_note(None), None);
+        assert_eq!(route.dropped_quality_note(Some("  ")), None);
+        assert_eq!(
+            route.dropped_quality_note(Some(" Auto ")),
+            Some("模型 doubao-seedream-5-5-261028 没有 quality 参数，已忽略 quality=Auto".into())
+        );
+        let flare = self::route(FLARE_2_6_MODEL, "1024x1024");
+        assert_eq!(flare.dropped_quality_note(Some("high")), None);
+        assert_eq!(
+            route.validate_output_format(Some("JPEG")),
+            Ok(Some("jpeg".into()))
+        );
+        assert_eq!(
+            route.validate_output_format(Some("gif")),
+            Err("output_format 不支持 'gif'；可选 jpeg / png".into())
+        );
+    }
+
+    #[test]
+    fn seedream_pixel_range_is_checked_before_any_request() {
+        for size in [
+            "1280x720",
+            "1024x1024",
+            "2048x2048",
+            "2560x1440",
+            "2880x1600",
+        ] {
+            assert_eq!(
+                route(SEEDREAM_5_5_MODEL, size).size_error(size),
+                None,
+                "{size}"
+            );
+        }
+        assert_eq!(
+            route(SEEDREAM_5_5_MODEL, "1024x640").size_error("1024x640"),
+            Some(
+                "模型 doubao-seedream-5-5-261028 的总像素必须在 [921,600, 4,624,220] 范围内（如 1280x720、2048x2048、2560x1440）；1024x640 超出范围"
+                    .into()
+            )
+        );
+        assert!(
+            route(SEEDREAM_5_5_MODEL, "3840x2160")
+                .size_error("3840x2160")
+                .is_some()
+        );
+        assert_eq!(
+            route(FLARE_2_6_MODEL, "3840x2160").size_error("3840x2160"),
+            None
+        );
+        assert_eq!(
+            route(STANDARD_MODEL, "1024x640").size_error("1024x640"),
+            None
+        );
+    }
+
+    #[test]
+    fn seedream_turns_the_watermark_off_and_ignores_the_large_size_policy() {
+        let two_k = route(SEEDREAM_5_5_MODEL, "2048x2048");
+        assert_eq!(two_k.watermark(), Some(false));
+        assert_eq!(two_k.cap_n(4), (4, None));
+        assert_eq!(two_k.parallel_label(), "Seedream");
+        let flare = route(FLARE_2_6_MODEL, "1024x1024");
+        assert_eq!(flare.watermark(), None);
+        assert_eq!(flare.parallel_label(), "1K + 标准线路");
+    }
+
+    #[test]
+    fn only_seedream_is_limited_to_generation() {
+        assert!(!supports_edit(SEEDREAM_5_5_MODEL));
+        for model in SUPPORTED_IMAGE_MODELS
+            .into_iter()
+            .filter(|model| *model != SEEDREAM_5_5_MODEL)
+            .chain([LEGACY_FLARE_MODEL, LEGACY_SUNBURST_MODEL])
+        {
+            assert!(supports_edit(model), "{model}");
+        }
     }
 
     #[test]

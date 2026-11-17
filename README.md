@@ -68,8 +68,10 @@ Cursor、Claude Code 和 Codex 的配置、工具选择，以及 Clash/Surge fak
 | `gpt-image-2.5-sunburst` | 上一代 Sunburst，需显式选择 |
 | `gpt-image-2` | 标准线路；2K/4K 自动切换到 `gpt-image-2-openai` |
 | `gpt-image-2-openai` | 历史质量线路 |
+| `doubao-seedream-5-5-261028` | Seedream 文生图，需显式选择；仅用于 `image_generate` |
 
 - **手动目录**：MCP 不请求 `/v1/models`。`server_info` 的 `available_models` 是受支持的模型列表，不保证当前凭据或上游线路可用。新增模型 ID 需要手动更新目录，默认选择不会随网络目录变化而切换。Grok 生图已永久移除。
+- **Seedream**：只做文生图。请求固定关闭上游默认的「AI生成」水印；没有 `quality` 参数，传入会被忽略并在 `notes` 中说明；`output_format` 仅 `png` / `jpeg`；总像素须在 921,600 到 4,624,220 之间（最高约 2K，不支持 4K），任意尺寸 `n>1` 最多 5 并发。上游的编辑接口会忽略输入图，所以编辑、批量编辑和多图参考拒绝该模型；编辑由它开始的会话时，需显式传入可编辑的 `model`。
 - **旧 ID 兼容**：带 `-openai` 后缀的 2.5 Flare/Sunburst 配置和图片会话继续可用，先请求无后缀 ID；只有上游明确返回模型不存在、不支持或无可用渠道时，才用带后缀 ID 补试一次。2.6 没有后缀别名，被上游拒绝时直接返回错误，不会改用 2.5。`gpt-image-2` 与 `gpt-image-2-openai` 不是别名，各自保留尺寸路由与显式选择。
 - **不切换模型的情况**：网络异常、超时、认证、限流、余额、内容审核、普通服务错误以及图片下载/解析失败。`notes` 说明补试，结果及会话记录实际使用的 ID。
 - **返回格式**：Flare、Sunburst 不发送 `response_format`，直接保存上游返回的 base64 或 URL 图片；下载或解析失败时，不会换格式重复提交生图请求。
@@ -287,7 +289,7 @@ cargo xtask smoke --binary /absolute/path/micu-image-mcp
 | `MICU_INPUT_ROOT` | 空（不限制） | 可选输入图片白名单根；启用后阻止路径/符号链接逃逸 |
 | `MICU_USE_SHELL_PROXY` | `0` | 设为 `1` 才读取进程环境中的代理设置 |
 | `MICU_RESPONSE_FORMAT` | `auto` | 仅 `gpt-image-2` 与 `gpt-image-2-openai` 使用，可选 `auto`、`url`、`b64_json`；Flare、Sunburst 不发送此参数，按上游返回保存 |
-| `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | 可信下载域名，逗号分隔 |
+| `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top,volces.com` | 可信下载域名，逗号分隔 |
 | `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | 仅允许可信域名使用 198.18.0.0/15 fake-ip 下载 |
 
 路径基准在 MCP 启动时确定。相对 `MICU_SAVE_DIR` 和工具的 `save_dir` 以输出根目录为基准；

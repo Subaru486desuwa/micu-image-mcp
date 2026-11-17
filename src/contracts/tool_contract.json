@@ -4,7 +4,7 @@
   "result": {
     "tools": [
       {
-        "description": "Create one NEW, independent image task from text. ALWAYS pass session_id=\"new\" on its first generation and save the returned session.id for later edits. A new subject or another independent picture in the same chat MUST start a new session; do not copy prior-image constraints. Example: cat parachuting → new A; replace its parachute → image_edit(A); generate a beach portrait → new B; return to the cat → image_edit(A). Do not show IDs to the user. Defaults: gpt-image-2.6-flare, n=1; session mode requires n=1. The 2.5 -openai aliases remain accepted. IDs are maintained manually; explicit 2.5 Flare/Sunburst model-ID rejection triggers one -openai compatibility attempt; 2.6 has no alias and never falls back. Use low/auto/omitted quality for Image2.5; call server_info for dated quality observations. output_format is optional; gif needs Image2.6 and saved[] reports format/frame_count. Size must be valid 16-aligned WxH; call server_info for limits/models. Save paths must stay within MICU_SAVE_DIR_ROOT; basename is a filename stem. Returns saved[] and session{id,revision,context}. Explicit existing session_id remains supported for continuing an image, but prefer image_edit for modifications.",
+        "description": "Create one NEW, independent image task from text. ALWAYS pass session_id=\"new\" on its first generation and save the returned session.id for later edits. A new subject or another independent picture in the same chat MUST start a new session; do not copy prior-image constraints. Example: cat parachuting → new A; replace its parachute → image_edit(A); generate a beach portrait → new B; return to the cat → image_edit(A). Do not show IDs to the user. Defaults: gpt-image-2.6-flare, n=1; session mode requires n=1. The 2.5 -openai aliases remain accepted. IDs are maintained manually; explicit 2.5 Flare/Sunburst model-ID rejection triggers one -openai compatibility attempt; 2.6 has no alias and never falls back. doubao-seedream-5-5-261028 is text-to-image only and must be passed as model: no watermark, quality is ignored, output_format png/jpeg, 921,600-4,624,220 total pixels (no 4K); edit tools reject it, so pass an edit-capable model when editing its session. Use low/auto/omitted quality for Image2.5; call server_info for dated quality observations. output_format is optional; gif needs Image2.6 and saved[] reports format/frame_count. Size must be valid 16-aligned WxH; call server_info for limits/models. Save paths must stay within MICU_SAVE_DIR_ROOT; basename is a filename stem. Returns saved[] and session{id,revision,context}. Explicit existing session_id remains supported for continuing an image, but prefer image_edit for modifications.",
         "inputSchema": {
           "properties": {
             "api_key": {
@@ -76,7 +76,7 @@
               ],
               "default": null,
               "title": "Output Format",
-              "description": "可选输出格式：png/jpeg/webp；gif 仅 gpt-image-2.6-flare 与 gpt-image-2.6-sunburst。省略时不发送此字段。实际格式以 saved[].format 为准。动图由 prompt 触发：要 GIF 时必须在 prompt 中明确要求动画，只传 gif 可能返回静态图。GIF 尺寸由上游决定，通常约 414×414，不保证遵循 size；帧数、帧间隔和循环同样由上游决定。"
+              "description": "可选输出格式：png/jpeg/webp；gif 仅 gpt-image-2.6-flare 与 gpt-image-2.6-sunburst。doubao-seedream-5-5-261028 仅 png/jpeg。省略时不发送此字段。实际格式以 saved[].format 为准。动图由 prompt 触发：要 GIF 时必须在 prompt 中明确要求动画，只传 gif 可能返回静态图。GIF 尺寸由上游决定，通常约 414×414，不保证遵循 size；帧数、帧间隔和循环同样由上游决定。"
             },
             "save_dir": {
               "anyOf": [

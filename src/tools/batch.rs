@@ -24,11 +24,8 @@ impl ToolEngine {
                 total,
             ));
         }
-        if let Some(error) = self.model_error(
-            params.model.as_deref(),
-            &self.config.default_edit_model,
-            params.api_key.as_ref(),
-        ) {
+        if let Some(error) = self.edit_model_error(params.model.as_deref(), params.api_key.as_ref())
+        {
             return Ok(batch_validation_error(error, total));
         }
         let (cleaned_size, size_error) = validate_size(Some(&params.size), false);

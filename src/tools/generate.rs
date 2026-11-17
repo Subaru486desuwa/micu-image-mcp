@@ -88,6 +88,9 @@ impl ToolEngine {
         };
         let (route, mut notes) =
             ModelRoute::resolve(params.model.as_deref(), &self.config.default_model, &size);
+        if let Some(error) = route.size_error(&size) {
+            return Ok(validation_error(error));
+        }
         let quality = match route.validate_quality(params.quality.as_deref()) {
             Ok(quality) => quality,
             Err(error) => return Ok(validation_error(error)),
@@ -106,6 +109,7 @@ impl ToolEngine {
         if let Some(note) = inferred_note {
             notes.insert(0, note);
         }
+        notes.extend(route.dropped_quality_note(params.quality.as_deref()));
         let key = resolve_key(self.config.as_ref(), params.api_key)?;
         let session = match params
             .session_id
@@ -209,7 +213,8 @@ impl ToolEngine {
         results.sort_by_key(|(index, _)| *index);
         if concurrency > 1 {
             notes.push(format!(
-                "1K + 标准线路 + N={requested_n} 已 {concurrency} 并发"
+                "{} + N={requested_n} 已 {concurrency} 并发",
+                route.parallel_label()
             ));
         }
 

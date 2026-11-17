@@ -99,6 +99,9 @@ impl ImageProvider for Image2Provider {
         if let Some(output_format) = request.output_format {
             body.insert("output_format".into(), Value::String(output_format.into()));
         }
+        if let Some(watermark) = request.watermark {
+            body.insert("watermark".into(), Value::Bool(watermark));
+        }
         self.execute(
             JsonRequestFactory {
                 url: self.generations_url.clone(),

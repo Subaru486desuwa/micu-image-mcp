@@ -158,11 +158,7 @@ impl ToolEngine {
             .model
             .as_deref()
             .or(parent.map(|parent| parent.model.as_str()));
-        if let Some(error) = self.model_error(
-            requested_model,
-            &self.config.default_edit_model,
-            params.api_key.as_ref(),
-        ) {
+        if let Some(error) = self.edit_model_error(requested_model, params.api_key.as_ref()) {
             return Ok(EditOutcome::invalid(error));
         }
         let requested_size = params

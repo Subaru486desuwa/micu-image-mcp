@@ -18,6 +18,7 @@
 
 当前手动维护 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
 历史质量线路 `gpt-image-2-openai`。带后缀的旧 2.5 Flare/Sunburst 配置与会话继续可用，优先请求无后缀 ID；只有明确的模型拒绝才补试带后缀 ID。2.6 没有后缀别名，被上游拒绝时直接报错。
+另有只做文生图的 `doubao-seedream-5-5-261028`（需显式传 `model`）：默认不带水印，`quality` 会被忽略，`output_format` 仅 `png` / `jpeg`，最高约 2K；编辑类工具拒绝该模型，编辑它开始的会话时需显式传入可编辑的 `model`。
 Grok 生图已永久移除。
 
 ---
@@ -168,7 +169,7 @@ HTTP 524: A timeout occurred
 **当前版本默认已双层修复，通常无需改代理：**
 
 1. Flare 不发送 `response_format`，直接保存 Images API 返回的 base64 或 URL 图片。下载或解析失败时返回错误，不为切换格式重复生图。其他模型仍支持 `MICU_RESPONSE_FORMAT=auto`（默认），先请求 `url`，落盘失败再请求 `b64_json`。
-2. **URL 路径** `MICU_ALLOW_FAKE_IP_DOWNLOAD=1`（默认）：可信 CDN（`oss.filenest.top`）解析到 fake-ip 时仍允许下载，**不影响 VPN 正常功能**
+2. **URL 路径** `MICU_ALLOW_FAKE_IP_DOWNLOAD=1`（默认）：可信下载域名（默认 `oss.filenest.top` 与 Seedream 结果所在的 `volces.com`）解析到 fake-ip 时仍允许下载，**不影响 VPN 正常功能**
 
 若仍失败，可检查 `server_info` 中 `response_format` / `allow_fake_ip_download` 是否为预期值；或临时在代理中将 `oss.filenest.top` 加入 fake-ip 排除列表。
 

@@ -107,6 +107,7 @@ impl ToolEngine {
                                 quality: job.quality,
                                 response_format,
                                 output_format: job.output_format,
+                                watermark: job.route.watermark(),
                             },
                             job.key,
                             job.route.retry(),

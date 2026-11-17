@@ -37,7 +37,8 @@ fn manual_directory_never_fetches_upstream_and_removes_grok_fields() -> Result<(
                 "gpt-image-2.5-flare",
                 "gpt-image-2.5-sunburst",
                 "gpt-image-2.6-flare",
-                "gpt-image-2.6-sunburst"
+                "gpt-image-2.6-sunburst",
+                "doubao-seedream-5-5-261028"
             ])
         );
         assert_eq!(info["model_catalog"]["source"], "manual");
@@ -102,5 +103,34 @@ fn manual_directory_preserves_explicit_legacy_quality_route() -> Result<()> {
             "gpt-image-2-openai"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn seedream_requests_turn_the_watermark_off_and_other_models_never_send_it() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let api = MockMicu::new()?;
+    let mut server = Session::new(
+        Path::new(env!("CARGO_BIN_EXE_micu-image-mcp")),
+        root.path(),
+        &api.env(),
+    )?;
+    server.initialize()?;
+
+    let result = server.call(
+        "image_generate",
+        json!({"prompt":"x", "model":"doubao-seedream-5-5-261028", "quality":"high"}),
+    )?;
+    assert_eq!(result["ok"], true, "{result}");
+    let sent = api.requests().last().unwrap().fields.clone();
+    assert_eq!(sent["model"], "doubao-seedream-5-5-261028");
+    assert_eq!(sent["watermark"], false);
+    assert!(sent.get("quality").is_none(), "{sent}");
+    assert!(sent.get("response_format").is_none(), "{sent}");
+
+    let result = server.call("image_generate", json!({"prompt":"x"}))?;
+    assert_eq!(result["ok"], true, "{result}");
+    let sent = api.requests().last().unwrap().fields.clone();
+    assert!(sent.get("watermark").is_none(), "{sent}");
     Ok(())
 }

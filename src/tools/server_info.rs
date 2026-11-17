@@ -229,7 +229,8 @@ mod tests {
                 "gpt-image-2.5-flare",
                 "gpt-image-2.5-sunburst",
                 "gpt-image-2.6-flare",
-                "gpt-image-2.6-sunburst"
+                "gpt-image-2.6-sunburst",
+                "doubao-seedream-5-5-261028"
             ])
         );
         assert_eq!(

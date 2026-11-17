@@ -177,6 +177,7 @@ pub(crate) struct CapturedCall {
     pub quality: Option<String>,
     pub response_format: Option<String>,
     pub output_format: Option<String>,
+    pub watermark: Option<bool>,
     pub images: Vec<CapturedImage>,
     pub has_mask: bool,
     pub key: String,
@@ -299,6 +300,7 @@ impl ImageProvider for ScriptedProvider {
             quality: request.quality.map(str::to_owned),
             response_format: request.response_format.map(str::to_owned),
             output_format: request.output_format.map(str::to_owned),
+            watermark: request.watermark,
             images: Vec::new(),
             has_mask: false,
             key: key.expose_secret().to_owned(),
@@ -323,6 +325,7 @@ impl ImageProvider for ScriptedProvider {
             quality: request.quality.map(str::to_owned),
             response_format: request.response_format.map(str::to_owned),
             output_format: request.output_format.map(str::to_owned),
+            watermark: None,
             images: request
                 .images
                 .iter()

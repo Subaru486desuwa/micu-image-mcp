@@ -65,8 +65,10 @@ The [MCP usage guide](docs/MCP使用教程.md) (in Chinese) covers setup for Cur
 | `gpt-image-2.5-sunburst` | Previous Sunburst; select it explicitly |
 | `gpt-image-2` | Standard route; 2K/4K requests switch to `gpt-image-2-openai` |
 | `gpt-image-2-openai` | Historical quality route |
+| `doubao-seedream-5-5-261028` | Seedream text-to-image; select it explicitly; `image_generate` only |
 
 - **Manual directory**: the server never requests `/v1/models`. `server_info.available_models` lists supported IDs, not verified upstream or credential availability. Adding a model ID requires a manual directory update, and network directory changes never change the selected default. Grok image generation has been removed.
+- **Seedream**: text-to-image only. Requests always turn off the upstream default "AI生成" watermark. It has no `quality` parameter: a supplied value is ignored and reported in `notes`. `output_format` is `png` or `jpeg`. The total pixel count must be between 921,600 and 4,624,220 (about 2K at most; no 4K), and `n>1` runs up to 5 requests in parallel at any size. The upstream edits endpoint ignores input images, so editing, batch editing, and multi-reference reject this model; to edit a session it started, pass an edit-capable `model` explicitly.
 - **Legacy IDs**: 2.5 Flare/Sunburst settings and sessions with an `-openai` suffix remain accepted and try the unsuffixed ID first. Only an explicit model-not-found, unsupported-model, or model-specific no-channel response triggers one attempt with the suffixed ID. 2.6 has no suffixed alias: an upstream rejection returns an error and never falls back to 2.5. `gpt-image-2` and `gpt-image-2-openai` are not aliases; each keeps its size routing and explicit selection.
 - **No model switch**: network errors, timeouts, authentication, rate limits, balance, content moderation, ordinary service errors, and image download/parsing failures. Notes describe any fallback; results and sessions record the actual ID used.
 - **Response format**: Flare and Sunburst omit `response_format` and save the base64 image or URL returned by the backend. A download or parsing failure never resubmits the generation with a different format.
@@ -278,7 +280,7 @@ Single-image editing, batch editing, and multi-reference generation use `/v1/ima
 | `MICU_INPUT_ROOT` | Empty, unrestricted | Optional root for input images; prevents path and symlink escapes when set |
 | `MICU_USE_SHELL_PROXY` | `0` | Set to `1` to read proxy settings from the process environment |
 | `MICU_RESPONSE_FORMAT` | `auto` | Used only by `gpt-image-2` and `gpt-image-2-openai`: `auto`, `url`, or `b64_json`; Flare and Sunburst omit this parameter and save the backend response |
-| `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top` | Trusted download hosts, separated by commas |
+| `MICU_TRUSTED_DOWNLOAD_HOSTS` | `oss.filenest.top,volces.com` | Trusted download hosts, separated by commas |
 | `MICU_ALLOW_FAKE_IP_DOWNLOAD` | `1` | Allows fake-ip downloads in 198.18.0.0/15 only for trusted hosts |
 
 Path bases are fixed at server startup. Relative `MICU_SAVE_DIR` and tool `save_dir` paths resolve against the output root. When `MICU_INPUT_ROOT` is set, relative input paths resolve against it; otherwise they resolve against the startup working directory. Paths expand only `~`, `~/...`, and Windows `~\...`. The server rejects `~someone`.

@@ -34,11 +34,8 @@ impl ToolEngine {
                 "参考图最多 10 张，当前 {reference_count} 张。请减少或分批。"
             )));
         }
-        if let Some(error) = self.model_error(
-            params.model.as_deref(),
-            &self.config.default_edit_model,
-            params.api_key.as_ref(),
-        ) {
+        if let Some(error) = self.edit_model_error(params.model.as_deref(), params.api_key.as_ref())
+        {
             return Ok(validation_error(error));
         }
         let (cleaned_size, size_error) = validate_size(Some(&params.size), false);

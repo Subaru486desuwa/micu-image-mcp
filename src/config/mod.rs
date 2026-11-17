@@ -15,6 +15,10 @@ pub(crate) use paths::test_paths;
 pub use paths::{AppPaths, PathError, PathPolicy, PathSource};
 pub(crate) use paths::{create_directory_within, is_windows_unc_root};
 
+/// Hosts whose fake-IP DNS answers may still be downloaded from: the gpt-image
+/// CDN and Volcengine object storage, where Seedream result URLs live.
+const DEFAULT_TRUSTED_DOWNLOAD_HOSTS: &str = "oss.filenest.top,volces.com";
+
 pub const ENV_KEYS: &[&str] = &[
     "HOME",
     "USER",
@@ -111,7 +115,7 @@ impl Config {
             .get("MICU_TRUSTED_DOWNLOAD_HOSTS")
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
-            .unwrap_or("oss.filenest.top");
+            .unwrap_or(DEFAULT_TRUSTED_DOWNLOAD_HOSTS);
         let mut trusted_download_hosts = trusted_raw
             .split(',')
             .map(|host| host.trim().trim_end_matches('.').to_ascii_lowercase())

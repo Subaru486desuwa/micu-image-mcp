@@ -33,6 +33,8 @@ pub struct GenerateRequest<'a> {
     pub quality: Option<&'a str>,
     pub response_format: Option<&'a str>,
     pub output_format: Option<&'a str>,
+    /// Sent only when set; see `ModelRoute::watermark`.
+    pub watermark: Option<bool>,
 }
 
 pub struct EditRequest<'a> {

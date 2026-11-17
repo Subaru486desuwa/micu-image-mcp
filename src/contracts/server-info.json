@@ -18,7 +18,8 @@
         "gpt-image-2.5-flare",
         "gpt-image-2.5-sunburst",
         "gpt-image-2.6-flare",
-        "gpt-image-2.6-sunburst"
+        "gpt-image-2.6-sunburst",
+        "doubao-seedream-5-5-261028"
       ],
       "base_url": "https://www.micuapi.ai",
       "capability_matrix": {
@@ -35,7 +36,8 @@
         "image_generate": {
           "1k": "默认 gpt-image-2.6-flare；省略 response_format；N>1 最多 5 并发。历史在线观察见 response_handling。",
           "2k_quality": "2.5/2.6 保持所选模型；N 强制为 1；改名前 2.5 Flare/Sunburst 实测 2048×1152 精确返回",
-          "4k_quality": "2.5/2.6 保持所选模型；N 强制为 1；改名前 2.5 Flare/Sunburst 实测 3840×2160 精确返回"
+          "4k_quality": "2.5/2.6 保持所选模型；N 强制为 1；改名前 2.5 Flare/Sunburst 实测 3840×2160 精确返回",
+          "seedream": "doubao-seedream-5-5-261028 仅文生图，需显式传 model：请求固定带 watermark=false（上游默认会在右下角加「AI生成」标识）；没有 quality 参数，传入会被忽略并在 notes 说明；output_format 仅 png/jpeg；总像素须在 [921,600, 4,624,220]（最高约 2K，不支持 4K）；任意尺寸 N>1 最多 5 并发，不受 2K/4K 的 N=1 与串行锁限制；省略 response_format，结果从火山引擎对象存储 URL 下载。编辑、批量编辑和多图参考拒绝该模型；编辑由它开始的会话时必须显式传入可编辑的 model。"
         },
         "image_multi_reference": {
           "1k": "默认 gpt-image-2.6-sunburst；2-10 张参考图融合输出 1 张，走 edits + image[]",
@@ -229,7 +231,8 @@
             "max",
             "medium",
             "xhigh"
-          ]
+          ],
+          "doubao-seedream-5-5-261028": []
         },
         "output_format_values_by_model": {
           "gpt-image-2": [
@@ -273,6 +276,10 @@
             "jpeg",
             "png",
             "webp"
+          ],
+          "doubao-seedream-5-5-261028": [
+            "jpeg",
+            "png"
           ]
         },
         "quality_live_observation_2026_10_09": {
@@ -365,10 +372,35 @@
             "2048x2048": "2048x2048",
             "3840x2160": "3840x2160"
           }
+        },
+        "seedream_live_observation_2026_11_16": {
+          "base_url": "https://www.micuapi.ai",
+          "model": "doubao-seedream-5-5-261028",
+          "tool": "image_generate",
+          "path": "/v1/images/generations",
+          "exact_sizes_returned": [
+            "1024x1024",
+            "1536x1024",
+            "2048x1152",
+            "2048x2048"
+          ],
+          "rejected_sizes": {
+            "1024x640": "image area must be at least 921600 pixels",
+            "3840x2160": "image area must be at most 4624220 pixels"
+          },
+          "output_formats_returned": [
+            "jpeg",
+            "png"
+          ],
+          "response": "data[].url on a volces.com object-storage host; no response_format sent",
+          "default_watermark": "不传 watermark 时右下角有可见「AI生成」标识；传 watermark=false 后没有",
+          "edits_endpoint": "/v1/images/edits 返回 200，但 usage.input_images=0，输入图未被使用；因此 MCP 不向该端点发送此模型",
+          "scope_note": "单日、单凭据的实测；n>1 为并发的多次请求，已覆盖 1536x1024 与 2048x2048。未覆盖 webp、参考图输入和其他 Seedream 版本。"
         }
       },
       "trusted_download_hosts": [
-        "oss.filenest.top"
+        "oss.filenest.top",
+        "volces.com"
       ],
       "version": "0.5.0",
       "model_aliases": {
