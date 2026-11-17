@@ -113,14 +113,24 @@ fn session_id(result: &Value) -> String {
 fn mask_volatile(value: &mut Value, root: &Path) {
     match value {
         Value::String(text) => {
-            let masked = text.replace(root.to_string_lossy().as_ref(), "<TMP>");
-            *text = mask_digit_runs(&mask_session_ids(&masked));
+            *text = mask_digit_runs(&mask_session_ids(&mask_root(text, root)));
         }
         Value::Array(items) => items.iter_mut().for_each(|item| mask_volatile(item, root)),
         Value::Object(object) => object
             .values_mut()
             .for_each(|item| mask_volatile(item, root)),
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+/// Replaces the temp root with `<TMP>`. Text that held a path also gets `/`
+/// separators, so one expectation covers Windows.
+fn mask_root(text: &str, root: &Path) -> String {
+    let root = root.to_string_lossy();
+    if text.contains(root.as_ref()) {
+        text.replace(root.as_ref(), "<TMP>").replace('\\', "/")
+    } else {
+        text.to_owned()
     }
 }
 

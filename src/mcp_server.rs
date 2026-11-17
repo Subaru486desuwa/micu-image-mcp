@@ -6,7 +6,7 @@ use rmcp::{
         CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
         Implementation, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
         ListToolsResult, PaginatedRequestParams, PromptsCapability, ProtocolVersion,
-        ResourcesCapability, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
+        ResourcesCapability, ServerCapabilities, ServerConfig, Tool, ToolsCapability,
     },
     service::{MaybeSendFuture, RequestContext, RoleServer},
 };
@@ -59,7 +59,7 @@ impl MicuServer {
 }
 
 impl ServerHandler for MicuServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut prompts = PromptsCapability::default();
         prompts.list_changed = Some(false);
         let mut resources = ResourcesCapability::default();
@@ -73,7 +73,7 @@ impl ServerHandler for MicuServer {
             .enable_resources_with(resources)
             .enable_tools_with(tools)
             .build();
-        ServerInfo::new(capabilities)
+        ServerConfig::new(capabilities)
             .with_server_info(Implementation::new("micu-image", env!("CARGO_PKG_VERSION")))
     }
 
