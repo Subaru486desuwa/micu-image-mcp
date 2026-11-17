@@ -6,6 +6,7 @@ use crate::domain::{routing::ModelRoute, size::validate_size};
 use super::{
     BatchParams, EditParams, SecretArg, ToolEngine, ToolFailure,
     common::{default_basename, validation_error},
+    edit::EditOutcome,
 };
 
 impl ToolEngine {
@@ -106,24 +107,19 @@ impl ToolEngine {
                 .collect::<Vec<_>>()
                 .await
         };
-        results.sort_by_key(|(index, _)| *index);
-        let succeeded = results
-            .iter()
-            .filter(|(_, result)| result.get("ok").and_then(Value::as_bool) == Some(true))
-            .count();
+        results.sort_by_key(|item| item.index);
+        let succeeded = results.iter().filter(|item| item.succeeded).count();
         let actual_model = results
             .iter()
-            .find(|(_, result)| result["ok"] == true)
+            .find(|item| item.succeeded)
             .or_else(|| results.first())
-            .and_then(|(_, result)| result["model"].as_str())
+            .and_then(|item| item.model.as_deref())
             .unwrap_or(&effective_model)
             .to_owned();
-        let used_fallback = results
-            .iter()
-            .any(|(_, result)| result["used_fallback"] == true);
-        if results.iter().any(|(_, result)| {
-            result["model"]
-                .as_str()
+        let used_fallback = results.iter().any(|item| item.used_fallback);
+        if results.iter().any(|item| {
+            item.model
+                .as_deref()
                 .is_some_and(|model| model != actual_model)
         }) {
             notes.push("批量结果使用了不同兼容 ID；各图片的实际模型见 results[].model".into());
@@ -139,7 +135,7 @@ impl ToolEngine {
         output.insert("failed".into(), Value::from(total - succeeded));
         output.insert(
             "results".into(),
-            Value::Array(results.into_iter().map(|(_, result)| result).collect()),
+            Value::Array(results.into_iter().map(|item| item.value).collect()),
         );
         output.insert(
             "notes".into(),
@@ -159,9 +155,9 @@ impl ToolEngine {
         quality: Option<String>,
         output_dir: String,
         api_key: Option<SecretArg>,
-    ) -> (usize, Value) {
-        let result = self
-            .image_edit(EditParams {
+    ) -> BatchItem {
+        let outcome = self
+            .edit_one(EditParams {
                 prompt,
                 image_path: Some(input.clone()),
                 mask_path: None,
@@ -177,24 +173,66 @@ impl ToolEngine {
                 context: Default::default(),
             })
             .await;
-        let mut value = match result {
-            Ok(Value::Object(object)) => Value::Object(object),
-            Ok(other) => other,
+        let rendered = outcome.and_then(|outcome| {
+            let (succeeded, model, used_fallback) = match &outcome {
+                EditOutcome::Saved {
+                    model,
+                    used_fallback,
+                    ..
+                } => (true, Some(model.clone()), *used_fallback),
+                EditOutcome::Failed {
+                    model,
+                    used_fallback,
+                    ..
+                } => (false, Some(model.clone()), *used_fallback),
+                EditOutcome::Invalid(_) | EditOutcome::SessionCommitFailed { .. } => {
+                    (false, None, false)
+                }
+            };
+            let value = outcome.into_edit_value()?;
+            Ok((succeeded, model, used_fallback, value))
+        });
+        match rendered {
+            Ok((succeeded, model, used_fallback, mut value)) => {
+                // Each entry is the single-image edit shape followed by `index` and `input`.
+                if let Value::Object(object) = &mut value {
+                    object.insert("index".into(), Value::from(index + 1));
+                    object.insert("input".into(), Value::String(input));
+                }
+                BatchItem {
+                    index,
+                    succeeded,
+                    model,
+                    used_fallback,
+                    value,
+                }
+            }
             Err(error) => {
                 let mut object = Map::new();
                 object.insert("ok".into(), Value::Bool(false));
                 object.insert("index".into(), Value::from(index + 1));
                 object.insert("input".into(), Value::String(input));
                 object.insert("error".into(), Value::String(error.to_string()));
-                return (index, Value::Object(object));
+                BatchItem {
+                    index,
+                    succeeded: false,
+                    model: None,
+                    used_fallback: false,
+                    value: Value::Object(object),
+                }
             }
-        };
-        if let Value::Object(object) = &mut value {
-            object.insert("index".into(), Value::from(index + 1));
-            object.insert("input".into(), Value::String(input));
         }
-        (index, value)
     }
+}
+
+/// One image of a batch: its rendered `results[]` entry and the facts the summary needs.
+struct BatchItem {
+    index: usize,
+    succeeded: bool,
+    /// The actual model, when the edit got as far as its image job.
+    model: Option<String>,
+    used_fallback: bool,
+    value: Value,
 }
 
 fn batch_validation_error(message: impl Into<String>, total: usize) -> Value {
@@ -209,83 +247,30 @@ fn batch_validation_error(message: impl Into<String>, total: usize) -> Value {
 mod tests {
     use std::{
         collections::BTreeMap,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-        time::Instant,
+        sync::Arc,
+        time::{Duration, Instant},
     };
 
-    use async_trait::async_trait;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use image::{ImageFormat, Rgb, RgbImage};
-    use secrecy::SecretString;
-    use tokio::sync::Mutex;
 
-    use crate::{
-        config::{Config, test_paths},
-        fs::output_store::OutputStore,
-        fs::response_output::OutputSaver,
-        http::client::{ApiResponse, HttpExecutor, RetryOptions},
-        http::download::SystemResolver,
-        providers::{EditRequest, GenerateRequest, ImageProvider},
-    };
+    use crate::tools::test_support::{Endpoint, Reply, ScriptedProvider, tool_engine};
 
     use super::*;
 
-    struct FakeProvider {
-        body: Vec<u8>,
-        active: AtomicUsize,
-        max_active: AtomicUsize,
-        starts: Mutex<Vec<Instant>>,
-    }
-
-    #[async_trait]
-    impl ImageProvider for FakeProvider {
-        async fn generate(
-            &self,
-            request: GenerateRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: 500,
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: vec![],
-                },
-                request.model,
-            )
-        }
-
-        async fn edit(
-            &self,
-            request: EditRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            self.starts.lock().await.push(Instant::now());
-            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
-            self.max_active.fetch_max(active, Ordering::SeqCst);
-            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-            self.active.fetch_sub(1, Ordering::SeqCst);
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: 200,
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: self.body.clone(),
-                },
-                request.model,
-            )
-        }
+    /// Start time of each edit request, in arrival order.
+    fn edit_starts(provider: &ScriptedProvider) -> Vec<Instant> {
+        provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.endpoint == Endpoint::Edit)
+            .map(|call| call.started_at)
+            .collect()
     }
 
     fn fixture() -> (
         tempfile::TempDir,
         ToolEngine,
-        Arc<FakeProvider>,
+        Arc<ScriptedProvider>,
         Vec<String>,
     ) {
         let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
@@ -301,10 +286,6 @@ mod tests {
             paths.push(path.to_string_lossy().into_owned());
         }
         let output_image = std::fs::read(&paths[0]).unwrap_or_else(|error| panic!("{error}"));
-        let body = serde_json::to_vec(
-            &serde_json::json!({"data":[{"b64_json":STANDARD.encode(output_image)}]}),
-        )
-        .unwrap_or_else(|error| panic!("{error}"));
         let environment = BTreeMap::from([
             (
                 "MICU_SAVE_DIR_ROOT".into(),
@@ -318,31 +299,14 @@ mod tests {
             ("MICU_API_KEY".into(), "sk-test".into()),
             ("MICU_BASEURL".into(), "http://127.0.0.1:9".into()),
         ]);
-        let config =
-            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
-        let app_paths = Arc::new(test_paths(temp.path(), environment));
-        let provider = Arc::new(FakeProvider {
-            body,
-            active: AtomicUsize::new(0),
-            max_active: AtomicUsize::new(0),
-            starts: Mutex::new(Vec::new()),
-        });
-        let storage =
-            OutputStore::new(app_paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref(), app_paths.as_ref())
-            .unwrap_or_else(|error| panic!("{error}"));
-        let output = OutputSaver::new(
-            config.clone(),
-            storage.clone(),
-            http,
-            Arc::new(SystemResolver),
+        // Edits are held open so overlap is observable; generation is refused.
+        let provider = Arc::new(
+            ScriptedProvider::answering(Reply::image(&output_image))
+                .with_delay(Duration::from_millis(40))
+                .with_endpoint_reply(Endpoint::Generate, Reply::raw(500, Vec::new())),
         );
-        (
-            temp,
-            ToolEngine::new(config, app_paths, storage, output, provider.clone()),
-            provider,
-            paths,
-        )
+        let engine = tool_engine(temp.path(), environment, provider.clone());
+        (temp, engine, provider, paths)
     }
 
     #[tokio::test]
@@ -362,7 +326,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result["succeeded"], 6, "{result}");
         assert_eq!(result["concurrency"], 5);
-        assert_eq!(provider.max_active.load(Ordering::SeqCst), 5);
+        assert_eq!(provider.peak_in_flight(), 5);
         assert_eq!(result["results"][0]["index"], 1);
         assert_eq!(result["results"][5]["index"], 6);
     }
@@ -383,7 +347,7 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result["concurrency"], 1, "{result}");
-        let starts = provider.starts.lock().await;
+        let starts = edit_starts(&provider);
         assert_eq!(starts.len(), 2);
         assert!(starts[1].duration_since(starts[0]) >= std::time::Duration::from_secs_f64(1.45));
     }
@@ -406,8 +370,8 @@ mod tests {
         assert_eq!(result["succeeded"], 2, "{result}");
         assert_eq!(result["model"], "gpt-image-2.5-flare");
         assert_eq!(result["concurrency"], 1);
-        assert_eq!(provider.max_active.load(Ordering::SeqCst), 1);
-        let starts = provider.starts.lock().await;
+        assert_eq!(provider.peak_in_flight(), 1);
+        let starts = edit_starts(&provider);
         assert!(starts[1].duration_since(starts[0]) >= std::time::Duration::from_secs_f64(1.45));
     }
 }

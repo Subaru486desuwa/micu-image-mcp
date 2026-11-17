@@ -5,12 +5,11 @@ use serde_json::{Map, Value};
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{ModelRoute, infer_size_from_prompt, output_format_note, size_note},
+        routing::{ModelRoute, infer_size_from_prompt},
         size::{validate_n, validate_size},
     },
     fs::output_store::{OutputDirectory, SavedImage},
-    http::response::{error_detail, sanitize_sensitive},
-    providers::GenerateRequest,
+    http::response::sanitize_sensitive,
 };
 
 use super::{
@@ -19,7 +18,9 @@ use super::{
         default_basename, push_note_once, python_string_repr, resolve_key, saved_value,
         validation_error,
     },
+    edit::EditOutcome,
     edit_session::{EditSession, MAX_PROMPT_CHARS, Revision, sanitize_context},
+    image_job::{ImageJob, ImageJobResult},
 };
 
 impl ToolEngine {
@@ -205,7 +206,7 @@ impl ToolEngine {
             }
             sequential
         };
-        results.sort_by_key(|result| result.index);
+        results.sort_by_key(|(index, _)| *index);
         if concurrency > 1 {
             notes.push(format!(
                 "1K + 标准线路 + N={requested_n} 已 {concurrency} 并发"
@@ -216,32 +217,21 @@ impl ToolEngine {
         let mut errors = Vec::new();
         let mut used_fallback = false;
         let mut actual_model = route.model().to_owned();
-        for result in results {
-            used_fallback |= result.used_fallback;
+        for (index, job) in results {
+            used_fallback |= job.used_fallback;
             if saved.is_empty() {
-                actual_model = result.model.clone();
+                actual_model = job.model.clone();
             }
-            for note in result.notes {
+            for note in job.notes {
                 push_note_once(&mut notes, note);
             }
-            if let Some(image) = result.saved {
-                if let Some(note) = size_note(
-                    &size,
-                    Some(image.actual_size),
-                    output_format.as_deref(),
-                    image.format,
-                ) {
-                    push_note_once(&mut notes, note);
+            match job.outcome {
+                Ok(image) => {
+                    let mut value = saved_value(&image, Some(index + 1))?;
+                    value["model"] = Value::String(job.model);
+                    saved.push(value);
                 }
-                if let Some(note) = output_format_note(output_format.as_deref(), image.format) {
-                    push_note_once(&mut notes, note);
-                }
-                let mut value = saved_value(&image, Some(result.index + 1))?;
-                value["model"] = Value::String(result.model);
-                saved.push(value);
-            }
-            if let Some(error) = result.error {
-                errors.push(Value::String(error));
+                Err(error) => errors.push(Value::String(error)),
             }
         }
         let requested_dimensions = crate::domain::size::parse_size(&size);
@@ -304,8 +294,8 @@ impl ToolEngine {
     async fn continue_generation(&self, params: GenerateParams) -> Result<Value, ToolFailure> {
         // A continued generation uses the selected image and the same session machinery as edits.
         // Keep image_generate's list-shaped result so callers can use either tool in one session.
-        let mut result = self
-            .image_edit(EditParams {
+        let outcome = self
+            .edit_one(EditParams {
                 prompt: params.prompt,
                 image_path: None,
                 mask_path: None,
@@ -321,20 +311,64 @@ impl ToolEngine {
                 context: params.context,
             })
             .await?;
-        if let Some(mut saved) = result.get("saved").cloned() {
-            let size_honored = saved.get("actual_size") == result.get("size");
-            saved["index"] = Value::from(1);
-            result["saved"] = Value::Array(vec![saved]);
-            result["requested_n"] = Value::from(1);
-            result["size_honored"] = Value::Bool(size_honored);
-            result["errors"] = Value::Array(result.get("error").cloned().into_iter().collect());
-            if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
-                notes.push(Value::String(
-                    "已有会话通过参考编辑延续上一版本图片与上下文".into(),
-                ));
+        match outcome {
+            EditOutcome::Saved {
+                saved,
+                model,
+                used_fallback,
+                size,
+                mut notes,
+                session,
+            } => {
+                let size_honored =
+                    crate::domain::size::parse_size(&size) == Some(saved.actual_size);
+                notes.push("已有会话通过参考编辑延续上一版本图片与上下文".into());
+                // Existing shape: the list fields follow `notes`.
+                let mut output = Map::new();
+                if let Some(session) = session {
+                    output.insert("session".into(), session);
+                }
+                output.insert("ok".into(), Value::Bool(true));
+                output.insert("model".into(), Value::String(model));
+                output.insert("size".into(), Value::String(size));
+                output.insert("used_fallback".into(), Value::Bool(used_fallback));
+                output.insert(
+                    "saved".into(),
+                    Value::Array(vec![continued_saved_value(&saved)?]),
+                );
+                output.insert(
+                    "notes".into(),
+                    Value::Array(notes.into_iter().map(Value::String).collect()),
+                );
+                output.insert("requested_n".into(), Value::from(1));
+                output.insert("size_honored".into(), Value::Bool(size_honored));
+                output.insert("errors".into(), Value::Array(Vec::new()));
+                Ok(Value::Object(output))
+            }
+            EditOutcome::SessionCommitFailed {
+                saved,
+                error,
+                session,
+            } => {
+                // Existing shape: no `size`, and `size_honored` is always false.
+                let mut output = Map::new();
+                output.insert("ok".into(), Value::Bool(false));
+                output.insert("error".into(), Value::String(error.clone()));
+                output.insert("errors".into(), Value::Array(vec![Value::String(error)]));
+                output.insert(
+                    "saved".into(),
+                    Value::Array(vec![continued_saved_value(&saved)?]),
+                );
+                output.insert("session".into(), session);
+                output.insert("requested_n".into(), Value::from(1));
+                output.insert("size_honored".into(), Value::Bool(false));
+                Ok(Value::Object(output))
+            }
+            // Existing shape: a rejected or failed continuation keeps the single-image edit shape.
+            outcome @ (EditOutcome::Invalid(_) | EditOutcome::Failed { .. }) => {
+                outcome.into_edit_value()
             }
         }
-        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -349,177 +383,54 @@ impl ToolEngine {
         location: &OutputDirectory,
         stem: &str,
         key: &SecretString,
-    ) -> GenerateOneResult {
-        let mut notes = Vec::new();
-        let mut last_error: Option<String> = None;
-        let mut actual_model = route.model().to_owned();
-        let mut used_fallback = false;
-        for (format_index, response_format) in route
-            .response_formats(&self.config.response_formats_to_try)
-            .enumerate()
-        {
-            if format_index > 0
-                && let Some(response_format) = response_format
-            {
-                notes.push(format!(
-                    "URL 落盘失败（{}）→ 重试 API response_format={response_format}",
-                    last_error.as_deref().unwrap_or("保存失败")
-                ));
-            }
-            let image_response = self
-                .provider
-                .generate(
-                    GenerateRequest {
-                        model: &actual_model,
-                        prompt,
-                        size,
-                        quality,
-                        response_format,
-                        output_format,
-                    },
-                    key,
-                    route.retry(),
-                    &mut notes,
-                )
-                .await;
-            actual_model = image_response.model;
-            used_fallback |= image_response.used_fallback;
-            let response = image_response.response;
-            if !response.is_success() {
-                last_error = Some(format!(
-                    "#{} HTTP {}: {}",
-                    index + 1,
-                    response.status,
-                    error_detail(&response.body, &[key.expose_secret()])
-                ));
-                break;
-            }
-            match self
-                .output
-                .save_first(&response.body, location, &format!("{stem}_{}", index + 1))
-                .await
-            {
-                Ok(saved) => {
-                    if format_index > 0
-                        && let Some(response_format) = response_format
-                    {
-                        notes.push(format!("已通过 response_format={response_format} 成功落盘"));
-                    }
-                    return GenerateOneResult {
-                        index,
-                        saved: Some(saved),
-                        error: None,
-                        notes,
-                        model: actual_model,
-                        used_fallback,
-                    };
-                }
-                Err(error) => {
-                    last_error = Some(format!("#{} 保存失败: {error}", index + 1));
-                }
-            }
-        }
-        GenerateOneResult {
-            index,
-            saved: None,
-            error: Some(last_error.unwrap_or_else(|| format!("#{} 保存失败", index + 1))),
-            notes,
-            model: actual_model,
-            used_fallback,
-        }
+    ) -> (usize, ImageJobResult) {
+        let basename = format!("{stem}_{}", index + 1);
+        let job = self
+            .image_job(ImageJob {
+                route,
+                prompt,
+                size,
+                quality,
+                output_format,
+                inputs: None,
+                location,
+                basename: &basename,
+                key,
+                image_number: Some(index + 1),
+            })
+            .await;
+        (index, job)
     }
 }
 
-struct GenerateOneResult {
-    index: usize,
-    saved: Option<SavedImage>,
-    error: Option<String>,
-    notes: Vec<String>,
-    model: String,
-    used_fallback: bool,
+/// A continued generation lists its one image with `index` as the last key.
+fn continued_saved_value(saved: &SavedImage) -> Result<Value, ToolFailure> {
+    let mut value = saved_value(saved, None)?;
+    value["index"] = Value::from(1);
+    Ok(value)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-    };
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-    use async_trait::async_trait;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use image::{ImageFormat, Rgb, RgbImage};
-    use secrecy::SecretString;
-    use tokio::sync::Mutex;
 
-    use crate::{
-        config::{Config, test_paths},
-        fs::output_store::OutputStore,
-        fs::response_output::OutputSaver,
-        http::client::{ApiResponse, HttpExecutor, RetryOptions},
-        http::download::SystemResolver,
-        providers::{EditRequest, GenerateRequest, ImageProvider},
-    };
+    use crate::tools::test_support::{Endpoint, Reply, ScriptedProvider, tool_engine};
 
     use super::*;
 
-    struct FakeProvider {
-        body: Vec<u8>,
-        calls: Mutex<Vec<(String, String, Option<String>)>>,
-        active: AtomicUsize,
-        max_active: AtomicUsize,
+    /// Model, size and `response_format` of each generation request, in arrival order.
+    fn generate_calls(provider: &ScriptedProvider) -> Vec<(String, String, Option<String>)> {
+        provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.endpoint == Endpoint::Generate)
+            .map(|call| (call.model, call.size, call.response_format))
+            .collect()
     }
 
-    #[async_trait]
-    impl ImageProvider for FakeProvider {
-        async fn generate(
-            &self,
-            request: GenerateRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            self.calls.lock().await.push((
-                request.model.into(),
-                request.size.into(),
-                request.response_format.map(str::to_owned),
-            ));
-            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
-            self.max_active.fetch_max(active, Ordering::SeqCst);
-            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-            self.active.fetch_sub(1, Ordering::SeqCst);
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: 200,
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: self.body.clone(),
-                },
-                request.model,
-            )
-        }
-
-        async fn edit(
-            &self,
-            request: EditRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: 500,
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: Vec::new(),
-                },
-                request.model,
-            )
-        }
-    }
-
-    fn fixture() -> (tempfile::TempDir, ToolEngine, Arc<FakeProvider>) {
+    fn fixture() -> (tempfile::TempDir, ToolEngine, Arc<ScriptedProvider>) {
         let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
         let out = temp.path().join("out");
         let environment = BTreeMap::from([
@@ -531,34 +442,18 @@ mod tests {
             ("MICU_API_KEY".into(), "sk-test".into()),
             ("MICU_BASEURL".into(), "http://127.0.0.1:9".into()),
         ]);
-        let config =
-            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
-        let paths = Arc::new(test_paths(temp.path(), environment));
         let image_path = temp.path().join("fixture.png");
         RgbImage::from_pixel(32, 24, Rgb([1, 2, 3]))
             .save_with_format(&image_path, ImageFormat::Png)
             .unwrap_or_else(|error| panic!("{error}"));
         let image = std::fs::read(image_path).unwrap_or_else(|error| panic!("{error}"));
-        let body = serde_json::to_vec(&serde_json::json!({
-            "data": [{"b64_json": STANDARD.encode(image)}]
-        }))
-        .unwrap_or_else(|error| panic!("{error}"));
-        let provider = Arc::new(FakeProvider {
-            body,
-            calls: Mutex::new(Vec::new()),
-            active: AtomicUsize::new(0),
-            max_active: AtomicUsize::new(0),
-        });
-        let storage = OutputStore::new(paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())
-            .unwrap_or_else(|error| panic!("{error}"));
-        let output = OutputSaver::new(
-            config.clone(),
-            storage.clone(),
-            http,
-            Arc::new(SystemResolver),
+        // Generation is held open so overlap is observable; edits are refused.
+        let provider = Arc::new(
+            ScriptedProvider::answering(Reply::image(&image))
+                .with_delay(Duration::from_millis(30))
+                .with_endpoint_reply(Endpoint::Edit, Reply::raw(500, Vec::new())),
         );
-        let engine = ToolEngine::new(config, paths, storage, output, provider.clone());
+        let engine = tool_engine(temp.path(), environment, provider.clone());
         (temp, engine, provider)
     }
 
@@ -591,7 +486,7 @@ mod tests {
         assert_eq!(result["requested_n"], 1);
         assert_eq!(result["saved"][0]["actual_size"], "32x24");
         assert_eq!(
-            provider.calls.lock().await.as_slice(),
+            generate_calls(&provider).as_slice(),
             &[("gpt-image-2.6-flare".into(), "1024x1024".into(), None)]
         );
     }
@@ -614,7 +509,7 @@ mod tests {
                 .iter()
                 .any(|note| note.as_str().is_some_and(|text| text.contains("强制 N=1")))
         }));
-        assert_eq!(provider.calls.lock().await.len(), 1);
+        assert_eq!(generate_calls(&provider).len(), 1);
     }
 
     #[tokio::test]
@@ -631,7 +526,7 @@ mod tests {
             Some(6),
             "{result}"
         );
-        assert_eq!(provider.max_active.load(Ordering::SeqCst), 5);
+        assert_eq!(provider.peak_in_flight(), 5);
         let indices = result["saved"]
             .as_array()
             .unwrap_or_else(|| panic!("saved array"))

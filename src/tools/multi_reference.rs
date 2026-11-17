@@ -1,23 +1,18 @@
-use secrecy::ExposeSecret;
 use serde_json::{Map, Value};
 
 use crate::{
     domain::{
         basename::safe_basename,
-        routing::{ModelRoute, size_note},
+        routing::ModelRoute,
         size::{parse_size, validate_size},
     },
     fs::input::MAX_TOTAL_INPUT_BYTES,
-    http::response::error_detail,
-    providers::EditRequest,
 };
 
 use super::{
     MultiReferenceParams, ToolEngine, ToolFailure,
-    common::{
-        default_basename, push_note_once, python_string_repr, resolve_key, saved_value,
-        validation_error,
-    },
+    common::{default_basename, python_string_repr, resolve_key, saved_value, validation_error},
+    image_job::{ImageJob, ImageJobInputs},
 };
 
 impl ToolEngine {
@@ -108,93 +103,47 @@ impl ToolEngine {
             .iter()
             .map(|image| ("image[]", image))
             .collect::<Vec<_>>();
-        let mut saved = None;
-        let mut last_error: Option<String> = None;
-        let mut actual_model = route.model().to_owned();
-        let mut used_fallback = false;
-        for (format_index, response_format) in route
-            .response_formats(&self.config.response_formats_to_try)
-            .enumerate()
-        {
-            if format_index > 0
-                && let Some(response_format) = response_format
-            {
-                notes.push(format!(
-                    "URL 落盘失败（{}）→ 重试 API response_format={response_format}",
-                    last_error.as_deref().unwrap_or("保存失败")
-                ));
+        // No output_format is sent, so the job adds no format note.
+        let job = self
+            .image_job(ImageJob {
+                route: &route,
+                prompt: &full_prompt,
+                size: &size,
+                quality: quality.as_deref(),
+                output_format: None,
+                inputs: Some(ImageJobInputs {
+                    images: &image_fields,
+                    mask: None,
+                }),
+                location: &location,
+                basename: &stem,
+                key: &key,
+                image_number: None,
+            })
+            .await;
+        notes.extend(job.notes);
+        let saved = match job.outcome {
+            Ok(saved) => saved,
+            Err(error) => {
+                let mut output = Map::new();
+                output.insert("ok".into(), Value::Bool(false));
+                output.insert("model".into(), Value::String(job.model));
+                output.insert("n_references".into(), Value::from(reference_count));
+                output.insert("used_fallback".into(), Value::Bool(job.used_fallback));
+                output.insert("error".into(), Value::String(error));
+                output.insert(
+                    "notes".into(),
+                    Value::Array(notes.into_iter().map(Value::String).collect()),
+                );
+                return Ok(Value::Object(output));
             }
-            let image_response = self
-                .provider
-                .edit(
-                    EditRequest {
-                        model: &actual_model,
-                        prompt: &full_prompt,
-                        size: &size,
-                        quality: quality.as_deref(),
-                        response_format,
-                        output_format: None,
-                        images: &image_fields,
-                        mask: None,
-                    },
-                    &key,
-                    route.retry(),
-                    &mut notes,
-                )
-                .await;
-            actual_model = image_response.model;
-            used_fallback |= image_response.used_fallback;
-            let response = image_response.response;
-            if !response.is_success() {
-                last_error = Some(format!(
-                    "HTTP {}: {}",
-                    response.status,
-                    error_detail(&response.body, &[key.expose_secret()])
-                ));
-                break;
-            }
-            match self
-                .output
-                .save_first(&response.body, &location, &stem)
-                .await
-            {
-                Ok(image) => {
-                    if format_index > 0
-                        && let Some(response_format) = response_format
-                    {
-                        notes.push(format!("已通过 response_format={response_format} 成功落盘"));
-                    }
-                    saved = Some(image);
-                    break;
-                }
-                Err(error) => last_error = Some(format!("保存失败: {error}")),
-            }
-        }
-        let Some(saved) = saved else {
-            let mut output = Map::new();
-            output.insert("ok".into(), Value::Bool(false));
-            output.insert("model".into(), Value::String(actual_model));
-            output.insert("n_references".into(), Value::from(reference_count));
-            output.insert("used_fallback".into(), Value::Bool(used_fallback));
-            output.insert(
-                "error".into(),
-                Value::String(last_error.unwrap_or_else(|| "保存失败".into())),
-            );
-            output.insert(
-                "notes".into(),
-                Value::Array(notes.into_iter().map(Value::String).collect()),
-            );
-            return Ok(Value::Object(output));
         };
-        if let Some(note) = size_note(&size, Some(saved.actual_size), None, saved.format) {
-            push_note_once(&mut notes, note);
-        }
         let size_honored = parse_size(&size) == Some(saved.actual_size);
         let mut output = Map::new();
         output.insert("ok".into(), Value::Bool(true));
-        output.insert("model".into(), Value::String(actual_model));
+        output.insert("model".into(), Value::String(job.model));
         output.insert("size".into(), Value::String(size));
-        output.insert("used_fallback".into(), Value::Bool(used_fallback));
+        output.insert("used_fallback".into(), Value::Bool(job.used_fallback));
         output.insert("size_honored".into(), Value::Bool(size_honored));
         output.insert("n_references".into(), Value::from(reference_count));
         output.insert("saved".into(), saved_value(&saved, None)?);
@@ -208,94 +157,42 @@ impl ToolEngine {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-    };
+    use std::{collections::BTreeMap, sync::Arc};
 
-    use async_trait::async_trait;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use image::{ImageFormat, Rgb, RgbImage};
-    use secrecy::SecretString;
-    use tokio::sync::Mutex;
 
-    use crate::{
-        config::{Config, test_paths},
-        fs::output_store::OutputStore,
-        fs::response_output::OutputSaver,
-        http::client::{ApiResponse, HttpExecutor, RetryOptions},
-        http::download::SystemResolver,
-        providers::{EditRequest, GenerateRequest, ImageProvider},
-    };
+    use crate::tools::test_support::{Endpoint, Reply, ScriptedProvider, tool_engine};
 
     use super::*;
 
     type CapturedReference = (String, String, String);
     type CapturedEdit = (String, String, Option<String>, Vec<CapturedReference>);
 
-    struct FakeProvider {
-        body: Vec<u8>,
-        calls: AtomicUsize,
-        captured: Mutex<Vec<CapturedEdit>>,
-    }
-
-    #[async_trait]
-    impl ImageProvider for FakeProvider {
-        async fn generate(
-            &self,
-            request: GenerateRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: 500,
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: vec![],
-                },
-                request.model,
-            )
-        }
-
-        async fn edit(
-            &self,
-            request: EditRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            self.captured.lock().await.push((
-                request.model.into(),
-                request.prompt.into(),
-                request.quality.map(str::to_owned),
-                request
-                    .images
-                    .iter()
-                    .map(|(field, image)| {
-                        ((*field).into(), image.filename.clone(), image.mime.into())
-                    })
-                    .collect(),
-            ));
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: 200,
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: self.body.clone(),
-                },
-                request.model,
-            )
-        }
+    /// Model, prompt, quality and each reference's field name, filename and
+    /// MIME type of each edit request, in arrival order.
+    fn captured_edits(provider: &ScriptedProvider) -> Vec<CapturedEdit> {
+        provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.endpoint == Endpoint::Edit)
+            .map(|call| {
+                (
+                    call.model,
+                    call.prompt,
+                    call.quality,
+                    call.images
+                        .into_iter()
+                        .map(|image| (image.field, image.filename, image.mime))
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     fn fixture() -> (
         tempfile::TempDir,
         ToolEngine,
-        Arc<FakeProvider>,
+        Arc<ScriptedProvider>,
         Vec<String>,
     ) {
         let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
@@ -310,9 +207,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{error}"));
             paths.push(path.to_string_lossy().into_owned());
         }
-        let body = serde_json::to_vec(&serde_json::json!({
-            "data":[{"b64_json":STANDARD.encode(std::fs::read(&paths[0]).unwrap_or_else(|error| panic!("{error}")))}]
-        })).unwrap_or_else(|error| panic!("{error}"));
+        let output_image = std::fs::read(&paths[0]).unwrap_or_else(|error| panic!("{error}"));
         let environment = BTreeMap::from([
             (
                 "MICU_SAVE_DIR_ROOT".into(),
@@ -326,30 +221,13 @@ mod tests {
             ("MICU_API_KEY".into(), "sk-test".into()),
             ("MICU_BASEURL".into(), "http://127.0.0.1:9".into()),
         ]);
-        let config =
-            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
-        let app_paths = Arc::new(test_paths(temp.path(), environment));
-        let provider = Arc::new(FakeProvider {
-            body,
-            calls: AtomicUsize::new(0),
-            captured: Mutex::new(Vec::new()),
-        });
-        let storage =
-            OutputStore::new(app_paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref(), app_paths.as_ref())
-            .unwrap_or_else(|error| panic!("{error}"));
-        let output = OutputSaver::new(
-            config.clone(),
-            storage.clone(),
-            http,
-            Arc::new(SystemResolver),
+        // Edits succeed; generation is refused.
+        let provider = Arc::new(
+            ScriptedProvider::answering(Reply::image(&output_image))
+                .with_endpoint_reply(Endpoint::Generate, Reply::raw(500, Vec::new())),
         );
-        (
-            temp,
-            ToolEngine::new(config, app_paths, storage, output, provider.clone()),
-            provider,
-            paths,
-        )
+        let engine = tool_engine(temp.path(), environment, provider.clone());
+        (temp, engine, provider, paths)
     }
 
     #[tokio::test]
@@ -370,7 +248,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result["ok"], true, "{result}");
         assert_eq!(result["n_references"], 2);
-        let captured = provider.captured.lock().await;
+        let captured = captured_edits(&provider);
         assert!(captured[0].1.contains("Instruction:\n融合成海报"));
         assert_eq!(captured[0].2.as_deref(), Some("max"));
         assert_eq!(
@@ -407,6 +285,6 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("至少需要 2 张"))
         );
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(captured_edits(&provider).len(), 0);
     }
 }

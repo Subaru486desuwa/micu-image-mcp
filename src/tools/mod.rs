@@ -3,9 +3,15 @@ mod common;
 mod edit;
 mod edit_session;
 mod generate;
+mod image_job;
 mod multi_reference;
 mod server_info;
 mod types;
+
+#[cfg(test)]
+mod characterization;
+#[cfg(test)]
+mod test_support;
 
 use std::sync::Arc;
 

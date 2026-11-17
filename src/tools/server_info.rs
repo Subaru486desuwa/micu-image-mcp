@@ -196,43 +196,9 @@ fn set_nested(info: &mut Value, section: &str, key: &str, value: Value) -> Resul
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use async_trait::async_trait;
-    use secrecy::SecretString;
-
-    use crate::{
-        config::{Config, test_paths},
-        fs::output_store::OutputStore,
-        fs::response_output::OutputSaver,
-        http::client::{HttpExecutor, RetryOptions},
-        http::download::SystemResolver,
-        providers::{EditRequest, GenerateRequest, ImageProvider},
-    };
+    use crate::tools::test_support::{Reply, ScriptedProvider, tool_engine};
 
     use super::*;
-
-    struct NeverProvider;
-
-    #[async_trait]
-    impl ImageProvider for NeverProvider {
-        async fn generate(
-            &self,
-            _request: GenerateRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            panic!("server_info must not call provider")
-        }
-        async fn edit(
-            &self,
-            _request: EditRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            panic!("server_info must not call provider")
-        }
-    }
 
     #[test]
     fn server_info_preserves_compatibility_keys_but_reports_rust_runtime_truth() {
@@ -246,19 +212,11 @@ mod tests {
             ("MICU_SAVE_DIR".into(), out.to_string_lossy().into_owned()),
             ("MICU_API_KEY".into(), "sk-test".into()),
         ]);
-        let config =
-            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
-        let paths = Arc::new(test_paths(temp.path(), environment));
-        let storage = OutputStore::new(paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())
-            .unwrap_or_else(|error| panic!("{error}"));
-        let output = OutputSaver::new(
-            config.clone(),
-            storage.clone(),
-            http,
-            Arc::new(SystemResolver),
-        );
-        let engine = ToolEngine::new(config, paths, storage, output, Arc::new(NeverProvider));
+        let provider = Arc::new(ScriptedProvider::answering(Reply::raw(
+            599,
+            "server_info must not call provider",
+        )));
+        let engine = tool_engine(temp.path(), environment, provider.clone());
         let info = engine
             .server_info()
             .unwrap_or_else(|error| panic!("{error}"));
@@ -298,6 +256,10 @@ mod tests {
             info["retry_policy"]["concurrency_2k_4k"]
                 .as_str()
                 .is_some_and(|text| text.contains("bigsize.lock") && text.contains("Python/Rust"))
+        );
+        assert!(
+            provider.calls().is_empty(),
+            "server_info must not call provider"
         );
     }
 

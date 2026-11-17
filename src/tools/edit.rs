@@ -2,23 +2,16 @@ use secrecy::ExposeSecret;
 use serde_json::{Map, Value};
 
 use crate::{
-    domain::{
-        basename::safe_basename,
-        routing::{ModelRoute, output_format_note, size_note},
-        size::validate_size,
-    },
-    fs::input::validate_mask,
-    http::response::{error_detail, sanitize_sensitive},
-    providers::EditRequest,
+    domain::{basename::safe_basename, routing::ModelRoute, size::validate_size},
+    fs::{input::validate_mask, output_store::SavedImage},
+    http::response::sanitize_sensitive,
 };
 
 use super::{
     EditParams, ToolEngine, ToolFailure,
-    common::{
-        default_basename, push_note_once, python_string_repr, resolve_key, saved_value,
-        validation_error,
-    },
+    common::{default_basename, python_string_repr, resolve_key, saved_value, validation_error},
     edit_session::{EditSession, MAX_PROMPT_CHARS, Revision, sanitize_context},
+    image_job::{ImageJob, ImageJobInputs},
 };
 
 const GIF_SESSION_INPUT_ERROR: &str = "所选会话版本是 GIF，不能作为编辑输入；用 parent_revision 选择非 GIF 版本，或转换为 PNG、JPEG、WebP 后用 session_id=new 开始新会话";
@@ -29,18 +22,125 @@ fn is_gif_path(path: &str) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
 }
 
+/// How one single-image edit ended. `image_edit`, `image_batch_edit` and a
+/// continued `image_generate` each render their own public shape from it.
+pub(super) enum EditOutcome {
+    /// The request was rejected before any upstream call.
+    Invalid(String),
+    /// The upstream request or the save failed; an open session did not advance.
+    Failed {
+        model: String,
+        used_fallback: bool,
+        size: String,
+        notes: Vec<String>,
+        error: String,
+        /// Unchanged state of the session, when the edit ran in one.
+        session: Option<Value>,
+    },
+    Saved {
+        saved: SavedImage,
+        model: String,
+        used_fallback: bool,
+        size: String,
+        notes: Vec<String>,
+        /// New state of the session, when the edit ran in one.
+        session: Option<Value>,
+    },
+    /// The image is on disk, but the session could not record the revision.
+    SessionCommitFailed {
+        saved: SavedImage,
+        error: String,
+        /// Unchanged state of the session.
+        session: Value,
+    },
+}
+
+impl EditOutcome {
+    fn invalid(message: impl Into<String>) -> Self {
+        Self::Invalid(message.into())
+    }
+
+    /// Renders the public `image_edit` shape. Key order is part of that shape.
+    pub(super) fn into_edit_value(self) -> Result<Value, ToolFailure> {
+        match self {
+            Self::Invalid(message) => Ok(validation_error(message)),
+            Self::Failed {
+                model,
+                used_fallback,
+                size,
+                notes,
+                error,
+                session,
+            } => {
+                let mut output = Map::new();
+                output.insert("ok".into(), Value::Bool(false));
+                output.insert("model".into(), Value::String(model));
+                output.insert("used_fallback".into(), Value::Bool(used_fallback));
+                output.insert("size".into(), Value::String(size));
+                if let Some(session) = session {
+                    output.insert("session".into(), session);
+                }
+                output.insert("error".into(), Value::String(error));
+                output.insert(
+                    "notes".into(),
+                    Value::Array(notes.into_iter().map(Value::String).collect()),
+                );
+                Ok(Value::Object(output))
+            }
+            Self::Saved {
+                saved,
+                model,
+                used_fallback,
+                size,
+                notes,
+                session,
+            } => {
+                let mut output = Map::new();
+                if let Some(session) = session {
+                    output.insert("session".into(), session);
+                }
+                output.insert("ok".into(), Value::Bool(true));
+                output.insert("model".into(), Value::String(model));
+                output.insert("size".into(), Value::String(size));
+                output.insert("used_fallback".into(), Value::Bool(used_fallback));
+                output.insert("saved".into(), saved_value(&saved, None)?);
+                output.insert(
+                    "notes".into(),
+                    Value::Array(notes.into_iter().map(Value::String).collect()),
+                );
+                Ok(Value::Object(output))
+            }
+            Self::SessionCommitFailed {
+                saved,
+                error,
+                session,
+            } => {
+                let mut failure = validation_error(error);
+                failure["saved"] = saved_value(&saved, None)?;
+                failure["session"] = session;
+                Ok(failure)
+            }
+        }
+    }
+}
+
 impl ToolEngine {
     pub async fn image_edit(&self, params: EditParams) -> Result<Value, ToolFailure> {
+        self.edit_one(params).await?.into_edit_value()
+    }
+
+    /// Validates, routes and runs one single-image edit, including its session round.
+    pub(super) async fn edit_one(&self, params: EditParams) -> Result<EditOutcome, ToolFailure> {
         if params.prompt.trim().is_empty() {
-            return Ok(validation_error("prompt 不能为空"));
+            return Ok(EditOutcome::invalid("prompt 不能为空"));
         }
         if params.prompt.chars().count() > MAX_PROMPT_CHARS {
-            return Ok(validation_error("prompt 最多 32000 个字符"));
+            return Ok(EditOutcome::invalid("prompt 最多 32000 个字符"));
         }
         if params.session_id.is_none()
             && (params.parent_revision.is_some() || !params.context.is_empty())
         {
-            return Ok(validation_error(
+            return Ok(EditOutcome::invalid(
                 "parent_revision 和 context 需要 session_id；用 new 开始会话",
             ));
         }
@@ -51,7 +151,7 @@ impl ToolEngine {
             .transpose()
         {
             Ok(session) => session,
-            Err(error) => return Ok(validation_error(error)),
+            Err(error) => return Ok(EditOutcome::invalid(error)),
         };
         let parent = session.as_ref().and_then(|session| session.parent.as_ref());
         let requested_model = params
@@ -63,7 +163,7 @@ impl ToolEngine {
             &self.config.default_edit_model,
             params.api_key.as_ref(),
         ) {
-            return Ok(validation_error(error));
+            return Ok(EditOutcome::invalid(error));
         }
         let requested_size = params
             .size
@@ -72,7 +172,7 @@ impl ToolEngine {
             .unwrap_or("1024x1024");
         let (cleaned_size, size_error) = validate_size(Some(requested_size), false);
         let Some(size) = cleaned_size else {
-            return Ok(validation_error(
+            return Ok(EditOutcome::invalid(
                 size_error.unwrap_or_else(|| "size 校验失败".into()),
             ));
         };
@@ -84,18 +184,18 @@ impl ToolEngine {
             .or(parent.and_then(|parent| parent.quality.as_deref()));
         let quality = match route.validate_quality(requested_quality) {
             Ok(quality) => quality,
-            Err(error) => return Ok(validation_error(error)),
+            Err(error) => return Ok(EditOutcome::invalid(error)),
         };
         let output_format = match route.validate_output_format(params.output_format.as_deref()) {
             Ok(output_format) => output_format,
-            Err(error) => return Ok(validation_error(error)),
+            Err(error) => return Ok(EditOutcome::invalid(error)),
         };
         let safe_stem = params
             .basename
             .as_deref()
             .and_then(|name| safe_basename(Some(name)));
         if params.basename.is_some() && safe_stem.is_none() {
-            return Ok(validation_error(format!(
+            return Ok(EditOutcome::invalid(format!(
                 "basename {} 含非法字符或路径分量",
                 python_string_repr(params.basename.as_deref().unwrap_or_default())
             )));
@@ -105,26 +205,26 @@ impl ToolEngine {
             .resolve_save_dir(params.save_dir.as_deref())
         {
             Ok(location) => location,
-            Err(error) => return Ok(validation_error(error)),
+            Err(error) => return Ok(EditOutcome::invalid(error)),
         };
         if parent.is_some_and(|parent| is_gif_path(&parent.output_path)) {
-            return Ok(validation_error(GIF_SESSION_INPUT_ERROR));
+            return Ok(EditOutcome::invalid(GIF_SESSION_INPUT_ERROR));
         }
         let Some(image_path) = params
             .image_path
             .as_deref()
             .or(parent.map(|parent| parent.output_path.as_str()))
         else {
-            return Ok(validation_error(
+            return Ok(EditOutcome::invalid(
                 "单次编辑或新会话需要 image_path；已有会话可自动使用上一版本",
             ));
         };
         let image = match self.input_store.validate_image(image_path, "image_path") {
             Ok(image) => image,
-            Err(error) => return Ok(validation_error(error)),
+            Err(error) => return Ok(EditOutcome::invalid(error)),
         };
         if parent.is_some_and(|parent| image.path != std::path::Path::new(&parent.output_path)) {
-            return Ok(validation_error(
+            return Ok(EditOutcome::invalid(
                 "image_path 必须与所选会话版本的输出一致；更换图片请用 new 开始新会话",
             ));
         }
@@ -134,7 +234,7 @@ impl ToolEngine {
         if let Some(session) = &session
             && let Err(error) = session.context(&params.context)
         {
-            return Ok(validation_error(error));
+            return Ok(EditOutcome::invalid(error));
         }
         let instruction = sanitize_sensitive(
             &params.prompt,
@@ -150,7 +250,7 @@ impl ToolEngine {
             .transpose()
         {
             Ok(context) => context.unwrap_or_default(),
-            Err(error) => return Ok(validation_error(error)),
+            Err(error) => return Ok(EditOutcome::invalid(error)),
         };
         let effective_prompt = match session
             .as_ref()
@@ -158,15 +258,15 @@ impl ToolEngine {
             .transpose()
         {
             Ok(prompt) => prompt.unwrap_or_else(|| params.prompt.clone()),
-            Err(error) => return Ok(validation_error(error)),
+            Err(error) => return Ok(EditOutcome::invalid(error)),
         };
         let mask = if let Some(mask_path) = params.mask_path {
             let mask = match self.input_store.validate_image(&mask_path, "mask_path") {
                 Ok(mask) => mask,
-                Err(error) => return Ok(validation_error(error)),
+                Err(error) => return Ok(EditOutcome::invalid(error)),
             };
             if let Err(error) = validate_mask(&mask, &image) {
-                return Ok(validation_error(error));
+                return Ok(EditOutcome::invalid(error));
             }
             Some(mask)
         } else {
@@ -174,101 +274,42 @@ impl ToolEngine {
         };
         let stem = safe_stem.unwrap_or_else(|| default_basename("edit"));
         let images = [("image", &image)];
-        let mut last_error: Option<String> = None;
-        let mut saved = None;
-        let mut actual_model = route.model().to_owned();
-        let mut used_fallback = false;
-        for (format_index, response_format) in route
-            .response_formats(&self.config.response_formats_to_try)
-            .enumerate()
-        {
-            if format_index > 0
-                && let Some(response_format) = response_format
-            {
-                notes.push(format!(
-                    "URL 落盘失败（{}）→ 重试 API response_format={response_format}",
-                    last_error.as_deref().unwrap_or("保存失败")
-                ));
+        let job = self
+            .image_job(ImageJob {
+                route: &route,
+                prompt: &effective_prompt,
+                size: &size,
+                quality: quality.as_deref(),
+                output_format: output_format.as_deref(),
+                inputs: Some(ImageJobInputs {
+                    images: &images,
+                    mask: mask.as_ref(),
+                }),
+                location: &location,
+                basename: &stem,
+                key: &key,
+                image_number: None,
+            })
+            .await;
+        notes.extend(job.notes);
+        let actual_model = job.model;
+        let used_fallback = job.used_fallback;
+        let saved = match job.outcome {
+            Ok(saved) => saved,
+            Err(error) => {
+                return Ok(EditOutcome::Failed {
+                    model: actual_model,
+                    used_fallback,
+                    size,
+                    notes,
+                    error,
+                    session: session.as_ref().map(EditSession::unchanged_value),
+                });
             }
-            let image_response = self
-                .provider
-                .edit(
-                    EditRequest {
-                        model: &actual_model,
-                        prompt: &effective_prompt,
-                        size: &size,
-                        quality: quality.as_deref(),
-                        response_format,
-                        output_format: output_format.as_deref(),
-                        images: &images,
-                        mask: mask.as_ref(),
-                    },
-                    &key,
-                    route.retry(),
-                    &mut notes,
-                )
-                .await;
-            actual_model = image_response.model;
-            used_fallback |= image_response.used_fallback;
-            let response = image_response.response;
-            if !response.is_success() {
-                last_error = Some(format!(
-                    "HTTP {}: {}",
-                    response.status,
-                    error_detail(&response.body, &[key.expose_secret()])
-                ));
-                break;
-            }
-            match self
-                .output
-                .save_first(&response.body, &location, &stem)
-                .await
-            {
-                Ok(image) => {
-                    if format_index > 0
-                        && let Some(response_format) = response_format
-                    {
-                        notes.push(format!("已通过 response_format={response_format} 成功落盘"));
-                    }
-                    saved = Some(image);
-                    break;
-                }
-                Err(error) => last_error = Some(format!("保存失败: {error}")),
-            }
-        }
-        let Some(saved) = saved else {
-            let mut output = Map::new();
-            output.insert("ok".into(), Value::Bool(false));
-            output.insert("model".into(), Value::String(actual_model));
-            output.insert("used_fallback".into(), Value::Bool(used_fallback));
-            output.insert("size".into(), Value::String(size));
-            if let Some(session) = &session {
-                output.insert("session".into(), session.unchanged_value());
-            }
-            output.insert(
-                "error".into(),
-                Value::String(last_error.unwrap_or_else(|| "保存失败".into())),
-            );
-            output.insert(
-                "notes".into(),
-                Value::Array(notes.into_iter().map(Value::String).collect()),
-            );
-            return Ok(Value::Object(output));
         };
-        if let Some(note) = size_note(
-            &size,
-            Some(saved.actual_size),
-            output_format.as_deref(),
-            saved.format,
-        ) {
-            push_note_once(&mut notes, note);
-        }
-        if let Some(note) = output_format_note(output_format.as_deref(), saved.format) {
-            push_note_once(&mut notes, note);
-        }
-        let mut output = Map::new();
+        let mut session_value = None;
         if let Some(session) = &session {
-            let session_value = session.commit(Revision {
+            let committed = session.commit(Revision {
                 revision: 0,
                 parent_revision: None,
                 input_path: image
@@ -287,126 +328,76 @@ impl ToolEngine {
                 size: size.clone(),
                 quality: quality.clone(),
             });
-            match session_value {
-                Ok(value) => {
-                    output.insert("session".into(), value);
-                }
+            match committed {
+                Ok(value) => session_value = Some(value),
                 Err(error) => {
-                    let mut failure =
-                        validation_error(format!("图片已保存，但会话提交失败：{error}"));
-                    failure["saved"] = saved_value(&saved, None)?;
-                    failure["session"] = session.unchanged_value();
-                    return Ok(failure);
+                    return Ok(EditOutcome::SessionCommitFailed {
+                        saved,
+                        error: format!("图片已保存，但会话提交失败：{error}"),
+                        session: session.unchanged_value(),
+                    });
                 }
             }
         }
-        output.insert("ok".into(), Value::Bool(true));
-        output.insert("model".into(), Value::String(actual_model));
-        output.insert("size".into(), Value::String(size));
-        output.insert("used_fallback".into(), Value::Bool(used_fallback));
-        output.insert("saved".into(), saved_value(&saved, None)?);
-        output.insert(
-            "notes".into(),
-            Value::Array(notes.into_iter().map(Value::String).collect()),
-        );
-        Ok(Value::Object(output))
+        Ok(EditOutcome::Saved {
+            saved,
+            model: actual_model,
+            used_fallback,
+            size,
+            notes,
+            session: session_value,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        sync::{
-            Arc,
-            atomic::{AtomicU16, AtomicUsize, Ordering},
-        },
-    };
+    use std::{collections::BTreeMap, sync::Arc};
 
-    use async_trait::async_trait;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use image::{ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
-    use secrecy::SecretString;
-    use tokio::sync::Mutex;
 
-    use crate::{
-        config::{Config, test_paths},
-        fs::output_store::OutputStore,
-        fs::response_output::OutputSaver,
-        http::client::{ApiResponse, HttpExecutor, RetryOptions},
-        http::download::SystemResolver,
-        providers::{EditRequest, GenerateRequest, ImageProvider},
-    };
+    use crate::tools::test_support::{Endpoint, Reply, ScriptedProvider, tool_engine};
 
     use super::*;
 
     type CapturedEdit = (String, String, Option<String>, Vec<String>, bool);
 
-    struct FakeProvider {
-        body: Vec<u8>,
-        edits: Mutex<Vec<CapturedEdit>>,
-        prompts_and_inputs: Mutex<Vec<(String, Vec<u8>)>>,
-        calls: AtomicUsize,
-        status: AtomicU16,
+    /// Model, size, quality, input field names and mask presence of each edit
+    /// request, in arrival order.
+    fn edits(provider: &ScriptedProvider) -> Vec<CapturedEdit> {
+        provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.endpoint == Endpoint::Edit)
+            .map(|call| {
+                (
+                    call.model,
+                    call.size,
+                    call.quality,
+                    call.images.into_iter().map(|image| image.field).collect(),
+                    call.has_mask,
+                )
+            })
+            .collect()
     }
 
-    #[async_trait]
-    impl ImageProvider for FakeProvider {
-        async fn generate(
-            &self,
-            request: GenerateRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: 500,
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: Vec::new(),
-                },
-                request.model,
-            )
-        }
-
-        async fn edit(
-            &self,
-            request: EditRequest<'_>,
-            _key: &SecretString,
-            _retry: RetryOptions,
-            _notes: &mut Vec<String>,
-        ) -> crate::providers::ImageResponse {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            self.edits.lock().await.push((
-                request.model.into(),
-                request.size.into(),
-                request.quality.map(str::to_owned),
-                request
-                    .images
-                    .iter()
-                    .map(|(field, _)| (*field).into())
-                    .collect(),
-                request.mask.is_some(),
-            ));
-            self.prompts_and_inputs.lock().await.push((
-                request.prompt.into(),
-                std::fs::read(request.images[0].1.file.path()).unwrap(),
-            ));
-            crate::providers::ImageResponse::new(
-                ApiResponse {
-                    status: self.status.load(Ordering::SeqCst),
-                    headers: reqwest::header::HeaderMap::new(),
-                    body: self.body.clone(),
-                },
-                request.model,
-            )
-        }
+    /// Prompt and first input image of each edit request, in arrival order.
+    fn prompts_and_inputs(provider: &ScriptedProvider) -> Vec<(String, Vec<u8>)> {
+        provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.endpoint == Endpoint::Edit)
+            .map(|call| {
+                let input = call.images.into_iter().next().unwrap().bytes;
+                (call.prompt, input)
+            })
+            .collect()
     }
 
     fn fixture() -> (
         tempfile::TempDir,
         ToolEngine,
-        Arc<FakeProvider>,
+        Arc<ScriptedProvider>,
         std::path::PathBuf,
         std::path::PathBuf,
     ) {
@@ -426,9 +417,7 @@ mod tests {
         RgbImage::from_pixel(32, 24, Rgb([40, 50, 60]))
             .save(&fake_output)
             .unwrap();
-        let body = serde_json::to_vec(&serde_json::json!({
-            "data": [{"b64_json": STANDARD.encode(std::fs::read(&fake_output).unwrap_or_else(|error| panic!("{error}")))}]
-        })).unwrap_or_else(|error| panic!("{error}"));
+        let output_image = std::fs::read(&fake_output).unwrap_or_else(|error| panic!("{error}"));
         let environment = BTreeMap::from([
             (
                 "MICU_SAVE_DIR_ROOT".into(),
@@ -442,26 +431,12 @@ mod tests {
             ("MICU_API_KEY".into(), "sk-test".into()),
             ("MICU_BASEURL".into(), "http://127.0.0.1:9".into()),
         ]);
-        let config =
-            Arc::new(Config::from_map(&environment).unwrap_or_else(|error| panic!("{error}")));
-        let paths = Arc::new(test_paths(temp.path(), environment));
-        let provider = Arc::new(FakeProvider {
-            body,
-            edits: Mutex::new(Vec::new()),
-            prompts_and_inputs: Mutex::new(Vec::new()),
-            calls: AtomicUsize::new(0),
-            status: AtomicU16::new(200),
-        });
-        let storage = OutputStore::new(paths.as_ref()).unwrap_or_else(|error| panic!("{error}"));
-        let http = HttpExecutor::new(config.as_ref(), paths.as_ref())
-            .unwrap_or_else(|error| panic!("{error}"));
-        let output = OutputSaver::new(
-            config.clone(),
-            storage.clone(),
-            http,
-            Arc::new(SystemResolver),
+        // Edits succeed unless a test queues another reply; generation is refused.
+        let provider = Arc::new(
+            ScriptedProvider::answering(Reply::image(&output_image))
+                .with_endpoint_reply(Endpoint::Generate, Reply::raw(500, Vec::new())),
         );
-        let engine = ToolEngine::new(config, paths, storage, output, provider.clone());
+        let engine = tool_engine(temp.path(), environment, provider.clone());
         (temp, engine, provider, source, mask)
     }
 
@@ -489,7 +464,7 @@ mod tests {
         assert_eq!(result["ok"], true, "{result}");
         assert_eq!(result["saved"]["actual_size"], "32x24");
         assert_eq!(
-            provider.edits.lock().await.as_slice(),
+            edits(&provider).as_slice(),
             &[(
                 "gpt-image-2.6-sunburst".into(),
                 "1024x1024".into(),
@@ -546,7 +521,7 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("不存在"))
         );
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(edits(&provider).len(), 1);
     }
 
     fn session_params(value: Value) -> EditParams {
@@ -589,7 +564,7 @@ mod tests {
         assert_eq!(second["session"]["input_path"], first["saved"]["path"]);
         assert_eq!(second["model"], "gpt-image-2.5-flare");
         assert_eq!(second["size"], "1536x1024");
-        let captured = provider.prompts_and_inputs.lock().await;
+        let captured = prompts_and_inputs(&provider);
         assert_eq!(
             captured[1].1,
             std::fs::read(first["saved"]["path"].as_str().unwrap()).unwrap()
@@ -601,7 +576,7 @@ mod tests {
                 .0
                 .contains("CURRENT EDIT INSTRUCTION:\nchange background to seaside")
         );
-        assert_eq!(provider.edits.lock().await[1].2.as_deref(), Some("medium"));
+        assert_eq!(edits(&provider)[1].2.as_deref(), Some("medium"));
     }
 
     #[tokio::test]
@@ -613,7 +588,11 @@ mod tests {
         }))).await.unwrap();
         assert_eq!(first["ok"], true, "{first}");
         let id = &first["session"]["id"];
-        provider.status.store(400, Ordering::SeqCst);
+        // Only the next edit is rejected; later ones get the default answer again.
+        provider.enqueue(Reply::json(
+            400,
+            serde_json::json!({"error": {"message": "rejected"}}),
+        ));
         let failed = engine
             .image_edit(session_params(serde_json::json!({
                 "prompt": "failed instruction", "session_id": id, "context": {"clothing": "green"},
@@ -623,7 +602,6 @@ mod tests {
         assert_eq!(failed["ok"], false);
         assert_eq!(failed["session"]["revision"], 1);
         assert_eq!(failed["session"]["context"]["clothing"], "red");
-        provider.status.store(200, Ordering::SeqCst);
         let success = engine
             .image_edit(session_params(serde_json::json!({
                 "prompt": "make clothing blue", "session_id": id, "context": {"clothing": "blue"},
@@ -632,7 +610,7 @@ mod tests {
             .unwrap();
         assert_eq!(success["session"]["revision"], 2);
         assert_eq!(success["session"]["context"]["clothing"], "blue");
-        let captured = provider.prompts_and_inputs.lock().await;
+        let captured = prompts_and_inputs(&provider);
         assert!(!captured[2].0.contains("failed instruction"));
         assert!(!captured[2].0.contains("green"));
     }
@@ -673,7 +651,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing["ok"], false);
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(edits(&provider).len(), 1);
     }
 
     #[tokio::test]
