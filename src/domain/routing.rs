@@ -8,14 +8,20 @@ pub const SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst";
 pub const LEGACY_SUNBURST_MODEL: &str = "gpt-image-2.5-sunburst-openai";
 pub const FLARE_2_6_MODEL: &str = "gpt-image-2.6-flare";
 pub const SUNBURST_2_6_MODEL: &str = "gpt-image-2.6-sunburst";
+/// Token-billed OpenAI routes of the 2.6 family, distinct from the per-call
+/// IDs above: never aliased to them and never used as a fallback for them.
+pub const FLARE_2_6_OPENAI_MODEL: &str = "gpt-image-2.6-flare-openai";
+pub const SUNBURST_2_6_OPENAI_MODEL: &str = "gpt-image-2.6-sunburst-openai";
 pub const SEEDREAM_5_5_MODEL: &str = "doubao-seedream-5-5-261028";
-pub const SUPPORTED_IMAGE_MODELS: [&str; 7] = [
+pub const SUPPORTED_IMAGE_MODELS: [&str; 9] = [
     STANDARD_MODEL,
     QUALITY_MODEL,
     FLARE_MODEL,
     SUNBURST_MODEL,
     FLARE_2_6_MODEL,
     SUNBURST_2_6_MODEL,
+    FLARE_2_6_OPENAI_MODEL,
+    SUNBURST_2_6_OPENAI_MODEL,
     SEEDREAM_5_5_MODEL,
 ];
 
@@ -420,7 +426,7 @@ pub fn size_note(
 pub fn is_quality_model(model: &str) -> bool {
     matches!(
         canonical_model(model),
-        QUALITY_MODEL | SUNBURST_MODEL | SUNBURST_2_6_MODEL
+        QUALITY_MODEL | SUNBURST_MODEL | SUNBURST_2_6_MODEL | SUNBURST_2_6_OPENAI_MODEL
     )
 }
 
@@ -567,6 +573,8 @@ mod tests {
             LEGACY_SUNBURST_MODEL,
             FLARE_2_6_MODEL,
             SUNBURST_2_6_MODEL,
+            FLARE_2_6_OPENAI_MODEL,
+            SUNBURST_2_6_OPENAI_MODEL,
             SEEDREAM_5_5_MODEL,
         ] {
             assert!(is_supported_model(model), "{model}");
@@ -575,8 +583,8 @@ mod tests {
             " gpt-image-2 ",
             "GROK-imagine-image",
             "grok-imagine-image",
-            "gpt-image-2.6-flare-openai",
-            "gpt-image-2.6-sunburst-openai",
+            "GPT-IMAGE-2.6-FLARE-OPENAI",
+            "gpt-image-2.6-sunburst-openai-openai",
             "doubao-seedream-5-5",
             "doubao-seed-2-1-pro-260915",
         ] {
@@ -650,6 +658,42 @@ mod tests {
                 SUNBURST_2_6_MODEL,
                 "3840x2160",
                 SUNBURST_2_6_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
+            (
+                FLARE_2_6_OPENAI_MODEL,
+                "1024x1024",
+                FLARE_2_6_OPENAI_MODEL,
+                false,
+                false,
+                5,
+                1,
+            ),
+            (
+                FLARE_2_6_OPENAI_MODEL,
+                "2048x1152",
+                FLARE_2_6_OPENAI_MODEL,
+                true,
+                true,
+                1,
+                1,
+            ),
+            (
+                SUNBURST_2_6_OPENAI_MODEL,
+                "1024x1024",
+                SUNBURST_2_6_OPENAI_MODEL,
+                true,
+                false,
+                1,
+                1,
+            ),
+            (
+                SUNBURST_2_6_OPENAI_MODEL,
+                "3840x2160",
+                SUNBURST_2_6_OPENAI_MODEL,
                 true,
                 true,
                 1,
@@ -875,6 +919,36 @@ mod tests {
             assert_eq!(suffix_fallback(model), None);
         }
         assert!(is_quality_model(LEGACY_SUNBURST_MODEL));
+    }
+
+    #[test]
+    fn image_2_6_openai_routes_are_distinct_models_with_openai_parameters() {
+        for (model, per_call) in [
+            (FLARE_2_6_OPENAI_MODEL, FLARE_2_6_MODEL),
+            (SUNBURST_2_6_OPENAI_MODEL, SUNBURST_2_6_MODEL),
+        ] {
+            assert_eq!(canonical_model(model), model);
+            assert_eq!(suffix_fallback(model), None);
+            assert_eq!(suffix_fallback(per_call), None);
+            let (route, notes) = ModelRoute::resolve(Some(model), STANDARD_MODEL, "1024x1024");
+            assert_eq!((route.model(), notes.len()), (model, 0));
+            assert_eq!(
+                route.validate_quality(Some("Medium")),
+                Ok(Some("medium".into()))
+            );
+            assert_eq!(
+                route.validate_quality(Some("xhigh")),
+                Err("quality 不支持 'xhigh'；可选 auto / high / low / medium".into())
+            );
+            assert!(
+                route
+                    .validate_output_format(Some("gif"))
+                    .is_err_and(|error| error.contains("可选 jpeg / png / webp"))
+            );
+            assert!(supports_edit(model));
+        }
+        assert!(!is_quality_model(FLARE_2_6_OPENAI_MODEL));
+        assert!(is_quality_model(SUNBURST_2_6_OPENAI_MODEL));
     }
 
     #[test]

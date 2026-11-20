@@ -49,26 +49,30 @@ fn current_models_qualities_sizes_and_large_routing_are_verified_on_the_wire() -
         "gpt-image-2.5-sunburst",
         "gpt-image-2.6-flare",
         "gpt-image-2.6-sunburst",
+        "gpt-image-2.6-flare-openai",
+        "gpt-image-2.6-sunburst-openai",
     ] {
-        let qualities: &[Option<&str>] = if model.contains("2.5") || model.contains("2.6") {
-            &[
-                None,
-                Some("auto"),
-                Some("low"),
-                Some("medium"),
-                Some("high"),
-                Some("xhigh"),
-                Some("max"),
-            ]
-        } else {
-            &[
-                None,
-                Some("auto"),
-                Some("low"),
-                Some("medium"),
-                Some("high"),
-            ]
-        };
+        let openai_route = model.ends_with("-openai") && model != "gpt-image-2-openai";
+        let qualities: &[Option<&str>] =
+            if (model.contains("2.5") || model.contains("2.6")) && !openai_route {
+                &[
+                    None,
+                    Some("auto"),
+                    Some("low"),
+                    Some("medium"),
+                    Some("high"),
+                    Some("xhigh"),
+                    Some("max"),
+                ]
+            } else {
+                &[
+                    None,
+                    Some("auto"),
+                    Some("low"),
+                    Some("medium"),
+                    Some("high"),
+                ]
+            };
         for quality in qualities {
             let mut args = json!({"prompt":"parameter matrix","model":model,"size":"1024x1024"});
             if let Some(quality) = quality {
@@ -84,6 +88,9 @@ fn current_models_qualities_sizes_and_large_routing_are_verified_on_the_wire() -
                 sent.fields.get("quality").and_then(|value| value.as_str()),
                 *quality
             );
+            if openai_route {
+                assert!(sent.fields.get("response_format").is_none(), "{model}");
+            }
         }
     }
     for size in [

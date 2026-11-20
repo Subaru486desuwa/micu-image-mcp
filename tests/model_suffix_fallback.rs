@@ -290,7 +290,9 @@ fn image_2_6_rejection_has_no_suffix_or_previous_generation_fallback() -> Result
     let root = tempfile::tempdir()?;
     let image = root.path().join("a.png");
     fs::write(&image, png(32, 24, 1)?)?;
-    let api = Fixture::new(404, missing_model(), 200, None)?;
+    // The fixture treats every -openai ID as a fallback, so reject those too;
+    // the single-request assertion below still catches any extra attempt.
+    let api = Fixture::new(404, missing_model(), 404, Some(missing_model()))?;
     let mut server = api.server(root.path(), None)?;
     for (tool, args, model) in [
         (
@@ -302,6 +304,16 @@ fn image_2_6_rejection_has_no_suffix_or_previous_generation_fallback() -> Result
             "image_edit",
             json!({"prompt":"x","image_path":image}),
             "gpt-image-2.6-sunburst",
+        ),
+        (
+            "image_generate",
+            json!({"prompt":"x","model":"gpt-image-2.6-flare-openai"}),
+            "gpt-image-2.6-flare-openai",
+        ),
+        (
+            "image_edit",
+            json!({"prompt":"x","image_path":image,"model":"gpt-image-2.6-sunburst-openai"}),
+            "gpt-image-2.6-sunburst-openai",
         ),
     ] {
         api.requests.lock().unwrap().clear();

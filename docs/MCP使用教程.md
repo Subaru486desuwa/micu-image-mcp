@@ -18,6 +18,7 @@
 
 当前手动维护 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 和
 历史质量线路 `gpt-image-2-openai`。带后缀的旧 2.5 Flare/Sunburst 配置与会话继续可用，优先请求无后缀 ID；只有明确的模型拒绝才补试带后缀 ID。2.6 没有后缀别名，被上游拒绝时直接报错。
+`gpt-image-2.6-flare-openai`、`gpt-image-2.6-sunburst-openai` 是按 token 计费的独立 OpenAI 线路，需显式传 `model`：`quality` 仅 `auto` / `low` / `medium` / `high`，不支持 `gif`，与无后缀 2.6 互不补试。
 另有只做文生图的 `doubao-seedream-5-5-261028`（需显式传 `model`）：默认不带水印，`quality` 会被忽略，`output_format` 仅 `png` / `jpeg`，最高约 2K；编辑类工具拒绝该模型，编辑它开始的会话时需显式传入可编辑的 `model`。
 Grok 生图已永久移除。
 
@@ -237,7 +238,7 @@ flowchart TD
 | `prompt` | string | ✅ | 图像描述，1–2000 字符 |
 | `size` | string \| null | | `"WxH"` 格式，如 `"1024x1024"`；留空则从 prompt 关键字自动推断 |
 | `n` | int | | 生成张数 1–10；1K 可多张并发，≥2K 强制 n=1 |
-| `model` | string \| null | | MCP 手动维护 2.6 / 2.5 Flare、Sunburst，Image2 与历史质量线路；默认 `gpt-image-2.6-flare`。目录见 `server_info.available_models`，实际授权与可用性由上游决定 |
+| `model` | string \| null | | MCP 手动维护 2.6 / 2.5 Flare、Sunburst，2.6 OpenAI 线路，Image2 与历史质量线路；默认 `gpt-image-2.6-flare`。目录见 `server_info.available_models`，实际授权与可用性由上游决定 |
 | `quality` | string \| null | | 2026-10-09 主站实测：2.5 Flare/Sunburst 用 `low` / `auto` / 留空，2.6 已观察到 `low` 与留空可用，其余档位未验证；旧 Image2 也接受 `medium` / `high`。完整选项与线路支持见 `server_info.size_rules` |
 | `output_format` | string \| null | | 可选 `png` / `jpeg` / `webp`；`gif` 仅 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`，2026-11-05 已在线验证生成与编辑。动图由 prompt 触发，要 GIF 时必须在 `prompt` 中明确要求动画，只传 `gif` 可能返回静态图。尺寸由上游决定，通常约 414×414，不保证遵循 `size`；帧数、帧间隔和循环同样由上游决定。省略时不发送。实际格式见 `saved[].format`，GIF 另返回 `saved[].frame_count` |
 | `save_dir` | string \| null | | 输出目录，必须在 `MICU_SAVE_DIR_ROOT` 下 |

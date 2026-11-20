@@ -230,6 +230,8 @@ mod tests {
                 "gpt-image-2.5-sunburst",
                 "gpt-image-2.6-flare",
                 "gpt-image-2.6-sunburst",
+                "gpt-image-2.6-flare-openai",
+                "gpt-image-2.6-sunburst-openai",
                 "doubao-seedream-5-5-261028"
             ])
         );

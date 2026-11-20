@@ -4,7 +4,7 @@
   "result": {
     "tools": [
       {
-        "description": "Create one NEW, independent image task from text. ALWAYS pass session_id=\"new\" on its first generation and save the returned session.id for later edits. A new subject or another independent picture in the same chat MUST start a new session; do not copy prior-image constraints. Example: cat parachuting → new A; replace its parachute → image_edit(A); generate a beach portrait → new B; return to the cat → image_edit(A). Do not show IDs to the user. Defaults: gpt-image-2.6-flare, n=1; session mode requires n=1. The 2.5 -openai aliases remain accepted. IDs are maintained manually; explicit 2.5 Flare/Sunburst model-ID rejection triggers one -openai compatibility attempt; 2.6 has no alias and never falls back. doubao-seedream-5-5-261028 is text-to-image only and must be passed as model: no watermark, quality is ignored, output_format png/jpeg, 921,600-4,624,220 total pixels (no 4K); edit tools reject it, so pass an edit-capable model when editing its session. Use low/auto/omitted quality for Image2.5; call server_info for dated quality observations. output_format is optional; gif needs Image2.6 and saved[] reports format/frame_count. Size must be valid 16-aligned WxH; call server_info for limits/models. Save paths must stay within MICU_SAVE_DIR_ROOT; basename is a filename stem. Returns saved[] and session{id,revision,context}. Explicit existing session_id remains supported for continuing an image, but prefer image_edit for modifications.",
+        "description": "Create one NEW, independent image task from text. ALWAYS pass session_id=\"new\" on its first generation and save the returned session.id for later edits. A new subject or another independent picture in the same chat MUST start a new session; do not copy prior-image constraints. Example: cat parachuting → new A; replace its parachute → image_edit(A); generate a beach portrait → new B; return to the cat → image_edit(A). Do not show IDs to the user. Defaults: gpt-image-2.6-flare, n=1; session mode requires n=1. The 2.5 -openai aliases remain accepted. IDs are maintained manually; explicit 2.5 Flare/Sunburst model-ID rejection triggers one -openai compatibility attempt; 2.6 has no alias and never falls back; gpt-image-2.6-flare-openai and gpt-image-2.6-sunburst-openai are separate token-billed routes, not aliases (quality auto/low/medium/high, no gif). doubao-seedream-5-5-261028 is text-to-image only and must be passed as model: no watermark, quality is ignored, output_format png/jpeg, 921,600-4,624,220 total pixels (no 4K); edit tools reject it, so pass an edit-capable model when editing its session. Use low/auto/omitted quality for Image2.5; call server_info for dated quality observations. output_format is optional; gif needs unsuffixed Image2.6 and saved[] reports format/frame_count. Size must be valid 16-aligned WxH; call server_info for limits/models. Save paths must stay within MICU_SAVE_DIR_ROOT; basename is a filename stem. Returns saved[] and session{id,revision,context}. Explicit existing session_id remains supported for continuing an image, but prefer image_edit for modifications.",
         "inputSchema": {
           "properties": {
             "api_key": {
@@ -63,7 +63,7 @@
               ],
               "default": null,
               "title": "Quality",
-              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。已有会话省略时继承所选版本。"
+              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。2.6 -openai 线路仅 auto/low/medium/high，2026-11-19 实测 low 可用。已有会话省略时继承所选版本。"
             },
             "output_format": {
               "anyOf": [
@@ -245,7 +245,7 @@
               ],
               "default": null,
               "title": "Quality",
-              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。已有会话省略时继承所选版本。"
+              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。2.6 -openai 线路仅 auto/low/medium/high，2026-11-19 实测 low 可用。已有会话省略时继承所选版本。"
             },
             "output_format": {
               "anyOf": [
@@ -397,7 +397,7 @@
               ],
               "default": null,
               "title": "Quality",
-              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。已有会话省略时继承所选版本。"
+              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。2.6 -openai 线路仅 auto/low/medium/high，2026-11-19 实测 low 可用。已有会话省略时继承所选版本。"
             },
             "save_dir": {
               "anyOf": [
@@ -493,7 +493,7 @@
               ],
               "default": null,
               "title": "Quality",
-              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。已有会话省略时继承所选版本。"
+              "description": "MCP 接受的完整选项见 schema。2026-10-09 主站 1K 生成/单图编辑：2.5 模型使用 low/auto/省略；medium/high/xhigh/max 返回 HTTP 400。旧 gpt-image-2 的 low/medium/high/auto 均成功。2.6 -openai 线路仅 auto/low/medium/high，2026-11-19 实测 low 可用。已有会话省略时继承所选版本。"
             },
             "save_dir": {
               "anyOf": [

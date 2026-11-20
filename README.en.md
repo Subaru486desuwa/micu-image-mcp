@@ -8,7 +8,7 @@ For multi-turn editing, the server saves image revisions, successful instruction
 
 ![Micu Image MCP v0.4.1 session memory poster: continuing to edit the same kitten](docs/assets/memory/context-memory-poster.png)
 
-[Multi-turn editing](#session-memory) · [Tools](#tools) · [Models and quality](#models-and-quality) · [Installation](#installation) · [Sizes and concurrency](#sizes-and-concurrency) · [Configuration](#configuration) · [Testing and validation](#testing-and-validation) · [v0.6.0 changes](docs/releases/v0.6.0.md)
+[Multi-turn editing](#session-memory) · [Tools](#tools) · [Models and quality](#models-and-quality) · [Installation](#installation) · [Sizes and concurrency](#sizes-and-concurrency) · [Configuration](#configuration) · [Testing and validation](#testing-and-validation) · [v0.7.1 changes](docs/releases/v0.7.1.md)
 
 ## Session memory
 
@@ -61,6 +61,8 @@ The [MCP usage guide](docs/MCP使用教程.md) (in Chinese) covers setup for Cur
 | --- | --- |
 | `gpt-image-2.6-flare` | Default for text-to-image generation |
 | `gpt-image-2.6-sunburst` | Default for editing, batch editing, and multi-reference generation |
+| `gpt-image-2.6-flare-openai` | OpenAI route of 2.6 Flare, billed per token; select it explicitly |
+| `gpt-image-2.6-sunburst-openai` | OpenAI route of 2.6 Sunburst, billed per token; select it explicitly |
 | `gpt-image-2.5-flare` | Previous Flare; select it explicitly |
 | `gpt-image-2.5-sunburst` | Previous Sunburst; select it explicitly |
 | `gpt-image-2` | Standard route; 2K/4K requests switch to `gpt-image-2-openai` |
@@ -70,6 +72,7 @@ The [MCP usage guide](docs/MCP使用教程.md) (in Chinese) covers setup for Cur
 - **Manual directory**: the server never requests `/v1/models`. `server_info.available_models` lists supported IDs, not verified upstream or credential availability. Adding a model ID requires a manual directory update, and network directory changes never change the selected default. Grok image generation has been removed.
 - **Seedream**: text-to-image only. Requests always turn off the upstream default "AI生成" watermark. It has no `quality` parameter: a supplied value is ignored and reported in `notes`. `output_format` is `png` or `jpeg`. The total pixel count must be between 921,600 and 4,624,220 (about 2K at most; no 4K), and `n>1` runs up to 5 requests in parallel at any size. The upstream edits endpoint ignores input images, so editing, batch editing, and multi-reference reject this model; to edit a session it started, pass an edit-capable `model` explicitly.
 - **Legacy IDs**: 2.5 Flare/Sunburst settings and sessions with an `-openai` suffix remain accepted and try the unsuffixed ID first. Only an explicit model-not-found, unsupported-model, or model-specific no-channel response triggers one attempt with the suffixed ID. 2.6 has no suffixed alias: an upstream rejection returns an error and never falls back to 2.5. `gpt-image-2` and `gpt-image-2-openai` are not aliases; each keeps its size routing and explicit selection.
+- **2.6 OpenAI routes**: `gpt-image-2.6-flare-openai` and `gpt-image-2.6-sunburst-openai` are separate models, not aliases of 2.6, and neither falls back to the other. Micu bills them per token (unsuffixed 2.6 is billed per call). `quality` accepts `auto`, `low`, `medium`, or `high`, and `output_format` excludes `gif`. Scheduling follows the family: the Flare route runs 1K requests in parallel, and the Sunburst route runs one request at a time.
 - **No model switch**: network errors, timeouts, authentication, rate limits, balance, content moderation, ordinary service errors, and image download/parsing failures. Notes describe any fallback; results and sessions record the actual ID used.
 - **Response format**: Flare and Sunburst omit `response_format` and save the base64 image or URL returned by the backend. A download or parsing failure never resubmits the generation with a different format.
 - **Output format**: `image_generate` and `image_edit` accept an optional `output_format` (`png`, `jpeg`, `webp`; `gif` on 2.6 only) and omit the field when unset. `saved[].format` and the file extension follow the file content, and `notes` report a mismatch with the request. GIFs are validated frame by frame and return `saved[].frame_count`; `actual_size` is the canvas size, limited to 1024 frames and 2^30 composited pixels, and frames outside the canvas are rejected.
@@ -94,6 +97,8 @@ GIFs requested at `1024x1024` ranged from 215×882 to 444×395, with a ratio of 
 A separate `quality=low` batch report from the same day made 18 generation requests, 17 of which succeeded. Static PNGs matched the request at 1536×1024, 2048×2048, and 3840×2160, unlike the 1254×1254 returned for `1024x1024` above. Its 11 GIFs, requested at 512×512 or 1024×1024, had edges of 410–414 pixels. With `frame_count` from 9 to 64 and `frame_duration_ms` of 200 or 500, they all came back with 8–9 frames at 180 ms per frame. A 32-frame Flare request lost its connection after about 94 seconds with no file, and billing for it is unknown.
 
 GIF input, GIF 2K/4K, and `quality` values other than `low` were not validated.
+
+On 2026-11-19, one `gpt-image-2.6-flare-openai` generation and one `gpt-image-2.6-sunburst-openai` single-image edit, sent in the request format of Micu's HTML image tool, both returned HTTP 200 and a 1024×1024 PNG. The requests used `quality=low` and omitted `response_format`. Responses carried the image as `b64_json` together with `usage` (824 output image tokens each). Other `quality` values, `jpeg`/`webp`, 2K/4K, masks, and multi-reference were not validated.
 
 The results below come from 2.5 and older routes.
 

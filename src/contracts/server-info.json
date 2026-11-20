@@ -19,12 +19,14 @@
         "gpt-image-2.5-sunburst",
         "gpt-image-2.6-flare",
         "gpt-image-2.6-sunburst",
+        "gpt-image-2.6-flare-openai",
+        "gpt-image-2.6-sunburst-openai",
         "doubao-seedream-5-5-261028"
       ],
       "base_url": "https://www.micuapi.ai",
       "capability_matrix": {
         "image_batch_edit": {
-          "1k_quality": "gpt-image-2.6-sunburst / gpt-image-2.5-sunburst / gpt-image-2-openai 串行 + 1.5s gap",
+          "1k_quality": "gpt-image-2.6-sunburst / gpt-image-2.6-sunburst-openai / gpt-image-2.5-sunburst / gpt-image-2-openai 串行 + 1.5s gap",
           "1k_standard": "5 并发",
           ">=2k": "2.5/2.6 保持所选模型；旧 gpt-image-2 自动切换；逐张串行 + 1.5s gap"
         },
@@ -75,7 +77,7 @@
           "1024x1536",
           "1536x1024"
         ],
-        "tip": "文生图默认 gpt-image-2.6-flare；编辑、批量编辑和多图参考默认 gpt-image-2.6-sunburst；2.5 模型可显式选择。带 -openai 的 2.5 旧配置与会话仍接受，模型明确拒绝才补试后缀 ID；2.6 无后缀别名，被拒绝时直接报错。旧 gpt-image-2 的 2K/4K 仍自动走 gpt-image-2-openai。始终核对 saved.actual_size。",
+        "tip": "文生图默认 gpt-image-2.6-flare；编辑、批量编辑和多图参考默认 gpt-image-2.6-sunburst；2.5 模型可显式选择。带 -openai 的 2.5 旧配置与会话仍接受，模型明确拒绝才补试后缀 ID；2.6 无后缀别名，被拒绝时直接报错。gpt-image-2.6-flare-openai / gpt-image-2.6-sunburst-openai 是按 token 计费的独立线路，不是别名，需显式选择：quality 为 auto/low/medium/high，不支持 gif。旧 gpt-image-2 的 2K/4K 仍自动走 gpt-image-2-openai。始终核对 saved.actual_size。",
         "two_step_tip": "当前线路已支持参考图 4K，无需两步绕行；image_edit/image_multi_reference 可直接请求 3840x2160。"
       },
       "response_format": "auto",
@@ -144,7 +146,7 @@
         "schedule_1k": "上游 5xx → 4s+jitter → 重试 → 8s+jitter → 重试（退避重试最多 2 次，共 ≤3 次尝试）；网络层异常（status=0）另有 1 次免费重试不计入此预算（故最坏 ≤4 次）。注：带 Retry-After 的 408/429/5xx 会按头部值 sleep（上限 120s），此时单次等待可能远大于 4s/8s",
         "schedule_2k_4k": "双层锁内：可恢复 5xx → 60s → 重试 1 次（共 2 次尝试）；CF 524 fail fast 不重试（origin 持续慢，等也无用）。单次 attempt 无字节挂起最长 600s，故 2K/4K 最坏 ≈ 两次 600s attempt + 一次 60s 退避；其间整机所有 ≥2K 请求经跨进程锁串行等待。锁等待 >2s 时 notes 会提示在排队",
         "trigger": "历史质量线路、Sunburst 或 size tier ∈ {2k, 4k} 启用既有同模型退避；明确模型拒绝不先退避重试",
-        "model_suffix_fallback": "手动目录；仅 2.5 Flare/Sunburst 的无后缀模型被明确拒绝（模型不存在/不支持/无可用渠道）时才补试带 -openai 的同族兼容 ID 一次。标准与历史质量线路不作为别名互补。网络、超时、认证、限流、余额、内容审核、参数、普通服务错误及成功后的处理失败不触发模型切换。"
+        "model_suffix_fallback": "手动目录；仅 2.5 Flare/Sunburst 的无后缀模型被明确拒绝（模型不存在/不支持/无可用渠道）时才补试带 -openai 的同族兼容 ID 一次。标准与历史质量线路不作为别名互补；2.6 的 -openai 线路与无后缀 2.6 互不补试。网络、超时、认证、限流、余额、内容审核、参数、普通服务错误及成功后的处理失败不触发模型切换。"
       },
       "safety_constraints": {
         "base_url_locked": "base_url 锁在启动期 MICU_BASEURL env，运行期 tool 不接受参数（防 key 外泄到攻击者 host）",
@@ -232,6 +234,18 @@
             "medium",
             "xhigh"
           ],
+          "gpt-image-2.6-flare-openai": [
+            "auto",
+            "high",
+            "low",
+            "medium"
+          ],
+          "gpt-image-2.6-sunburst-openai": [
+            "auto",
+            "high",
+            "low",
+            "medium"
+          ],
           "doubao-seedream-5-5-261028": []
         },
         "output_format_values_by_model": {
@@ -277,10 +291,46 @@
             "png",
             "webp"
           ],
+          "gpt-image-2.6-flare-openai": [
+            "jpeg",
+            "png",
+            "webp"
+          ],
+          "gpt-image-2.6-sunburst-openai": [
+            "jpeg",
+            "png",
+            "webp"
+          ],
           "doubao-seedream-5-5-261028": [
             "jpeg",
             "png"
           ]
+        },
+        "openai_route_live_observation_2026_11_19": {
+          "base_url": "https://www.micuapi.ai",
+          "client": "按米醋画图 HTML 请求格式的独立脚本",
+          "calls": [
+            {
+              "model": "gpt-image-2.6-flare-openai",
+              "path": "/v1/images/generations",
+              "status": 200,
+              "actual_size": "1024x1024",
+              "usage_output_image_tokens": 824
+            },
+            {
+              "model": "gpt-image-2.6-sunburst-openai",
+              "path": "/v1/images/edits",
+              "status": 200,
+              "actual_size": "1024x1024",
+              "usage_output_image_tokens": 824
+            }
+          ],
+          "requested_size": "1024x1024",
+          "quality": "low",
+          "response_format_omitted": true,
+          "response_shape": "data[].b64_json，另回显 quality/size/output_format/background 与 usage",
+          "billing": "公开 /api/ratio_config 显示按 token 计费（model_ratio 12.5，completion_ratio 6）；无后缀 2.6 为按次计费",
+          "scope_note": "单日、单凭据、各 1 次调用；未覆盖 low 以外的 quality、jpeg/webp、2K/4K、mask 与多图参考。"
         },
         "quality_live_observation_2026_10_09": {
           "base_url": "https://www.micuapi.ai",
